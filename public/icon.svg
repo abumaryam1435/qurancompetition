@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="emeraldBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1D427B" />
+      <stop offset="50%" stop-color="#0F2347" />
+      <stop offset="100%" stop-color="#081329" />
+    </linearGradient>
+
+    <radialGradient id="centerGlow" cx="50%" cy="42%" r="48%">
+      <stop offset="0%" stop-color="#3B82F6" stop-opacity="0.28" />
+      <stop offset="60%" stop-color="#1E3A8A" stop-opacity="0.08" />
+      <stop offset="100%" stop-color="#081329" stop-opacity="0" />
+    </radialGradient>
+
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#DFB244" />
+      <stop offset="25%" stop-color="#FFF2B2" />
+      <stop offset="50%" stop-color="#C9962B" />
+      <stop offset="75%" stop-color="#F7E594" />
+      <stop offset="100%" stop-color="#9A6B13" />
+    </linearGradient>
+
+    <linearGradient id="goldSoft" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#B8860B" />
+      <stop offset="50%" stop-color="#F3E5AB" />
+      <stop offset="100%" stop-color="#D4AF37" />
+    </linearGradient>
+
+    <linearGradient id="pageGradLeft" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFFDF7" />
+      <stop offset="85%" stop-color="#FDF6E2" />
+      <stop offset="100%" stop-color="#E6D29F" />
+    </linearGradient>
+
+    <linearGradient id="pageGradRight" x1="100%" y1="0%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#FFFDF7" />
+      <stop offset="85%" stop-color="#FDF6E2" />
+      <stop offset="100%" stop-color="#E6D29F" />
+    </linearGradient>
+
+    <filter id="dropShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000000" flood-opacity="0.35" />
+    </filter>
+  </defs>
+
+  <!-- Main Medallion Base -->
+  <circle cx="256" cy="256" r="244" fill="url(#emeraldBg)" />
+  <circle cx="256" cy="256" r="244" fill="url(#centerGlow)" />
+
+  <!-- Outer Metallic Gold Rim -->
+  <circle cx="256" cy="256" r="240" fill="none" stroke="url(#goldGrad)" stroke-width="14" />
+  <circle cx="256" cy="256" r="222" fill="none" stroke="url(#goldGrad)" stroke-width="3" stroke-opacity="0.65" />
+
+  <!-- Ornate Rub el Hizb (8-pointed Islamic Star) Geometric Frame -->
+  <g opacity="0.22" stroke="url(#goldGrad)" stroke-width="3.5" fill="none">
+    <rect x="106" y="106" width="300" height="300" rx="12" />
+    <rect x="106" y="106" width="300" height="300" rx="12" transform="rotate(45 256 256)" />
+  </g>
+
+  <!-- Golden Victory Laurel Wreath (Left & Right Branches) -->
+  <g fill="url(#goldGrad)" opacity="0.95">
+    <!-- Left Wreath Stem -->
+    <path d="M256 436 C 165 430, 96 355, 96 250 C 96 175, 136 118, 184 88" fill="none" stroke="url(#goldGrad)" stroke-width="5.5" stroke-linecap="round" />
+    <!-- Left Leaves -->
+    <path d="M210 426 C 190 434, 174 420, 184 404 C 196 410, 206 418, 210 426 Z" />
+    <path d="M170 404 C 148 408, 136 390, 150 376 C 162 384, 168 394, 170 404 Z" />
+    <path d="M136 370 C 114 368, 106 348, 122 336 C 132 346, 136 358, 136 370 Z" />
+    <path d="M112 326 C 92 318, 88 296, 106 288 C 114 300, 114 314, 112 326 Z" />
+    <path d="M100 276 C 82 262, 84 240, 102 236 C 106 250, 104 264, 100 276 Z" />
+    <path d="M102 224 C 88 206, 94 184, 112 186 C 114 200, 108 214, 102 224 Z" />
+    <path d="M116 174 C 106 154, 118 136, 134 142 C 132 156, 124 166, 116 174 Z" />
+    <path d="M142 130 C 136 110, 152 96, 166 106 C 160 118, 150 126, 142 130 Z" />
+    <path d="M178 94 C 176 78, 192 68, 202 80 C 194 88, 186 92, 178 94 Z" />
+
+    <!-- Right Wreath Stem -->
+    <path d="M256 436 C 347 430, 416 355, 416 250 C 416 175, 376 118, 328 88" fill="none" stroke="url(#goldGrad)" stroke-width="5.5" stroke-linecap="round" />
+    <!-- Right Leaves -->
+    <path d="M302 426 C 322 434, 338 420, 328 404 C 316 410, 306 418, 302 426 Z" />
+    <path d="M342 404 C 364 408, 376 390, 362 376 C 350 384, 344 394, 342 404 Z" />
+    <path d="M376 370 C 398 368, 406 348, 390 336 C 380 346, 376 358, 376 370 Z" />
+    <path d="M400 326 C 420 318, 424 296, 406 288 C 398 300, 398 314, 400 326 Z" />
+    <path d="M412 276 C 430 262, 428 240, 410 236 C 406 250, 408 264, 412 276 Z" />
+    <path d="M410 224 C 424 206, 418 184, 400 186 C 398 200, 404 214, 410 224 Z" />
+    <path d="M396 174 C 406 154, 394 136, 378 142 C 380 156, 388 166, 396 174 Z" />
+    <path d="M370 130 C 376 110, 360 96, 346 106 C 352 118, 362 126, 370 130 Z" />
+    <path d="M334 94 C 336 78, 320 68, 310 80 C 318 88, 326 92, 334 94 Z" />
+
+    <!-- Bottom Ribbon Knot -->
+    <circle cx="256" cy="436" r="10" fill="url(#goldGrad)" />
+    <path d="M248 442 L230 468 L246 464 L254 446 Z" />
+    <path d="M264 442 L282 468 L266 464 L258 446 Z" />
+  </g>
+
+  <!-- Top Competition Star & Crown of Excellence -->
+  <g filter="url(#dropShadow)">
+    <!-- Radiant Rays above Quran -->
+    <line x1="256" y1="68" x2="256" y2="48" stroke="url(#goldGrad)" stroke-width="4" stroke-linecap="round" />
+    <line x1="216" y1="78" x2="204" y2="60" stroke="url(#goldGrad)" stroke-width="3.5" stroke-linecap="round" />
+    <line x1="296" y1="78" x2="308" y2="60" stroke="url(#goldGrad)" stroke-width="3.5" stroke-linecap="round" />
+    <line x1="184" y1="102" x2="168" y2="90" stroke="url(#goldGrad)" stroke-width="3" stroke-linecap="round" />
+    <line x1="328" y1="102" x2="344" y2="90" stroke="url(#goldGrad)" stroke-width="3" stroke-linecap="round" />
+
+    <!-- 8-Pointed Star of Excellence -->
+    <g transform="translate(256, 110)">
+      <rect x="-22" y="-22" width="44" height="44" rx="4" fill="url(#goldGrad)" />
+      <rect x="-22" y="-22" width="44" height="44" rx="4" fill="url(#goldGrad)" transform="rotate(45)" />
+      <circle cx="0" cy="0" r="12" fill="#0F2347" />
+      <circle cx="0" cy="0" r="6" fill="#FFF2B2" />
+    </g>
+  </g>
+
+  <!-- Open Holy Quran (Mushaf) & Rehal Stand -->
+  <g filter="url(#dropShadow)">
+    <!-- Outer Gold Book Cover -->
+    <path d="M126 196 C 168 182, 222 192, 256 212 C 290 192, 344 182, 386 196 L 396 312 C 350 298, 294 306, 256 328 C 218 306, 162 298, 116 312 Z" fill="url(#goldGrad)" />
+
+    <!-- Left Page -->
+    <path d="M134 186 C 174 172, 224 182, 254 204 L 254 316 C 220 296, 168 288, 126 300 Z" fill="url(#pageGradLeft)" stroke="#C9962B" stroke-width="2" />
+
+    <!-- Right Page -->
+    <path d="M378 186 C 338 172, 288 182, 258 204 L 258 316 C 292 296, 344 288, 386 300 Z" fill="url(#pageGradRight)" stroke="#C9962B" stroke-width="2" />
+
+    <!-- Center Spine -->
+    <path d="M253 202 L 259 202 L 259 320 L 253 320 Z" fill="url(#goldGrad)" />
+
+    <!-- Ornate Quran Page Frame & Verse Lines (Left Page) -->
+    <path d="M148 204 C 178 195, 216 202, 240 216 L 240 296 C 214 282, 176 276, 142 286 Z" fill="none" stroke="#D4AF37" stroke-width="2" stroke-opacity="0.85" />
+    <path d="M158 222 C 182 216, 210 220, 230 230" fill="none" stroke="#1D427B" stroke-width="3.5" stroke-linecap="round" opacity="0.75" />
+    <path d="M156 238 C 180 232, 208 236, 230 246" fill="none" stroke="#1D427B" stroke-width="3.5" stroke-linecap="round" opacity="0.75" />
+    <path d="M154 254 C 178 248, 206 252, 228 262" fill="none" stroke="#1D427B" stroke-width="3.5" stroke-linecap="round" opacity="0.75" />
+    <path d="M152 270 C 176 264, 204 268, 226 278" fill="none" stroke="#D4AF37" stroke-width="3.5" stroke-linecap="round" />
+
+    <!-- Ornate Quran Page Frame & Verse Lines (Right Page) -->
+    <path d="M364 204 C 334 195, 296 202, 272 216 L 272 296 C 298 282, 336 276, 370 286 Z" fill="none" stroke="#D4AF37" stroke-width="2" stroke-opacity="0.85" />
+    <path d="M354 222 C 330 216, 302 220, 282 230" fill="none" stroke="#1D427B" stroke-width="3.5" stroke-linecap="round" opacity="0.75" />
+    <path d="M356 238 C 332 232, 304 236, 282 246" fill="none" stroke="#1D427B" stroke-width="3.5" stroke-linecap="round" opacity="0.75" />
+    <path d="M358 254 C 334 248, 306 252, 284 262" fill="none" stroke="#1D427B" stroke-width="3.5" stroke-linecap="round" opacity="0.75" />
+    <path d="M360 270 C 336 264, 308 268, 286 278" fill="none" stroke="#D4AF37" stroke-width="3.5" stroke-linecap="round" />
+
+    <!-- Wooden/Golden Rehal (Traditional X-Shaped Quran Stand) -->
+    <path d="M144 322 L 336 398 L 348 384 L 156 308 Z" fill="url(#goldGrad)" />
+    <path d="M368 322 L 176 398 L 164 384 L 356 308 Z" fill="url(#goldSoft)" />
+    <circle cx="256" cy="354" r="9" fill="#0F2347" stroke="url(#goldGrad)" stroke-width="3" />
+
+    <!-- Central Bookmark Tassel -->
+    <path d="M256 318 L 256 376" stroke="#D4AF37" stroke-width="4" stroke-linecap="round" />
+    <polygon points="256,372 248,388 256,396 264,388" fill="url(#goldGrad)" />
+  </g>
+</svg>

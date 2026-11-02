@@ -1,0 +1,449 @@
+
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="h-full">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#0F2347" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="supported-color-schemes" content="light dark" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-touch-fullscreen" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="المسابقات" />
+    <meta name="application-name" content="تقييم المسابقات القرآنية" />
+    <meta name="description" content="تطبيق متكامل لإدارة وتقييم المسابقات القرآنية" />
+    <meta property="og:title" content="تقييم المسابقات القرآنية" />
+    <meta property="og:description" content="تطبيق متكامل لإدارة وتقييم المسابقات القرآنية" />
+    <meta property="og:image" content="/pwa-512x512.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="HandheldFriendly" content="True" />
+    
+    <script>
+      // 1. Global Error Handler for Safari on iOS
+      window.addEventListener('error', function(e) {
+        if (!e || !e.message) return;
+        console.warn('[Handled Global Error]:', e.message, 'in', e.filename, 'line:', e.lineno);
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        if (e) {
+          if (typeof e.preventDefault === 'function') {
+            e.preventDefault();
+          }
+          var reason = e.reason;
+          if (reason) {
+            console.warn('[Handled Unhandled Rejection]:', typeof reason === 'object' ? (reason.message || String(reason)) : reason);
+          }
+        }
+      });
+
+      // 2. globalThis Polyfill for iOS Safari < 12.1
+      if (typeof globalThis === 'undefined') {
+        (function() {
+          if (typeof self !== 'undefined') { self.globalThis = self; }
+          else if (typeof window !== 'undefined') { window.globalThis = window; }
+          else if (typeof global !== 'undefined') { global.globalThis = global; }
+          else { this.globalThis = this; }
+        })();
+      }
+
+      // 3. Safe Storage Polyfill for Safari Private Browsing & Restricted Environments
+      (function() {
+        function createSafeStorage(type) {
+          var memoryStore = {};
+          var storageAvailable = false;
+          try {
+            var storage = window[type];
+            var testKey = '__safari_test__';
+            if (storage) {
+              storage.setItem(testKey, testKey);
+              storage.removeItem(testKey);
+              storageAvailable = true;
+            }
+          } catch (e) {
+            storageAvailable = false;
+          }
+
+          if (!storageAvailable) {
+            var fallback = {
+              getItem: function(k) { return Object.prototype.hasOwnProperty.call(memoryStore, k) ? memoryStore[k] : null; },
+              setItem: function(k, v) { memoryStore[k] = String(v); },
+              removeItem: function(k) { delete memoryStore[k]; },
+              clear: function() { memoryStore = {}; },
+              key: function(i) { return Object.keys(memoryStore)[i] || null; },
+              get length() { return Object.keys(memoryStore).length; }
+            };
+            try {
+              Object.defineProperty(window, type, { value: fallback, configurable: true, writable: true });
+            } catch (err) {}
+          }
+        }
+        createSafeStorage('localStorage');
+        createSafeStorage('sessionStorage');
+      })();
+
+      // 4. crypto.randomUUID Polyfill for iOS Safari < 15.4 & non-HTTPS
+      if (!window.crypto) {
+        window.crypto = {};
+      }
+      if (!window.crypto.randomUUID) {
+        window.crypto.randomUUID = function() {
+          return '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, function(c) {
+            var r = (window.crypto && window.crypto.getRandomValues) ? 
+              window.crypto.getRandomValues(new Uint8Array(1))[0] : 
+              Math.floor(Math.random() * 256);
+            return (c ^ (r & 15 >> c / 4)).toString(16);
+          });
+        };
+      }
+
+      // 5. Array.prototype.at & String.prototype.at Polyfill for iOS Safari < 15.4
+      if (!Array.prototype.at) {
+        Array.prototype.at = function(n) {
+          n = Math.trunc(n) || 0;
+          if (n < 0) n += this.length;
+          if (n < 0 || n >= this.length) return undefined;
+          return this[n];
+        };
+      }
+      if (!String.prototype.at) {
+        String.prototype.at = function(n) {
+          n = Math.trunc(n) || 0;
+          if (n < 0) n += this.length;
+          if (n < 0 || n >= this.length) return undefined;
+          return this[n];
+        };
+      }
+
+      // 6. Object.hasOwn Polyfill for iOS Safari < 15.4
+      if (!Object.hasOwn) {
+        Object.hasOwn = function(obj, prop) {
+          return Object.prototype.hasOwnProperty.call(obj, prop);
+        };
+      }
+
+      // 7. requestIdleCallback Polyfill for iOS Safari < 16.4
+      if (!window.requestIdleCallback) {
+        window.requestIdleCallback = function(cb) {
+          var start = Date.now();
+          return setTimeout(function() {
+            cb({
+              didTimeout: false,
+              timeRemaining: function() {
+                return Math.max(0, 50 - (Date.now() - start));
+              }
+            });
+          }, 1);
+        };
+      }
+      if (!window.cancelIdleCallback) {
+        window.cancelIdleCallback = function(id) {
+          clearTimeout(id);
+        };
+      }
+
+      // 8. structuredClone Polyfill for iOS Safari < 15.4
+      if (typeof window.structuredClone !== 'function') {
+        window.structuredClone = function(obj) {
+          return JSON.parse(JSON.stringify(obj));
+        };
+      }
+    </script>
+    
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/favicon-64x64.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/pwa-192x192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/pwa-512x512.png" />
+    <link rel="alternate icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon-precomposed" sizes="180x180" href="/apple-touch-icon.png" />
+
+    <title>تقييم المسابقات القرآنية</title>
+    
+    <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+    <script>
+      // ثيم الكحلي الملكي والذهبي القرآني الفاخر (Royal Sapphire & Imperial Gold)
+      // يتم تحويل تدرجات emerald و green و teal تلقائياً إلى الكحلي الملكي لتوحيد جميع صفحات التطبيق
+      const royalSapphirePalette = {
+        50: '#F4F7FB',
+        100: '#E6EEF8',
+        200: '#C8DAF0',
+        300: '#9ABBE4',
+        400: '#6495D4',
+        500: '#3B6FB6',
+        600: '#285699',
+        700: '#1D427B',
+        800: '#163363',
+        900: '#0F2347',
+        950: '#09152C'
+      };
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              emerald: royalSapphirePalette,
+              green: royalSapphirePalette,
+              teal: royalSapphirePalette,
+              gold: {
+                light: '#F3E5AB',
+                DEFAULT: '#D4AF37',
+                dark: '#B8860B',
+                rich: '#AA771C'
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script>
+      if (window.jspdf && window.jspdf.jsPDF) {
+        window.jsPDF = window.jspdf.jsPDF;
+      }
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-storage-compat.js"></script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&family=Amiri:ital,wght@0,400;0,700;1,400;1,700&family=Amiri+Quran&family=Scheherazade+New:wght@400;700&family=Noto+Naskh+Arabic:wght@400;700&display=swap" rel="stylesheet">
+    
+    <style>
+      :root {
+        --sat: constant(safe-area-inset-top);
+        --sar: constant(safe-area-inset-right);
+        --sab: constant(safe-area-inset-bottom);
+        --sal: constant(safe-area-inset-left);
+        --sat: env(safe-area-inset-top, 0px);
+        --sar: env(safe-area-inset-right, 0px);
+        --sab: env(safe-area-inset-bottom, 0px);
+        --sal: env(safe-area-inset-left, 0px);
+        color-scheme: light;
+      }
+      
+      :root.dark {
+        color-scheme: dark;
+      }
+
+      /* فرض استقلالية وضع التطبيق عن إعدادات نظام الهاتف (Android و iOS) */
+      html {
+        color-scheme: light;
+        background-color: #FAF8F5;
+        color: #0F172A;
+        transition: background-color 0.3s ease, color 0.3s ease;
+      }
+
+      html:not(.dark) {
+        color-scheme: light !important;
+        background-color: #FAF8F5 !important;
+        color: #0F172A !important;
+      }
+
+      html.dark {
+        color-scheme: dark !important;
+        background-color: #070E1C !important;
+        color: #F8FAFC !important;
+      }
+
+      body { 
+        font-family: 'Tajawal', sans-serif; 
+        -webkit-tap-highlight-color: transparent;
+        transition: background-color 0.3s ease, color 0.3s ease;
+        min-height: 100%;
+        margin: 0;
+        overflow-x: hidden;
+      }
+
+      html:not(.dark) body,
+      html:not(.dark) #root {
+        color-scheme: light !important;
+        background-color: #FAF8F5 !important;
+        color: #0F172A !important;
+      }
+
+      html.dark body,
+      html.dark #root {
+        color-scheme: dark !important;
+        background-color: #070E1C !important;
+        color: #F8FAFC !important;
+      }
+
+      /* منع متصفحات الهواتف من فرض الإعتام التلقائي Force Dark عند تفعيل الوضع النهاري */
+      html:not(.dark) input,
+      html:not(.dark) textarea,
+      html:not(.dark) select,
+      html:not(.dark) button {
+        color-scheme: light !important;
+      }
+
+      html.dark input,
+      html.dark textarea,
+      html.dark select,
+      html.dark button {
+        color-scheme: dark !important;
+      }
+      
+      #root {
+        min-height: 100vh;
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        padding-bottom: var(--sab);
+        transition: background-color 0.3s ease, color 0.3s ease;
+      }
+
+      .font-amiri { font-family: 'Amiri', serif; }
+      
+      /* الإطار الذهبي السميك والفاخر جداً */
+      .golden-frame {
+        position: relative;
+        border: 10px solid transparent; 
+        background: linear-gradient(white, white) padding-box,
+                    linear-gradient(135deg, #BF953F, #FCF6BA, #B38728, #FBF5B7, #AA771C) border-box;
+        box-shadow: 0 30px 70px rgba(0, 0, 0, 0.25), inset 0 0 20px rgba(184, 134, 11, 0.4);
+        border-radius: 2.5rem;
+      }
+
+      html.dark .golden-frame {
+        background: linear-gradient(#0f172a, #0f172a) padding-box,
+                    linear-gradient(135deg, #BF953F, #FCF6BA, #B38728, #FBF5B7, #AA771C) border-box;
+      }
+
+      *, *::before, *::after {
+        box-sizing: border-box;
+      }
+
+      /* النص الذهبي بلون واحد صلب ملكي */
+      .golden-text {
+        color: #AA771C !important;
+        -webkit-background-clip: initial !important;
+        -webkit-text-fill-color: initial !important;
+        background: none !important;
+        font-weight: 800;
+        text-shadow: 0 1px 1px rgba(0,0,0,0.1);
+      }
+
+      .input-style { 
+        width: 100%; 
+        max-width: 100%;
+        padding: 0.75rem 1rem; 
+        font-size: 1rem; 
+        background-color: #ffffff; 
+        border: 2px solid #D1D5DB; 
+        border-radius: 0.75rem; 
+        color: #111827; 
+        outline: none;
+        transition: all 0.2s;
+      }
+
+      @media (min-width: 640px) {
+        .input-style {
+          padding: 0.85rem 1.25rem;
+          font-size: 1.125rem;
+        }
+      }
+
+      .input-style::placeholder {
+        color: #9CA3AF !important;
+        font-weight: normal !important;
+        opacity: 0.75;
+      }
+
+      html.dark .input-style::placeholder {
+        color: #64748B !important;
+        font-weight: normal !important;
+        opacity: 0.75;
+      }
+      
+      .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
+      .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+      .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+      html.dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; }
+
+      @keyframes golden-shine {
+        from { background-position: -200% center; }
+        to { background-position: 200% center; }
+      }
+
+      .shine-animation {
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+        background-size: 200% 100%;
+        animation: golden-shine 3s infinite linear;
+      }
+    </style>
+    <script>
+      (function() {
+        try {
+          var saved = localStorage.getItem('halaqaTheme_v2');
+          var isDark = (saved === 'dark');
+          var root = document.documentElement;
+          var metaColor = document.querySelector('meta[name="color-scheme"]');
+          var metaTheme = document.querySelector('meta[name="theme-color"]');
+          var metaStatusBar = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+          if (isDark) {
+            root.classList.add('dark');
+            root.style.colorScheme = 'dark';
+            if (metaColor) metaColor.setAttribute('content', 'dark');
+            if (metaTheme) metaTheme.setAttribute('content', '#070E1C');
+            if (metaStatusBar) metaStatusBar.setAttribute('content', 'black-translucent');
+          } else {
+            root.classList.remove('dark');
+            root.style.colorScheme = 'light';
+            if (metaColor) metaColor.setAttribute('content', 'light');
+            if (metaTheme) metaTheme.setAttribute('content', '#0F2347');
+            if (metaStatusBar) metaStatusBar.setAttribute('content', 'default');
+          }
+        } catch (e) {}
+      })();
+    </script>
+</head>
+<body class="bg-[#FAF8F5] dark:bg-[#070E1C] text-slate-900 dark:text-slate-100 transition-colors duration-300 min-h-full">
+    <div id="root" class="bg-[#FAF8F5] dark:bg-[#070E1C] text-slate-900 dark:text-slate-100 transition-colors duration-300 min-h-screen min-h-[100dvh]"></div>
+    <script type="module" src="/index.tsx"></script>
+  <script>
+  if ('serviceWorker' in navigator) {
+    const isDevOrPreview = window.location.hostname.includes('ais-dev') || 
+                           window.location.hostname.includes('run.app') || 
+                           window.location.hostname === 'localhost' || 
+                           window.location.port === '3000';
+    if (isDevOrPreview) {
+      // In cloud development and preview environments, unregister service workers and purge caches
+      // to avoid caching stale React chunks or breaking hook dispatchers.
+      navigator.serviceWorker.getRegistrations().then(function(registrations) {
+        for (var i = 0; i < registrations.length; i++) {
+          registrations[i].unregister();
+        }
+      });
+      if ('caches' in window) {
+        caches.keys().then(function(names) {
+          for (var i = 0; i < names.length; i++) {
+            caches.delete(names[i]);
+          }
+        });
+      }
+    } else if (window.location.protocol === 'https:') {
+      window.addEventListener('load', () => {
+        try {
+          navigator.serviceWorker.register('/sw.js').catch(error => {
+            console.warn('SW Registration note: ', error ? error.message : error);
+          });
+        } catch (e) {
+          console.warn('SW registration bypassed:', e);
+        }
+      });
+    }
+  }
+</script>
+</body>
+</html>

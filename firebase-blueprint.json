@@ -1,0 +1,87 @@
+{
+  "entities": {
+    "Competition": {
+      "title": "Competition",
+      "description": "Quran competition data with levels, evaluators, participants, and real-time evaluations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "passageMode": { "type": "string" },
+        "previewLinesPerSegment": { "type": "number" },
+        "manualPassages": { "type": "array" },
+        "levels": { "type": "array" },
+        "evaluators": { "type": "array" },
+        "participants": { "type": "array" },
+        "evaluations": { "type": "array" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "name"]
+    },
+    "AppDataStore": {
+      "title": "AppDataStore",
+      "description": "Real-time sync store for competitions, participants and users",
+      "type": "object",
+      "properties": {
+        "list": { "type": "array" },
+        "updatedAt": { "type": "number" }
+      }
+    },
+    "AppConfig": {
+      "title": "AppConfig",
+      "description": "Global application configuration including app name, logo, and supervisor password",
+      "type": "object",
+      "properties": {
+        "appName": { "type": "string" },
+        "customLogo": { "type": "string" },
+        "supervisorPassword": { "type": "string" },
+        "updatedAt": { "type": "number" }
+      }
+    },
+    "User": {
+      "title": "User",
+      "description": "User entity for supervisor and evaluators",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "password": { "type": "string" },
+        "competitionId": { "type": "string" }
+      },
+      "required": ["id", "name", "role"]
+    },
+    "TestConnection": {
+      "title": "TestConnection",
+      "description": "Connectivity test document",
+      "type": "object",
+      "properties": {
+        "status": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/competitions/{competitionId}": {
+      "schema": "Competition",
+      "description": "Collection of Quran competition records"
+    },
+    "/appData/{docId}": {
+      "schema": "AppDataStore",
+      "description": "Central real-time synchronized data collections"
+    },
+    "/appConfig/{configId}": {
+      "schema": "AppConfig",
+      "description": "Global application configuration documents"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of users and evaluators"
+    },
+    "/test/{testId}": {
+      "schema": "TestConnection",
+      "description": "Connectivity test document"
+    }
+  }
+}
