@@ -5,6 +5,8 @@ export type LogoSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
 export const DEFAULT_COMPETITION_LOGO_URL = '/icon.svg';
 export const OFFICIAL_AWQAF_LOGO_URL = '/assets/aistudio/________254c48a2.jpg';
+export const AWQAF_GOLD_TRANSPARENT_URL = '/awqaf_gold_transparent.png';
+export const AWQAF_DARK_TRANSPARENT_URL = '/awqaf_dark_transparent.png';
 
 interface LogoProps {
   className?: string;
@@ -53,39 +55,68 @@ export const Logo: React.FC<LogoProps> = ({ className = '', size = 'md' }) => {
 
 interface AwqafBadgeProps {
   variant?: 'login' | 'header' | 'compact';
+  tone?: 'gold' | 'adaptive';
   className?: string;
 }
 
 /**
- * شارة شعار وزارة الأوقاف والشؤون الدينية (إدارة الأوقاف بمحافظة الظاهرة) كإضافة أنيقة متجاوبة
+ * شعار وزارة الأوقاف والشؤون الدينية (إدارة الأوقاف والشؤون الدينية بمحافظة الظاهرة)
+ * بدون خلفية بيضاء، مع بقاء الخنجر باللون الأحمر وخط المخطوطة الأصلي واضحاً باللون الذهبي الفاتح
  */
 export const AwqafBadge: React.FC<AwqafBadgeProps> = ({
   variant = 'header',
+  tone = 'gold',
   className = '',
 }) => {
-  const containerStyles =
-    variant === 'login'
-      ? 'h-10 sm:h-12 px-2.5 sm:px-3.5 py-1 rounded-xl border border-[#D4AF37]/80 bg-white shadow-sm'
-      : variant === 'compact'
-      ? 'h-7 sm:h-8 px-1.5 py-0.5 rounded-lg border border-[#D4AF37]/70 bg-white shadow-2xs'
-      : 'h-8 sm:h-10 px-1.5 sm:px-2 py-0.5 rounded-lg sm:rounded-xl border border-[#D4AF37]/80 bg-white shadow-2xs';
+  if (variant === 'login') {
+    return (
+      <div
+        className={`shrink-0 inline-flex items-center justify-center select-none bg-transparent ${className}`.trim()}
+        title="وزارة الأوقاف والشؤون الدينية - إدارة الأوقاف والشؤون الدينية بمحافظة الظاهرة"
+      >
+        <img
+          src={AWQAF_GOLD_TRANSPARENT_URL}
+          alt="وزارة الأوقاف والشؤون الدينية - إدارة الأوقاف والشؤون الدينية بمحافظة الظاهرة"
+          className="h-20 sm:h-24 w-auto max-w-[275px] sm:max-w-[330px] object-contain block drop-shadow-[0_2px_6px_rgba(0,0,0,0.45)]"
+        />
+      </div>
+    );
+  }
 
-  const imgStyles =
-    variant === 'login'
-      ? 'h-full w-auto max-w-[140px] sm:max-w-[170px]'
-      : variant === 'compact'
-      ? 'h-full w-auto max-w-[56px] sm:max-w-[72px]'
-      : 'h-full w-auto max-w-[62px] sm:max-w-[84px]';
+  const sizeStyles =
+    variant === 'compact'
+      ? 'h-8 sm:h-10 max-w-[76px] sm:max-w-[96px]'
+      : 'h-9 sm:h-11 max-w-[84px] sm:max-w-[110px]';
+
+  if (tone === 'adaptive') {
+    return (
+      <div
+        className={`shrink-0 inline-flex items-center justify-center select-none bg-transparent ${className}`.trim()}
+        title="وزارة الأوقاف والشؤون الدينية - إدارة الأوقاف والشؤون الدينية بمحافظة الظاهرة"
+      >
+        <img
+          src={AWQAF_DARK_TRANSPARENT_URL}
+          alt="إدارة الأوقاف والشؤون الدينية بمحافظة الظاهرة"
+          className={`${sizeStyles} w-auto object-contain block dark:hidden`}
+        />
+        <img
+          src={AWQAF_GOLD_TRANSPARENT_URL}
+          alt="إدارة الأوقاف والشؤون الدينية بمحافظة الظاهرة"
+          className={`${sizeStyles} w-auto object-contain hidden dark:block drop-shadow-[0_1px_4px_rgba(0,0,0,0.4)]`}
+        />
+      </div>
+    );
+  }
 
   return (
     <div
-      className={`shrink-0 inline-flex items-center justify-center overflow-hidden select-none ${containerStyles} ${className}`.trim()}
+      className={`shrink-0 inline-flex items-center justify-center select-none bg-transparent ${className}`.trim()}
       title="وزارة الأوقاف والشؤون الدينية - إدارة الأوقاف والشؤون الدينية بمحافظة الظاهرة"
     >
       <img
-        src={OFFICIAL_AWQAF_LOGO_URL}
+        src={AWQAF_GOLD_TRANSPARENT_URL}
         alt="إدارة الأوقاف والشؤون الدينية بمحافظة الظاهرة"
-        className={`${imgStyles} object-contain block`}
+        className={`${sizeStyles} w-auto object-contain block drop-shadow-[0_1px_4px_rgba(0,0,0,0.4)]`}
       />
     </div>
   );

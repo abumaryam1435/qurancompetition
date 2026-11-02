@@ -119,7 +119,7 @@ export default function ParticipantEvaluation({
   );
   if (!level) return null;
 
-  const segmentsCount = Math.max(1, Number(level.segmentsCount) || 3);
+  const segmentsCount = Math.max(1, Number(level.segmentsCount) || 5);
   const linesPerSegment = Math.max(1, Number(level.linesPerSegment) || 7);
 
   // التقييم الحالي الخاص بهذا المقيم تحديداً لهذا المتسابق
@@ -537,7 +537,7 @@ export default function ParticipantEvaluation({
             <ChevronRight size={20} />
           </button>
           <Logo size="xs" className="flex shrink-0" />
-          <AwqafBadge variant="compact" />
+          <AwqafBadge variant="compact" tone="adaptive" />
           <div className="min-w-0 flex-1 text-right">
             <h1 className="text-xs xs:text-sm sm:text-lg font-black text-slate-900 dark:text-white leading-tight line-clamp-2 break-words whitespace-normal">
               {participant.name}

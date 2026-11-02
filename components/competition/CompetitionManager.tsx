@@ -101,7 +101,7 @@ export default function CompetitionManager({
         id: 1,
         name: 'المستوى الأول (خمسة أجزاء)',
         juzsOrSurahs: '5 أجزاء',
-        segmentsCount: 3,
+        segmentsCount: 5,
         linesPerSegment: 7,
         maxScore: 100,
         errors: [
@@ -945,7 +945,7 @@ function LevelEditor({
         id: newId,
         name: `المستوى ${newId}`,
         juzsOrSurahs: 'جزء واحد',
-        segmentsCount: 3,
+        segmentsCount: 5,
         linesPerSegment: 7,
         maxScore: 100,
         errors: [
@@ -1096,7 +1096,7 @@ function LevelEditor({
                 id: newLvId,
                 name: rawLevelName,
                 juzsOrSurahs: rawScope || '5 أجزاء',
-                segmentsCount: 3,
+                segmentsCount: 5,
                 linesPerSegment: 7,
                 maxScore: 100,
                 errors: [
@@ -1599,15 +1599,16 @@ function LevelEditor({
                   <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
                     <div>
                       <label className="text-[11px] sm:text-xs text-slate-600 dark:text-slate-300 font-bold mb-1 block">
-                        عدد المقاطع للاختبار
+                        عدد المقاطع للاختبار (الافتراضي 5 مقاطع)
                       </label>
                       <input
                         type="number"
                         min={1}
                         value={level.segmentsCount}
+                        onFocus={e => e.target.select()}
                         onChange={e =>
                           updateLevel(level.id, {
-                            segmentsCount: Number(e.target.value),
+                            segmentsCount: Math.max(1, Number(e.target.value) || 1),
                           })
                         }
                         className="w-full min-h-[42px] border border-slate-300 dark:border-slate-700 p-2 rounded-xl bg-slate-50 dark:bg-slate-800 font-black text-center text-sm"
@@ -1621,9 +1622,10 @@ function LevelEditor({
                         type="number"
                         min={1}
                         value={level.maxScore}
+                        onFocus={e => e.target.select()}
                         onChange={e =>
                           updateLevel(level.id, {
-                            maxScore: Number(e.target.value),
+                            maxScore: Math.max(1, Number(e.target.value) || 100),
                           })
                         }
                         className="w-full min-h-[42px] border border-slate-300 dark:border-slate-700 p-2 rounded-xl bg-slate-50 dark:bg-slate-800 font-black text-center text-sm"

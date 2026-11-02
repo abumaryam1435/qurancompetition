@@ -96,7 +96,7 @@ const normalizeCompetition = (c: any): Competition => ({
   levels: toArray<any>(c?.levels).map(l => ({
     ...l,
     id: Number(l?.id || Date.now()),
-    segmentsCount: Number(l?.segmentsCount || 3),
+    segmentsCount: Number(l?.segmentsCount || 5),
     linesPerSegment: Number(l?.linesPerSegment || 7),
     maxScore: Number(l?.maxScore || 100),
     errors: toArray<any>(l?.errors),

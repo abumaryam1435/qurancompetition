@@ -845,7 +845,7 @@ function extractJuzsFromPages(pages: number[]): number[] {
  */
 export function generateSuggestedTestPassages(
   memorizedPages: number[],
-  requiredCount: number = 3,
+  requiredCount: number = 5,
   targetLinesPerSegment?: number,
   options?: GeneratePassagesOptions
 ): SuggestedTestPassage[] {
