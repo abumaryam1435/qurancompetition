@@ -76,6 +76,7 @@ const toArray = <T,>(val: any): T[] => {
 const normalizeCompetition = (c: any): Competition => ({
   id: String(c?.id || Date.now()),
   name: c?.name || 'مسابقة قرآنية',
+  seasonText: c?.seasonText || 'الموسم الثالث عشر - لعام 1447 هـ / 2026 م',
   isActive: Boolean(c?.isActive),
   passageMode:
     c?.passageMode === 'international' || c?.passageMode === 'manual' || c?.passageMode === 'random'
@@ -93,6 +94,8 @@ const normalizeCompetition = (c: any): Competition => ({
       endAyah: Number(mp.endAyah || mp.startAyah || 1),
       notes: mp.notes ? String(mp.notes) : undefined,
     })),
+  errors: toArray<any>(c?.errors),
+  errorCategories: toArray<any>(c?.errorCategories),
   levels: toArray<any>(c?.levels).map(l => ({
     ...l,
     id: Number(l?.id || Date.now()),
@@ -100,6 +103,7 @@ const normalizeCompetition = (c: any): Competition => ({
     linesPerSegment: Number(l?.linesPerSegment || 7),
     maxScore: Number(l?.maxScore || 100),
     errors: toArray<any>(l?.errors),
+    errorCategories: toArray<any>(l?.errorCategories),
   })),
   evaluators: toArray<any>(c?.evaluators).map(ev => ({
     ...ev,
@@ -338,7 +342,9 @@ const App: React.FC = () => {
     () => (initialState.data.competitions || []).length === 0
   );
 
-  // تظليل النص بالكامل تلقائياً عند النقر أو التركيز على أي خانة كتابة أو رقم أو كلمة مرور في التطبيق
+  // سلاسة النقر على خانات الكتابة:
+  // النقر للمرة الأولى على الخانة يظلل النص المكتوب بالكامل للكتابة عليه مباشرة،
+  // والنقر للمرة الثانية يزيل التظليل الكامل ويضع المؤشر في موضع النقر للتعديل الجزئي بسهولة.
   useEffect(() => {
     const isSelectableInput = (
       target: EventTarget | null
@@ -366,72 +372,100 @@ const App: React.FC = () => {
     };
 
     const selectEntireField = (el: HTMLInputElement | HTMLTextAreaElement) => {
+      if (!el.value) return;
       try {
         el.select();
       } catch {}
       requestAnimationFrame(() => {
         try {
-          if (document.activeElement === el) {
+          if (document.activeElement === el && el.dataset.selectOnFirstClick === '1') {
             el.select();
           }
         } catch {}
       });
-      setTimeout(() => {
+    };
+
+    const handlePointerDown = (e: PointerEvent) => {
+      if (!isSelectableInput(e.target)) return;
+      const el = e.target;
+      const isAlreadyFocused = document.activeElement === el;
+
+      if (!isAlreadyFocused) {
+        // النقرة الأولى على الخانة (لم تكن في حالة تركيز): نظلل النص بالكامل إن وُجد
+        if (el.value && el.value.length > 0) {
+          el.dataset.selectOnFirstClick = '1';
+        } else {
+          delete el.dataset.selectOnFirstClick;
+        }
+        el.dataset.hasUserClicked = '1';
+      } else if (el.dataset.hasUserClicked !== '1') {
+        // إذا كانت الخانة في حالة تركيز تلقائي (autoFocus) ولم ينقر عليها المستخدم بعد:
+        // نفحص هل النص مظلل بالكامل حالياً؟ إذا كان مظللاً بالكامل، فإن هذه النقرة تضع المؤشر للتعديل؛
+        // وإذا لم يكن مظللاً، نظلله بالكامل في هذه النقرة الأولى.
+        let isAllSelected = false;
         try {
-          if (document.activeElement === el) {
-            el.select();
+          if (
+            typeof el.selectionStart === 'number' &&
+            typeof el.selectionEnd === 'number' &&
+            el.value.length > 0
+          ) {
+            isAllSelected =
+              el.selectionStart === 0 && el.selectionEnd === el.value.length;
           }
         } catch {}
-      }, 25);
+
+        el.dataset.hasUserClicked = '1';
+        if (!isAllSelected && el.value && el.value.length > 0) {
+          el.dataset.selectOnFirstClick = '1';
+        } else {
+          delete el.dataset.selectOnFirstClick;
+        }
+      } else {
+        // النقرة الثانية (أو ما بعدها) على نفس الخانة: نترك المتصفح يضع المؤشر في مكان النقر ويلغي التظليل الكامل
+        delete el.dataset.selectOnFirstClick;
+      }
     };
 
     const handleFocusIn = (e: FocusEvent) => {
       if (!isSelectableInput(e.target)) return;
       const el = e.target;
-      el.dataset.autoSelectOnClick = '1';
-      selectEntireField(el);
-    };
-
-    const handleMouseUp = (e: MouseEvent) => {
-      if (!isSelectableInput(e.target)) return;
-      const el = e.target;
-      if (el.dataset.autoSelectOnClick === '1') {
-        e.preventDefault();
-        selectEntireField(el);
-      }
-    };
-
-    const handleClick = (e: MouseEvent) => {
-      if (!isSelectableInput(e.target)) return;
-      const el = e.target;
-      if (el.dataset.autoSelectOnClick === '1') {
-        delete el.dataset.autoSelectOnClick;
-        selectEntireField(el);
-        return;
-      }
-      // إذا نقر المستخدم على خانة كتابة أو خصم أو كلمة مرور ولم يكن هناك نص مظلل، نظللها بالكامل
-      try {
-        const hasSelection =
-          typeof el.selectionStart === 'number' &&
-          typeof el.selectionEnd === 'number' &&
-          el.selectionEnd > el.selectionStart;
-        if (!hasSelection) {
-          el.select();
-        }
-      } catch {
+      if (el.value && el.value.length > 0) {
         try {
           el.select();
         } catch {}
       }
     };
 
+    const handleMouseUp = (e: MouseEvent) => {
+      if (!isSelectableInput(e.target)) return;
+      const el = e.target;
+      if (el.dataset.selectOnFirstClick === '1') {
+        // منع المتصفح من إلغاء التظليل الكامل عند إفلات زر الفأرة في النقرة الأولى فقط
+        e.preventDefault();
+        selectEntireField(el);
+        // نحذف العلامة بعد انتهاء النقرة الأولى حتى تعمل النقرة الثانية كوضع مؤشر عادي للتعديل
+        setTimeout(() => {
+          delete el.dataset.selectOnFirstClick;
+        }, 0);
+      }
+    };
+
+    const handleFocusOut = (e: FocusEvent) => {
+      if (!isSelectableInput(e.target)) return;
+      const el = e.target;
+      delete el.dataset.selectOnFirstClick;
+      delete el.dataset.hasUserClicked;
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
     document.addEventListener('focusin', handleFocusIn, true);
     document.addEventListener('mouseup', handleMouseUp, true);
-    document.addEventListener('click', handleClick, true);
+    document.addEventListener('focusout', handleFocusOut, true);
     return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
       document.removeEventListener('focusin', handleFocusIn, true);
       document.removeEventListener('mouseup', handleMouseUp, true);
-      document.removeEventListener('click', handleClick, true);
+      document.removeEventListener('focusout', handleFocusOut, true);
     };
   }, []);
 

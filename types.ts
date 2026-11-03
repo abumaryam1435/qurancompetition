@@ -11,10 +11,28 @@ export interface User {
   updatedAt?: number;
 }
 
+export type ErrorCategoryColorKey =
+  | 'rose'
+  | 'teal'
+  | 'amber'
+  | 'purple'
+  | 'blue'
+  | 'emerald'
+  | 'indigo'
+  | 'orange';
+
+export interface CompetitionErrorCategory {
+  id: string;
+  name: string;
+  color: ErrorCategoryColorKey;
+}
+
 export interface CompetitionErrorType {
   id: number;
   name: string;
   deduction: number;
+  category?: string;
+  color?: ErrorCategoryColorKey;
 }
 
 export interface CompetitionLevel {
@@ -24,6 +42,7 @@ export interface CompetitionLevel {
   segmentsCount: number;
   linesPerSegment: number;
   errors: CompetitionErrorType[];
+  errorCategories?: CompetitionErrorCategory[];
   maxScore: number;
 }
 
@@ -88,7 +107,10 @@ export interface ManualPassageRange {
 export interface Competition {
   id: string;
   name: string;
+  seasonText?: string;
   levels: CompetitionLevel[];
+  errors?: CompetitionErrorType[];
+  errorCategories?: CompetitionErrorCategory[];
   evaluators: CompetitionEvaluator[];
   participants: CompetitionParticipant[];
   evaluations: CompetitionEvaluation[];

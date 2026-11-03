@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { surahNames, pageSurahsMap, juzPagesMap } from '../utils/quranData';
 import { isPagePreloaded, preloadMushafPages, preloadSurroundingPages } from '../utils/mushafPreload';
 import { SuggestedTestPassage } from '../utils/testPassageGenerator';
-import { toArabicDigits } from '../utils/juzUtils';
+import { toArabicDigits, getErrorColorStyle } from '../utils/juzUtils';
+import { CompetitionErrorType } from '../types';
 import { preloadVerseLinesForPages } from '../utils/mushafVerseHighlightService';
 import { MushafImagePage } from './MushafImagePage';
 
@@ -36,7 +37,7 @@ interface MushafReaderModalProps {
   sardGroupStudents?: { id: number; name: string }[];
   sardGroupErrors?: Record<number, { fath: number; tashkeel: number; tajweed: number }>;
   setSardGroupErrors?: React.Dispatch<React.SetStateAction<Record<number, { fath: number; tashkeel: number; tajweed: number }>>>;
-  competitionErrors?: { id: number; name: string; deduction: number }[];
+  competitionErrors?: CompetitionErrorType[];
   competitionErrorCounts?: Record<string, number>;
   onCompetitionErrorChange?: (errorId: number, newCount: number) => void;
   competitionCurrentScore?: number;
@@ -941,59 +942,29 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                         </div>
                       </div>
 
-                      {/* السطر السفلي المختصر: أزرار الخصم الأربعة في صف واحد (4 أعمدة) على شاشة الهاتف */}
+                      {/* السطر السفلي المختصر: أزرار الخصم في صف واحد على شاشة الهاتف (يظهر للمقيم لون الزر حسب الصنف) */}
                       <div
                         className={`grid gap-1 sm:gap-1.5 w-full ${
                           competitionErrors.length >= 4 ? 'grid-cols-4' : 'grid-cols-3'
                         }`}
                       >
-                        {competitionErrors.map((err, idx) => {
+                        {competitionErrors.map(err => {
                           const count = currentCounts?.[err.id] || 0;
                           const isPlusDisabled = isCurrentSegUnmem || isCurrentCapReached;
-                          const styles = [
-                            {
-                              box: 'bg-purple-50/95 dark:bg-purple-950/60 border-purple-300 dark:border-purple-500/50',
-                              text: 'text-purple-900 dark:text-purple-200',
-                              sub: 'text-purple-600 dark:text-purple-400',
-                              plus: 'bg-purple-600 hover:bg-purple-700 text-white',
-                              badge: 'border-purple-500 text-purple-800 dark:text-purple-200',
-                            },
-                            {
-                              box: 'bg-rose-50/95 dark:bg-rose-950/60 border-rose-300 dark:border-rose-500/50',
-                              text: 'text-rose-900 dark:text-rose-200',
-                              sub: 'text-rose-600 dark:text-rose-400',
-                              plus: 'bg-rose-600 hover:bg-rose-700 text-white',
-                              badge: 'border-rose-500 text-rose-800 dark:text-rose-200',
-                            },
-                            {
-                              box: 'bg-amber-50/95 dark:bg-amber-950/60 border-amber-300 dark:border-amber-500/50',
-                              text: 'text-amber-900 dark:text-amber-200',
-                              sub: 'text-amber-600 dark:text-amber-400',
-                              plus: 'bg-amber-600 hover:bg-amber-700 text-white',
-                              badge: 'border-amber-500 text-amber-800 dark:text-amber-200',
-                            },
-                            {
-                              box: 'bg-teal-50/95 dark:bg-teal-950/60 border-teal-300 dark:border-teal-500/50',
-                              text: 'text-teal-900 dark:text-teal-200',
-                              sub: 'text-teal-600 dark:text-teal-400',
-                              plus: 'bg-teal-600 hover:bg-teal-700 text-white',
-                              badge: 'border-teal-500 text-teal-800 dark:text-teal-200',
-                            },
-                          ];
-                          const st = styles[idx % styles.length];
+                          const st = getErrorColorStyle(err);
 
                           return (
                             <div
                               key={err.id}
                               className={`flex flex-col sm:flex-row sm:items-center sm:justify-between rounded-lg border px-1 sm:px-2 py-1 shadow-2xs transition-all ${
-                                st.box
+                                st.mushafBox
                               } ${isCurrentSegUnmem ? 'opacity-40 pointer-events-none' : ''}`}
                             >
                               <div className="flex items-center justify-between sm:flex-col sm:items-start leading-none mb-1 sm:mb-0 min-w-0 px-0.5">
-                                <span className={`text-[10px] sm:text-xs font-black truncate ${st.text}`}>
+                                <span className={`text-[10px] sm:text-xs font-black truncate ${st.mushafText}`}>
                                   {err.name}
                                 </span>
-                                <span className={`text-[8px] sm:text-[9px] font-bold shrink-0 ${st.sub}`}>
+                                <span className={`text-[8px] sm:text-[9px] font-bold shrink-0 ${st.mushafSub}`}>
                                   (-{err.deduction})
                                 </span>
                               </div>
@@ -1003,14 +974,14 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                                   type="button"
                                   disabled={isPlusDisabled}
                                   onClick={() => updateErrorForCurrentSeg(err.id, count + 1)}
-                                  className={`flex-1 sm:flex-initial sm:w-7 h-6 sm:h-7 rounded font-black text-xs sm:text-sm flex items-center justify-center shadow-2xs active:scale-95 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${st.plus}`}
+                                  className={`flex-1 sm:flex-initial sm:w-7 h-6 sm:h-7 rounded font-black text-xs sm:text-sm flex items-center justify-center shadow-2xs active:scale-95 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${st.mushafPlus}`}
                                   title={`زيادة ${err.name} للمقطع ${currentSegIdx + 1}`}
                                 >
                                   +
                                 </button>
 
                                 <span
-                                  className={`min-w-[20px] sm:min-w-[26px] h-6 sm:h-7 px-0.5 rounded bg-white dark:bg-gray-900 border font-black text-[11px] sm:text-xs flex items-center justify-center ${st.badge}`}
+                                  className={`min-w-[20px] sm:min-w-[26px] h-6 sm:h-7 px-0.5 rounded bg-white dark:bg-gray-900 border font-black text-[11px] sm:text-xs flex items-center justify-center ${st.mushafBadge}`}
                                 >
                                   {count}
                                 </span>

@@ -74,21 +74,28 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
   }, [mode]);
 
   const allEvaluators = useMemo(() => {
-    const list: (CompetitionEvaluator & { competitionId: string; competitionName: string })[] = [];
+    const list: (CompetitionEvaluator & { competitionId: string; competitionName: string; isCompetitionActive: boolean })[] = [];
     const comps = context?.competitions || [];
-    const sortedComps = [...comps].sort((a, b) => (b.isActive ? 1 : 0) - (a.isActive ? 1 : 0));
-    sortedComps.forEach(c => {
+    // عرض مقيمي المسابقات المفعّلة فقط في قائمة الدخول النشطة
+    const activeComps = comps.filter(c => c.isActive);
+    activeComps.forEach(c => {
       if (c.evaluators && c.evaluators.length > 0) {
         c.evaluators.forEach(e => {
           list.push({
             ...e,
             competitionId: String(c.id),
             competitionName: c.name,
+            isCompetitionActive: Boolean(c.isActive),
           });
         });
       }
     });
     return list;
+  }, [context?.competitions]);
+
+  const hasInactiveCompetitions = useMemo(() => {
+    const comps = context?.competitions || [];
+    return comps.some(c => !c.isActive);
   }, [context?.competitions]);
 
   const filteredEvaluators = useMemo(() => {
@@ -100,6 +107,11 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
   }, [allEvaluators, evaluatorSearchTerm]);
 
   const handleSelectEvaluator = (evaluator: CompetitionEvaluator & { competitionId: string; competitionName: string }) => {
+    const comp = (context?.competitions || []).find(c => String(c.id) === String(evaluator.competitionId));
+    if (comp && !comp.isActive) {
+      setError('عذراً، هذه المسابقة غير مفعّلة حالياً من قِبل المشرف ولا يمكن الدخول إليها.');
+      return;
+    }
     setSelectedEvaluator(evaluator);
     setError('');
     const savedPins = getSavedEvaluatorPins();
@@ -155,6 +167,14 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
     e.preventDefault();
     setError('');
     if (!selectedEvaluator) return;
+
+    const targetComp = (context?.competitions || []).find(
+      c => String(c.id) === String(selectedEvaluator.competitionId)
+    );
+    if (!targetComp || !targetComp.isActive) {
+      setError('عذراً، هذه المسابقة غير مفعّلة حالياً من قِبل المشرف ولا يمكن للمقيمين الدخول إليها.');
+      return;
+    }
 
     const cleanPin = evaluatorPin.trim();
     if (cleanPin === String(selectedEvaluator.pin).trim()) {
@@ -420,11 +440,24 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                         </button>
                       ))}
                       {filteredEvaluators.length === 0 && !isLoadingFirebase && (
-                        <div className="p-6 text-blue-200 font-bold text-xs sm:text-sm space-y-1 text-center">
-                          <p>لا يوجد مقيمون مسجلون حالياً.</p>
-                          <p className="text-xs opacity-80">
-                            يمكن للمشرف إضافة المسابقة والمقيمين من لوحة التحكم.
-                          </p>
+                        <div className="p-6 text-blue-200 font-bold text-xs sm:text-sm space-y-1.5 text-center">
+                          {hasInactiveCompetitions ? (
+                            <>
+                              <p className="text-amber-300 font-black text-sm">
+                                لا توجد مسابقة مفعّلة حالياً لدخول المقيمين
+                              </p>
+                              <p className="text-xs opacity-90 leading-relaxed">
+                                المسابقة متوقفة حالياً من قِبل المشرف، يرجى مراجعة المشرف لتفعيل المسابقة للتمكن من تسجيل الدخول والاطلاع على أسماء المشاركين.
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <p>لا يوجد مقيمون مسجلون حالياً.</p>
+                              <p className="text-xs opacity-80">
+                                يمكن للمشرف إضافة المسابقة والمقيمين من لوحة التحكم.
+                              </p>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>

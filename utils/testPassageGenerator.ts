@@ -41,6 +41,7 @@ export interface SuggestedTestPassage {
   difficultyLabel?: string;
   categoryNote?: string;
   sourceMode?: PassageSelectionMode;
+  allocatedRangeLabel?: string;
 }
 
 export const DIFFICULTY_LABELS: Record<PassageDifficultyTier, string> = {
@@ -661,6 +662,9 @@ let evaluationRotationCounter = 0;
 export interface GeneratePassagesOptions {
   mode?: PassageSelectionMode;
   manualPassages?: ManualPassageRange[];
+  scopeType?: 'juzs' | 'surahs';
+  explicitJuzs?: number[];
+  allowedSurahIds?: number[];
 }
 
 interface CandidatePassage {
@@ -827,7 +831,12 @@ function getCandidatePassagesForPage(
 /**
  * استخراج الأجزاء المضمنة في قائمة الصفحات المسموحة للمتسابق
  */
-function extractJuzsFromPages(pages: number[]): number[] {
+function extractJuzsFromPages(pages: number[], explicitJuzs?: number[]): number[] {
+  if (explicitJuzs && explicitJuzs.length > 0) {
+    return Array.from(new Set(explicitJuzs))
+      .filter(j => j >= 1 && j <= 30)
+      .sort((a, b) => a - b);
+  }
   const juzSet = new Set<number>();
   for (const p of pages) {
     const j = pageJuzMap[p];
@@ -837,11 +846,115 @@ function extractJuzsFromPages(pages: number[]): number[] {
   return list.length > 0 ? list : [30];
 }
 
+export interface SegmentBin {
+  binIndex: number;
+  juzs: number[];
+  pages: number[];
+  rangeLabel: string;
+}
+
+/**
+ * تقسيم مستوى المتسابق على عدد المقاطع المطلوبة بدقة:
+ * - إذا كان المستوى بالأجزاء (أو القرآن كاملاً 30 جزءاً) وعدد الأجزاء >= عدد المقاطع:
+ *   يُقسم عدد أجزاء المستوى على عدد المقاطع بالتتابع:
+ *   مثلاً 30 جزءاً و 5 مقاطع -> (1-6)، (7-12)، (13-18)، (19-24)، (25-30)
+ * - إذا كان المستوى بالسور (أو عدد أجزاء المستوى أقل من عدد المقاطع):
+ *   تُوزع المقاطع بنفس الآلية بحساب الصفحات بدلاً من الأجزاء (تقسيم الصفحات بالتساوي والتتابع على عدد المقاطع).
+ */
+export function buildSegmentBins(
+  sortedPages: number[],
+  activeJuzs: number[],
+  count: number,
+  scopeType: 'juzs' | 'surahs' = 'juzs'
+): SegmentBin[] {
+  const safeCount = Math.max(1, count);
+  const allowedPagesSet = new Set<number>(sortedPages);
+  const bins: SegmentBin[] = [];
+
+  if (scopeType !== 'surahs' && activeJuzs.length >= safeCount) {
+    const totalJuzs = activeJuzs.length;
+    for (let i = 0; i < safeCount; i++) {
+      const startIdx = Math.floor((i * totalJuzs) / safeCount);
+      const endIdx = Math.max(
+        startIdx,
+        Math.min(totalJuzs - 1, Math.floor(((i + 1) * totalJuzs) / safeCount) - 1)
+      );
+      const binJuzs = activeJuzs.slice(startIdx, endIdx + 1);
+      const binJuzSet = new Set<number>(binJuzs);
+
+      // استخراج صفحات هذه الشريحة من الأجزاء مع مراعاة عدم التداخل عند حدود الجزء
+      let binPages = sortedPages.filter(p => binJuzSet.has(pageJuzMap[p]));
+      if (binPages.length === 0) {
+        const rawJuzPages = new Set<number>();
+        binJuzs.forEach(j => {
+          (juzPagesMap[j] || []).forEach(p => {
+            if (allowedPagesSet.has(p)) rawJuzPages.add(p);
+          });
+        });
+        binPages = Array.from(rawJuzPages).sort((a, b) => a - b);
+      }
+      if (binPages.length === 0) {
+        binPages = sortedPages;
+      }
+
+      let rangeLabel = '';
+      if (binJuzs.length === 1) {
+        rangeLabel = `الجزء ${toArabicDigits(binJuzs[0])}`;
+      } else {
+        const isContiguous =
+          binJuzs[binJuzs.length - 1] - binJuzs[0] === binJuzs.length - 1;
+        if (isContiguous) {
+          rangeLabel = `الأجزاء ${toArabicDigits(binJuzs[0])} - ${toArabicDigits(
+            binJuzs[binJuzs.length - 1]
+          )}`;
+        } else {
+          rangeLabel = `الأجزاء ${binJuzs.map(j => toArabicDigits(j)).join('، ')}`;
+        }
+      }
+
+      bins.push({
+        binIndex: i,
+        juzs: binJuzs,
+        pages: binPages,
+        rangeLabel,
+      });
+    }
+    return bins;
+  }
+
+  // التوزيع بحساب الصفحات (عندما يكون المستوى بالسور أو عدد الأجزاء أقل من عدد المقاطع)
+  const totalPages = sortedPages.length;
+  for (let i = 0; i < safeCount; i++) {
+    const startIdx = Math.floor((i * totalPages) / safeCount);
+    const endIdx = Math.max(
+      startIdx,
+      Math.min(totalPages - 1, Math.floor(((i + 1) * totalPages) / safeCount) - 1)
+    );
+    const binPages = sortedPages.slice(startIdx, endIdx + 1);
+    const safeBinPages = binPages.length > 0 ? binPages : [sortedPages[0] || 1];
+    const firstPage = safeBinPages[0];
+    const lastPage = safeBinPages[safeBinPages.length - 1];
+    const rangeLabel =
+      firstPage === lastPage
+        ? `صفحة ${toArabicDigits(firstPage)}`
+        : `الصفحات ${toArabicDigits(firstPage)} - ${toArabicDigits(lastPage)}`;
+
+    bins.push({
+      binIndex: i,
+      juzs: extractJuzsFromPages(safeBinPages),
+      pages: safeBinPages,
+      rangeLabel,
+    });
+  }
+
+  return bins;
+}
+
 /**
  * Generate test passages for a participant according to the competition's active passageMode:
- * - 'random': Current balanced random passages across pages
- * - 'international': Alternates across International Competition tiers (Hard -> Medium -> Easy)
- * - 'manual': Rotates through the Supervisor's manually defined ranges per Juz
+ * - 'random': Current balanced random passages distributed across each segment's allocated Juz/Page bin
+ * - 'international': Alternates across International Competition tiers (Hard -> Medium -> Easy) within each segment's bin
+ * - 'manual': Picks from Supervisor's manually defined ranges within each segment's bin
  */
 export function generateSuggestedTestPassages(
   memorizedPages: number[],
@@ -854,6 +967,7 @@ export function generateSuggestedTestPassages(
   }
 
   const mode: PassageSelectionMode = options?.mode || 'random';
+  const scopeType: 'juzs' | 'surahs' = options?.scopeType || 'juzs';
   const count = Math.max(1, Math.min(12, requiredCount));
   const hasCustomTarget =
     typeof targetLinesPerSegment === 'number' &&
@@ -865,141 +979,236 @@ export function generateSuggestedTestPassages(
 
   const sortedPages = Array.from(new Set(memorizedPages)).sort((a, b) => a - b);
   const allowedPagesSet = new Set<number>(sortedPages);
-  const activeJuzs = extractJuzsFromPages(sortedPages);
+  const activeJuzs = extractJuzsFromPages(sortedPages, options?.explicitJuzs);
+  const bins = buildSegmentBins(sortedPages, activeJuzs, count, scopeType);
 
   evaluationRotationCounter = (evaluationRotationCounter + 1) % 10000;
 
   // =========================================================================
   // 1) نمط المسابقات العالمية (التبويب الثاني):
-  // المقطع الأول يتناوب من (الأكثر صعوبة)، والثاني من (متوسطة)، والثالث من (الأقل صعوبة) وهكذا
+  // يتوزع كل مقطع داخل شريحته المخصصة (الأجزاء المقسمة أو الصفحات المقسمة)
+  // مع تناوب الفئات (الأكثر صعوبة -> متوسطة -> الأقل صعوبة) وتغيير المقاطع لكل متسابق جديد
   // =========================================================================
   if (mode === 'international') {
     const tierOrder: PassageDifficultyTier[] = ['hard', 'medium', 'easy'];
     const result: SuggestedTestPassage[] = [];
     const usedIds = new Set<string>();
+    const usedPages = new Set<number>();
 
     for (let i = 0; i < count; i++) {
       const passageNumber = i + 1;
-      const targetTier = tierOrder[i % tierOrder.length];
+      const bin = bins[i];
+      const binKey = getBinHistoryKey(bin, 'international');
+      const recentBinPassageKeys = getBinRecentPassageKeys(binKey);
+      const binPagesSet = new Set<number>(bin.pages);
+      // تدوير فئة الصعوبة مع كل متسابق جديد حتى لو كانت الشريحة جزءاً واحداً فقط
+      const targetTier = tierOrder[(i + evaluationRotationCounter) % tierOrder.length];
 
-      // اختيار الجزء المستهدف لهذا المقطع بالتناوب عبر أجزاء المتسابق
-      const juzIdx = (i + evaluationRotationCounter) % activeJuzs.length;
-      const targetJuz = activeJuzs[juzIdx];
-
-      // جلب مقاطع هذا الجزء من نفس الفئة (الأكثر صعوبة / متوسطة / الأقل)
-      let candidates = getInternationalPassagesForJuz(
-        targetJuz,
-        targetLines,
-        targetTier
-      ).filter(p => p.pages.some(pg => allowedPagesSet.has(pg)));
-
-      // إن كان نطاق المتسابق سور محددة داخل الجزء، نبحث في جميع أجزاء المتسابق لنفس الفئة
-      if (candidates.length === 0) {
-        for (const j of activeJuzs) {
-          const jCands = getInternationalPassagesForJuz(j, targetLines, targetTier).filter(
-            p => p.pages.some(pg => allowedPagesSet.has(pg))
-          );
-          candidates.push(...jCands);
-        }
+      // جمع المقاطع العالمية التي تقع ضمن شريحة هذا المقطع تحديداً
+      let tierCandidates: SuggestedTestPassage[] = [];
+      for (const j of bin.juzs) {
+        const jCands = getInternationalPassagesForJuz(j, targetLines, targetTier).filter(
+          p => p.pages.some(pg => binPagesSet.has(pg) && allowedPagesSet.has(pg))
+        );
+        tierCandidates.push(...jCands);
       }
 
-      // إن لم تتطابق مع سور قصيرة جداً، نأخذ مقاطع الجزء المستهدف مباشرة
-      if (candidates.length === 0) {
-        candidates = getInternationalPassagesForJuz(targetJuz, targetLines, targetTier);
+      // جمع بقية الفئات داخل نفس الشريحة كبديل عند استنفاد فئة الصعوبة الحالية في المتسابقين السابقين
+      let allTierCandidates: SuggestedTestPassage[] = [];
+      for (const j of bin.juzs) {
+        const anyTierCands = getInternationalPassagesForJuz(j, targetLines).filter(p =>
+          p.pages.some(pg => binPagesSet.has(pg) && allowedPagesSet.has(pg))
+        );
+        allTierCandidates.push(...anyTierCands);
       }
 
-      const unused = candidates.filter(c => !usedIds.has(c.id));
-      const pool = unused.length > 0 ? unused : candidates;
-      const pickIdx = (evaluationRotationCounter + i) % Math.max(1, pool.length);
-      const chosen = pool[pickIdx];
+      const filterFresh = (list: SuggestedTestPassage[]) =>
+        list.filter(
+          c =>
+            !usedIds.has(c.id) &&
+            !c.pages.some(pg => usedPages.has(pg)) &&
+            !recentBinPassageKeys.has(getPassageUniqueKey(c))
+        );
 
-      if (chosen) {
+      let pool = filterFresh(tierCandidates);
+      if (pool.length === 0) {
+        pool = filterFresh(allTierCandidates);
+      }
+
+      if (pool.length > 0) {
+        const pickIdx = (evaluationRotationCounter + i) % pool.length;
+        const chosen = pool[pickIdx];
         usedIds.add(chosen.id);
+        chosen.pages.forEach(pg => usedPages.add(pg));
+        recentBinPassageKeys.add(getPassageUniqueKey(chosen));
         result.push({
           ...chosen,
           id: `${chosen.id}-slot-${passageNumber}-${evaluationRotationCounter}`,
           passageNumber,
+          difficulty: chosen.difficulty || targetTier,
+          difficultyLabel: DIFFICULTY_LABELS[chosen.difficulty || targetTier],
+          allocatedRangeLabel: bin.rangeLabel,
+          sourceMode: 'international',
+        });
+      } else {
+        // إذا استُنفدت المواضع الثلاثة الثابتة في جزء مفرد لدى المتسابقين السابقين،
+        // نولّد مقطعاً جديداً غير مكرر من صفحات نفس الشريحة مع الاحتفاظ بوسم المسابقات العالمية
+        if (allTierCandidates.length > 0 && bin.pages.length <= 3) {
+          recentBinPassageKeys.clear();
+        }
+        const generatedFromBin = generateRandomPassageForBin(
+          bin,
+          i,
+          targetLinesPerSegment,
+          usedPages,
+          allowedPagesSet
+        );
+        const resolvedJuz = generatedFromBin.juzNumber || bin.juzs[0] || 1;
+        result.push({
+          ...generatedFromBin,
+          id: `intl-bin-${passageNumber}-${generatedFromBin.startPage}-${evaluationRotationCounter}`,
+          passageNumber,
+          difficulty: targetTier,
+          difficultyLabel: DIFFICULTY_LABELS[targetTier],
+          categoryNote: getInternationalNoteForJuz(resolvedJuz, targetTier, (i + evaluationRotationCounter) % 3),
+          allocatedRangeLabel: bin.rangeLabel,
           sourceMode: 'international',
         });
       }
     }
 
-    if (result.length === count) {
-      return result;
-    }
+    return result;
   }
 
   // =========================================================================
   // 2) نمط التحديد اليدوي للمشرف (التبويب الثالث):
-  // يتناوب بين النطاقات التي حددها المشرف لكل جزء من أجزاء المتسابق
+  // يلتزم بتوزيع كل مقطع حسب الشريحة المخصصة له (الأجزاء أو الصفحات) مع التناوب بين المتسابقين
   // =========================================================================
   if (mode === 'manual' && options?.manualPassages && options.manualPassages.length > 0) {
     const allManual = options.manualPassages;
-    // استخراج المقاطع اليدوية الخاصة بأجزاء المتسابق (أو التي تقع صفحاتها ضمن نطاق المتسابق)
-    const manualByJuz = new Map<number, ManualPassageRange[]>();
-    for (const mp of allManual) {
-      const startPage = findPageForSurahAyah(mp.startSurahId, mp.startAyah);
-      const inAllowedJuz = activeJuzs.includes(mp.juzNumber);
-      const inAllowedPage = allowedPagesSet.has(startPage);
-      if (inAllowedJuz || inAllowedPage) {
-        const list = manualByJuz.get(mp.juzNumber) || [];
-        list.push(mp);
-        manualByJuz.set(mp.juzNumber, list);
+    const result: SuggestedTestPassage[] = [];
+    const usedRangeIds = new Set<string>();
+    const usedPages = new Set<number>();
+
+    for (let i = 0; i < count; i++) {
+      const passageNumber = i + 1;
+      const bin = bins[i];
+      const binKey = getBinHistoryKey(bin, 'manual');
+      const recentBinPassageKeys = getBinRecentPassageKeys(binKey);
+      const binPagesSet = new Set<number>(bin.pages);
+      const binJuzsSet = new Set<number>(bin.juzs);
+
+      const binManualRanges = allManual.filter(mp => {
+        const startPage = findPageForSurahAyah(mp.startSurahId, mp.startAyah);
+        if (scopeType === 'surahs' || activeJuzs.length < count) {
+          return binPagesSet.has(startPage);
+        }
+        return binJuzsSet.has(mp.juzNumber) || binPagesSet.has(startPage);
+      });
+
+      const unusedInCurrent = binManualRanges.filter(r => !usedRangeIds.has(r.id));
+      const freshAcrossParticipants = unusedInCurrent.filter(
+        r => !recentBinPassageKeys.has(r.id)
+      );
+
+      if (freshAcrossParticipants.length === 0 && unusedInCurrent.length > 0) {
+        recentBinPassageKeys.clear();
       }
-    }
 
-    const juzsWithManual = Array.from(manualByJuz.keys()).sort((a, b) => a - b);
-    if (juzsWithManual.length > 0) {
-      const result: SuggestedTestPassage[] = [];
-      const usedRangeIds = new Set<string>();
+      const pool =
+        freshAcrossParticipants.length > 0
+          ? freshAcrossParticipants
+          : unusedInCurrent.length > 0
+          ? unusedInCurrent
+          : binManualRanges;
 
-      for (let i = 0; i < count; i++) {
-        const passageNumber = i + 1;
-        const targetJuz =
-          juzsWithManual[(i + evaluationRotationCounter) % juzsWithManual.length];
-        const rangesInJuz = manualByJuz.get(targetJuz) || [];
-
-        const unusedRanges = rangesInJuz.filter(r => !usedRangeIds.has(r.id));
-        const pool = unusedRanges.length > 0 ? unusedRanges : rangesInJuz;
-        const pickIdx = (evaluationRotationCounter + i) % Math.max(1, pool.length);
+      if (pool.length > 0) {
+        const pickIdx = (evaluationRotationCounter + i) % pool.length;
         const pickedRange = pool[pickIdx];
-
-        if (pickedRange) {
-          usedRangeIds.add(pickedRange.id);
-          result.push(buildPassageFromManualRange(pickedRange, passageNumber));
-        }
-      }
-
-      if (result.length > 0) {
-        // إذا كان عدد المقاطع المطلوبة أكبر من النطاقات اليدوية المتاحة، نكمل الباقي تلقائياً
-        while (result.length < count) {
-          const fallbackPassages = generateRandomPassagesInternal(
-            sortedPages,
-            1,
-            targetLines
-          );
-          const nextNum = result.length + 1;
-          result.push({
-            ...fallbackPassages[0],
-            passageNumber: nextNum,
-          });
-        }
-        return result;
+        usedRangeIds.add(pickedRange.id);
+        recentBinPassageKeys.add(pickedRange.id);
+        const manualPassage = buildPassageFromManualRange(pickedRange, passageNumber);
+        manualPassage.pages.forEach(pg => usedPages.add(pg));
+        result.push({
+          ...manualPassage,
+          allocatedRangeLabel: bin.rangeLabel,
+        });
+      } else {
+        // إن لم يحدد المشرف نطاقاً يدوياً داخل هذه الشريحة، نولّد مقطعاً من داخل الشريحة نفسها
+        const fallbackPassage = generateRandomPassageForBin(
+          bin,
+          i,
+          targetLinesPerSegment,
+          usedPages,
+          allowedPagesSet
+        );
+        result.push({
+          ...fallbackPassage,
+          passageNumber,
+          allocatedRangeLabel: bin.rangeLabel,
+        });
       }
     }
+
+    return result;
   }
 
   // =========================================================================
-  // 3) النمط العشوائي الحالي (التبويب الأول - أو الاحتياطي عند عدم وجود يدوي)
+  // 3) النمط العشوائي المتوازن (التبويب الأول - الافتراضي):
+  // توزيع المقاطع بالتساوي والتتابع على شرائح الأجزاء أو الصفحات مع ضمان عدم تكرار المقاطع للمتسابق التالي
   // =========================================================================
-  return generateRandomPassagesInternal(sortedPages, count, targetLinesPerSegment);
+  return generateRandomPassagesFromBins(bins, targetLinesPerSegment, allowedPagesSet);
 }
 
-function generateRandomPassagesInternal(
-  sortedPages: number[],
-  count: number,
-  targetLinesPerSegment?: number
-): SuggestedTestPassage[] {
+// سجل الجلسة للصفحات والمقاطع المقترحة سابقاً لكل شريحة لضمان ظهور مقاطع مختلفة للمتسابق الثاني والثالث...
+const binRecentPagesHistory = new Map<string, Set<number>>();
+const binRecentPassageKeysHistory = new Map<string, Set<string>>();
+
+function getBinHistoryKey(bin: SegmentBin, mode: string): string {
+  const firstPage = bin.pages[0] || 1;
+  const lastPage = bin.pages[bin.pages.length - 1] || firstPage;
+  return `${mode}:${firstPage}-${lastPage}:${bin.pages.length}`;
+}
+
+function getBinRecentPages(binKey: string): Set<number> {
+  let set = binRecentPagesHistory.get(binKey);
+  if (!set) {
+    set = new Set<number>();
+    binRecentPagesHistory.set(binKey, set);
+  }
+  return set;
+}
+
+function getBinRecentPassageKeys(binKey: string): Set<string> {
+  let set = binRecentPassageKeysHistory.get(binKey);
+  if (!set) {
+    set = new Set<string>();
+    binRecentPassageKeysHistory.set(binKey, set);
+  }
+  return set;
+}
+
+function getPassageUniqueKey(p: {
+  startSurahId: number;
+  startAyah: number;
+  endSurahId: number;
+  endAyah: number;
+}): string {
+  return `${p.startSurahId}:${p.startAyah}-${p.endSurahId}:${p.endAyah}`;
+}
+
+function generateRandomPassageForBin(
+  bin: SegmentBin,
+  slotIdx: number,
+  targetLinesPerSegment: number | undefined,
+  usedPages: Set<number>,
+  allowedPagesSet: Set<number>
+): SuggestedTestPassage {
+  const passageNumber = slotIdx + 1;
+  const binKey = getBinHistoryKey(bin, 'random');
+  const recentBinPages = getBinRecentPages(binKey);
+  const recentBinPassageKeys = getBinRecentPassageKeys(binKey);
+
   const hasCustomTarget =
     typeof targetLinesPerSegment === 'number' &&
     !isNaN(targetLinesPerSegment) &&
@@ -1007,10 +1216,6 @@ function generateRandomPassagesInternal(
   const targetLines = hasCustomTarget
     ? Math.max(1, Math.min(20, Number(targetLinesPerSegment)))
     : 6.0;
-
-  const totalPages = sortedPages.length;
-  const passages: SuggestedTestPassage[] = [];
-  const usedPages = new Set<number>();
 
   const preferredPositionsBySlot: ('beginning' | 'middle' | 'end' | 'cross-page')[][] = [
     ['beginning', 'middle'],
@@ -1021,148 +1226,185 @@ function generateRandomPassagesInternal(
     ['end', 'cross-page'],
   ];
 
-  for (let i = 0; i < count; i++) {
-    const passageNumber = i + 1;
-    const binStartIdx = Math.floor((i * totalPages) / count);
-    const binEndIdx = Math.min(totalPages - 1, Math.floor(((i + 1) * totalPages) / count) - 1);
+  const binPages = bin.pages.length > 0 ? bin.pages : [1];
+  const unusedPages = binPages.filter(p => !usedPages.has(p));
+  const basePagesPool = unusedPages.length > 0 ? unusedPages : binPages;
 
-    const candidateIndices: number[] = [];
-    for (let idx = binStartIdx; idx <= Math.max(binStartIdx, binEndIdx); idx++) {
-      if (!usedPages.has(sortedPages[idx])) {
-        candidateIndices.push(idx);
-      }
+  // استبعاد الصفحات التي ظهرت للمتسابقين السابقين في هذه الشريحة حتى تمر على جميع صفحات الشريحة أولاً
+  let freshPagesPool = basePagesPool.filter(p => !recentBinPages.has(p));
+  if (freshPagesPool.length === 0) {
+    recentBinPages.clear();
+    freshPagesPool = basePagesPool;
+  }
+
+  const selectedPage =
+    freshPagesPool[Math.floor(Math.random() * freshPagesPool.length)] || binPages[0];
+  usedPages.add(selectedPage);
+  recentBinPages.add(selectedPage);
+
+  const canCrossPage = allowedPagesSet.has(selectedPage + 1) && selectedPage < 604;
+  const allCandidates = getCandidatePassagesForPage(
+    selectedPage,
+    canCrossPage,
+    targetLinesPerSegment
+  );
+
+  if (allCandidates.length === 0) {
+    const fb = createFallbackPassage(passageNumber, selectedPage, targetLines);
+    return {
+      ...fb,
+      allocatedRangeLabel: bin.rangeLabel,
+    };
+  }
+
+  const slotPreferences = preferredPositionsBySlot[(slotIdx + evaluationRotationCounter) % preferredPositionsBySlot.length];
+  let matchingCandidates: CandidatePassage[] = [];
+
+  for (const pref of slotPreferences) {
+    const match = allCandidates.filter(c => c.positionType === pref);
+    if (match.length > 0) {
+      matchingCandidates = match;
+      break;
     }
+  }
 
-    if (candidateIndices.length === 0) {
-      for (let idx = binStartIdx; idx <= Math.max(binStartIdx, binEndIdx); idx++) {
-        candidateIndices.push(idx);
-      }
-    }
+  if (matchingCandidates.length === 0) {
+    matchingCandidates = allCandidates;
+  }
 
-    const selectedIdx =
-      candidateIndices[Math.floor(Math.random() * candidateIndices.length)] || binStartIdx;
-    const selectedPage = sortedPages[selectedIdx];
-    usedPages.add(selectedPage);
-
-    const canCrossPage = sortedPages.includes(selectedPage + 1) && selectedPage < 604;
-    const allCandidates = getCandidatePassagesForPage(
-      selectedPage,
-      canCrossPage,
-      targetLinesPerSegment
+  // استبعاد الآيات التي اختيرت للمتسابقين السابقين حتى لو كانت الشريحة صفحة واحدة فقط
+  const unvisitedCandidates = matchingCandidates.filter(
+    c => !recentBinPassageKeys.has(getPassageUniqueKey(c))
+  );
+  if (unvisitedCandidates.length > 0) {
+    matchingCandidates = unvisitedCandidates;
+  } else {
+    const unvisitedAll = allCandidates.filter(
+      c => !recentBinPassageKeys.has(getPassageUniqueKey(c))
     );
-
-    if (allCandidates.length === 0) {
-      passages.push(createFallbackPassage(passageNumber, selectedPage, targetLines));
-      continue;
+    if (unvisitedAll.length > 0) {
+      matchingCandidates = unvisitedAll;
+    } else {
+      recentBinPassageKeys.clear();
     }
+  }
 
-    const slotPreferences = preferredPositionsBySlot[i % preferredPositionsBySlot.length];
-    let matchingCandidates: CandidatePassage[] = [];
+  matchingCandidates.sort((a, b) => {
+    const diffA = Math.abs(a.linesCount - targetLines);
+    const diffB = Math.abs(b.linesCount - targetLines);
+    return diffA - diffB;
+  });
 
-    for (const pref of slotPreferences) {
-      const match = allCandidates.filter(c => c.positionType === pref);
-      if (match.length > 0) {
-        matchingCandidates = match;
-        break;
-      }
-    }
+  const topCandidates = matchingCandidates.slice(
+    0,
+    Math.min(hasCustomTarget ? 3 : 4, matchingCandidates.length)
+  );
+  const chosen =
+    topCandidates[Math.floor(Math.random() * topCandidates.length)] || matchingCandidates[0];
 
-    if (matchingCandidates.length === 0) {
-      matchingCandidates = allCandidates;
-    }
+  recentBinPassageKeys.add(getPassageUniqueKey(chosen));
 
-    matchingCandidates.sort((a, b) => {
-      const diffA = Math.abs(a.linesCount - targetLines);
-      const diffB = Math.abs(b.linesCount - targetLines);
-      return diffA - diffB;
-    });
+  if (chosen.endPage > chosen.startPage) {
+    usedPages.add(chosen.endPage);
+    recentBinPages.add(chosen.endPage);
+  }
 
-    const topCandidates = matchingCandidates.slice(
-      0,
-      Math.min(hasCustomTarget ? 3 : 4, matchingCandidates.length)
+  const pagesList =
+    chosen.startPage === chosen.endPage
+      ? [chosen.startPage]
+      : [chosen.startPage, chosen.endPage];
+  const surahName1 = surahNames[chosen.startSurahId] || '';
+  const surahName2 = surahNames[chosen.endSurahId] || '';
+  const sameSurah = chosen.startSurahId === chosen.endSurahId;
+
+  const desc = formatPassageDescription(
+    pagesList,
+    chosen.startSurahId,
+    chosen.startAyah,
+    chosen.endSurahId,
+    chosen.endAyah
+  );
+
+  let positionLabel = `ص ${toArabicDigits(chosen.startPage)}`;
+  if (chosen.positionType === 'cross-page') {
+    positionLabel = `ص ${toArabicDigits(chosen.startPage)}-${toArabicDigits(chosen.endPage)}`;
+  }
+
+  const highlights: Record<number, PassageHighlight> = {};
+  if (chosen.startPage === chosen.endPage) {
+    const topPercent = Math.max(
+      3,
+      Math.min(85, Math.round(((chosen.startLine - 1) / 15) * 100) + 2)
     );
-    const chosen =
-      topCandidates[Math.floor(Math.random() * topCandidates.length)] || matchingCandidates[0];
-
-    if (chosen.endPage > chosen.startPage) {
-      usedPages.add(chosen.endPage);
-    }
-
-    const pagesList =
-      chosen.startPage === chosen.endPage
-        ? [chosen.startPage]
-        : [chosen.startPage, chosen.endPage];
-    const surahName1 = surahNames[chosen.startSurahId] || '';
-    const surahName2 = surahNames[chosen.endSurahId] || '';
-    const sameSurah = chosen.startSurahId === chosen.endSurahId;
-
-    const desc = formatPassageDescription(
-      pagesList,
-      chosen.startSurahId,
-      chosen.startAyah,
-      chosen.endSurahId,
-      chosen.endAyah
+    const heightPercent = Math.min(
+      95,
+      Math.max(15, Math.round((chosen.linesCount / 15) * 100))
     );
-
-    let positionLabel = `ص ${toArabicDigits(chosen.startPage)}`;
-    if (chosen.positionType === 'cross-page') {
-      positionLabel = `ص ${toArabicDigits(chosen.startPage)}-${toArabicDigits(chosen.endPage)}`;
-    }
-
-    const highlights: Record<number, PassageHighlight> = {};
-    if (chosen.startPage === chosen.endPage) {
-      const topPercent = Math.max(
+    highlights[chosen.startPage] = {
+      page: chosen.startPage,
+      topPercent,
+      heightPercent,
+      label: `آية ${toArabicDigits(chosen.startAyah)} إلى ${toArabicDigits(chosen.endAyah)}`,
+    };
+  } else {
+    highlights[chosen.startPage] = {
+      page: chosen.startPage,
+      topPercent: Math.max(
         3,
         Math.min(85, Math.round(((chosen.startLine - 1) / 15) * 100) + 2)
-      );
-      const heightPercent = Math.min(
-        95,
-        Math.max(15, Math.round((chosen.linesCount / 15) * 100))
-      );
-      highlights[chosen.startPage] = {
-        page: chosen.startPage,
-        topPercent,
-        heightPercent,
-        label: `آية ${toArabicDigits(chosen.startAyah)} إلى ${toArabicDigits(chosen.endAyah)}`,
-      };
-    } else {
-      highlights[chosen.startPage] = {
-        page: chosen.startPage,
-        topPercent: Math.max(
-          3,
-          Math.min(85, Math.round(((chosen.startLine - 1) / 15) * 100) + 2)
-        ),
-        heightPercent: Math.min(95, Math.max(15, Math.round((chosen.p1Lines / 15) * 100))),
-        label: `آية ${toArabicDigits(chosen.startAyah)} فصاعداً`,
-      };
-      highlights[chosen.endPage] = {
-        page: chosen.endPage,
-        topPercent: 3,
-        heightPercent: Math.min(95, Math.max(15, Math.round((chosen.p2Lines / 15) * 100))),
-        label: `إلى آية ${toArabicDigits(chosen.endAyah)}`,
-      };
-    }
+      ),
+      heightPercent: Math.min(95, Math.max(15, Math.round((chosen.p1Lines / 15) * 100))),
+      label: `آية ${toArabicDigits(chosen.startAyah)} فصاعداً`,
+    };
+    highlights[chosen.endPage] = {
+      page: chosen.endPage,
+      topPercent: 3,
+      heightPercent: Math.min(95, Math.max(15, Math.round((chosen.p2Lines / 15) * 100))),
+      label: `إلى آية ${toArabicDigits(chosen.endAyah)}`,
+    };
+  }
 
-    passages.push({
-      id: `passage-${passageNumber}-${chosen.startPage}`,
-      passageNumber,
-      pages: pagesList,
-      surahName: sameSurah ? surahName1 : `${surahName1} / ${surahName2}`,
-      startSurahId: chosen.startSurahId,
-      startAyah: chosen.startAyah,
-      endSurahId: chosen.endSurahId,
-      endAyah: chosen.endAyah,
-      startPage: chosen.startPage,
-      endPage: chosen.endPage,
-      positionType: chosen.positionType,
-      positionLabel,
-      description: desc,
-      shortLabel: positionLabel,
-      highlights,
-      actualLinesCount: chosen.linesCount,
-      juzNumber: pageJuzMap[chosen.startPage] || 1,
-      sourceMode: 'random',
-    });
+  return {
+    id: `passage-${passageNumber}-${chosen.startPage}-${chosen.startSurahId}-${chosen.startAyah}`,
+    passageNumber,
+    pages: pagesList,
+    surahName: sameSurah ? surahName1 : `${surahName1} / ${surahName2}`,
+    startSurahId: chosen.startSurahId,
+    startAyah: chosen.startAyah,
+    endSurahId: chosen.endSurahId,
+    endAyah: chosen.endAyah,
+    startPage: chosen.startPage,
+    endPage: chosen.endPage,
+    positionType: chosen.positionType,
+    positionLabel,
+    description: desc,
+    shortLabel: positionLabel,
+    highlights,
+    actualLinesCount: chosen.linesCount,
+    juzNumber: pageJuzMap[chosen.startPage] || bin.juzs[0] || 1,
+    allocatedRangeLabel: bin.rangeLabel,
+    sourceMode: 'random',
+  };
+}
+
+function generateRandomPassagesFromBins(
+  bins: SegmentBin[],
+  targetLinesPerSegment: number | undefined,
+  allowedPagesSet: Set<number>
+): SuggestedTestPassage[] {
+  const passages: SuggestedTestPassage[] = [];
+  const usedPages = new Set<number>();
+
+  for (let i = 0; i < bins.length; i++) {
+    passages.push(
+      generateRandomPassageForBin(
+        bins[i],
+        i,
+        targetLinesPerSegment,
+        usedPages,
+        allowedPagesSet
+      )
+    );
   }
 
   return passages;

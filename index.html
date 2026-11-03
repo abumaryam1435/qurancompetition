@@ -217,9 +217,30 @@
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&family=Amiri:ital,wght@0,400;0,700;1,400;1,700&family=Amiri+Quran&family=Scheherazade+New:wght@400;700&family=Noto+Naskh+Arabic:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=Tajawal:wght@400;500;700;800;900&family=Amiri:ital,wght@0,400;0,700;1,400;1,700&family=Amiri+Quran&family=Scheherazade+New:wght@400;700&family=Noto+Naskh+Arabic:wght@400;700&display=swap" rel="stylesheet">
     
     <style>
+      /* ضمان اتصال الحروف العربية تماماً ومنع تقطعها أو انقلابها في العرض والطباعة وتصدير PDF */
+      html[dir="rtl"],
+      html[dir="rtl"] body,
+      html[dir="rtl"] * {
+        letter-spacing: 0px !important;
+        word-spacing: normal !important;
+        font-feature-settings: "kern" 1, "liga" 1, "clig" 1, "calt" 1 !important;
+        font-variant-ligatures: common-ligatures contextual !important;
+        text-rendering: optimizeLegibility;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      @media print {
+        .no-print {
+          display: none !important;
+        }
+        body, #root {
+          background: #ffffff !important;
+          color: #0f172a !important;
+        }
+      }
       :root {
         --sat: constant(safe-area-inset-top);
         --sar: constant(safe-area-inset-right);

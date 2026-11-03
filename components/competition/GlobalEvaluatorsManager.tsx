@@ -72,9 +72,37 @@ export const GlobalEvaluatorsManager: React.FC = () => {
     );
   }, [globalEvaluators, searchTerm]);
 
-  // توليد كلمة مرور عشوائية بسيطة وموثوقة (أرقام وحروف)
+  // توليد كلمة مرور عشوائية بأرقام فقط (4 أرقام)
   const generateRandomPin = () => {
     return Math.floor(1000 + Math.random() * 9000).toString();
+  };
+
+  // توليد كلمة مرور بحروف وأرقام
+  const generateAlphaNumericPin = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+    let res = '';
+    for (let i = 0; i < 6; i++) {
+      res += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return res;
+  };
+
+  // توليد كلمة مرور قوية مع رموز
+  const generateStrongPinWithSymbols = () => {
+    const uppers = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+    const lowers = 'abcdefghijkmnpqrstuvwxyz';
+    const nums = '23456789';
+    const syms = '!@#$%&*';
+    const all = uppers + lowers + nums + syms;
+    let res =
+      uppers.charAt(Math.floor(Math.random() * uppers.length)) +
+      lowers.charAt(Math.floor(Math.random() * lowers.length)) +
+      nums.charAt(Math.floor(Math.random() * nums.length)) +
+      syms.charAt(Math.floor(Math.random() * syms.length));
+    for (let i = 0; i < 4; i++) {
+      res += all.charAt(Math.floor(Math.random() * all.length));
+    }
+    return res;
   };
 
   const handleAddEvaluator = (e: React.FormEvent) => {
@@ -104,7 +132,7 @@ export const GlobalEvaluatorsManager: React.FC = () => {
     setNewEvaluatorName('');
     setNewEvaluatorPin('');
     setNewEvaluatorNotes('');
-    showToast(`تمت إضافة المقيم (${trimmedName}) إلى السجل العام بنجاح!`, 'success');
+    showToast(`تمت إضافة المقيم (${trimmedName}) إلى صفحة المقيمين بنجاح!`, 'success');
   };
 
   // الإضافة الجماعية للمقيمين من أسطر
@@ -137,10 +165,10 @@ export const GlobalEvaluatorsManager: React.FC = () => {
     updateGlobalEvaluators(nextList);
     setBulkText('');
     setShowBulkAdd(false);
-    showToast(`تمت إضافة (${addedCount}) مقيم جديد إلى السجل العام بنجاح!`, 'success');
+    showToast(`تمت إضافة (${addedCount}) مقيم جديد إلى صفحة المقيمين بنجاح!`, 'success');
   };
 
-  // حفظ التعديل
+  // حفظ التعديل ومزامنته مع المسابقات المسند إليها المقيم
   const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingEvaluator) return;
@@ -150,19 +178,47 @@ export const GlobalEvaluatorsManager: React.FC = () => {
       return;
     }
 
+    const originalEval = globalEvaluators.find(ev => ev.id === editingEvaluator.id);
+    const updatedPin = editingEvaluator.pin.trim() || '1234';
+
     const nextList = globalEvaluators.map(e =>
       e.id === editingEvaluator.id
         ? {
             ...editingEvaluator,
             name: trimmedName,
-            pin: editingEvaluator.pin.trim() || '1234',
+            pin: updatedPin,
           }
         : e
     );
 
     updateGlobalEvaluators(nextList);
+
+    // تحديث اسم ورمز المقيم في جميع المسابقات التي تم اختياره فيها سابقاً
+    if (originalEval) {
+      const oldNameLower = originalEval.name.trim().toLowerCase();
+      let compsChanged = false;
+      const updatedComps = competitions.map(comp => {
+        const hasEval = (comp.evaluators || []).some(
+          ev => ev.name.trim().toLowerCase() === oldNameLower
+        );
+        if (!hasEval) return comp;
+        compsChanged = true;
+        return {
+          ...comp,
+          evaluators: (comp.evaluators || []).map(ev =>
+            ev.name.trim().toLowerCase() === oldNameLower
+              ? { ...ev, name: trimmedName, pin: updatedPin }
+              : ev
+          ),
+        };
+      });
+      if (compsChanged) {
+        updateCompetitions(updatedComps);
+      }
+    }
+
     setEditingEvaluator(null);
-    showToast('تم تحديث بيانات المقيم بنجاح', 'success');
+    showToast('تم تحديث بيانات المقيم ومزامنتها بنجاح', 'success');
   };
 
   // الحذف
@@ -364,44 +420,69 @@ export const GlobalEvaluatorsManager: React.FC = () => {
           </div>
 
           {!showBulkAdd ? (
-            <form onSubmit={handleAddEvaluator} className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+            <form onSubmit={handleAddEvaluator} className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
               <div className="sm:col-span-5">
+                <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                  اسم المقيم الكامل
+                </label>
                 <input
                   type="text"
                   value={newEvaluatorName}
                   onChange={e => setNewEvaluatorName(e.target.value)}
-                  placeholder="اسم المقيم الكافي..."
+                  placeholder="مثال: الشيخ عبدالله محمد..."
                   className="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-xs sm:text-sm font-bold focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
 
-              <div className="sm:col-span-3">
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={newEvaluatorPin}
-                    onChange={e => setNewEvaluatorPin(e.target.value)}
-                    placeholder="كلمة المرور / الرمز"
-                    className="w-full min-h-[44px] pl-9 pr-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-xs sm:text-sm font-bold focus:ring-2 focus:ring-emerald-500 text-center"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setNewEvaluatorPin(generateRandomPin())}
-                    className="absolute left-2 top-1/2 -translate-y-1/2 p-1 text-amber-600 hover:text-amber-700 font-black text-xs cursor-pointer"
-                    title="توليد رمز تلقائي"
-                  >
-                    توليد
-                  </button>
+              <div className="sm:col-span-4">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                    رمز الدخول (PIN)
+                  </label>
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => setNewEvaluatorPin(generateRandomPin())}
+                      className="px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold hover:bg-slate-300 transition cursor-pointer"
+                      title="توليد 4 أرقام"
+                    >
+                      أرقام
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewEvaluatorPin(generateAlphaNumericPin())}
+                      className="px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold hover:bg-slate-300 transition cursor-pointer"
+                      title="توليد حروف وأرقام"
+                    >
+                      حروف/أرقام
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewEvaluatorPin(generateStrongPinWithSymbols())}
+                      className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 font-bold hover:bg-emerald-200 transition cursor-pointer flex items-center gap-0.5"
+                      title="توليد مع رموز"
+                    >
+                      <Sparkles size={10} />
+                      مع رموز
+                    </button>
+                  </div>
                 </div>
+                <input
+                  type="text"
+                  value={newEvaluatorPin}
+                  onChange={e => setNewEvaluatorPin(e.target.value)}
+                  placeholder="أدخل الرمز أو اختر توليد..."
+                  className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-xs sm:text-sm font-bold font-mono focus:ring-2 focus:ring-emerald-500 text-center"
+                />
               </div>
 
-              <div className="sm:col-span-4 flex items-center gap-2">
+              <div className="sm:col-span-3 flex items-center gap-2">
                 <button
                   type="submit"
                   className="w-full min-h-[44px] px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs sm:text-sm transition active:scale-95 flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
                 >
                   <Plus size={16} />
-                  <span>حفظ المقيم</span>
+                  <span>إضافة المقيم</span>
                 </button>
               </div>
             </form>

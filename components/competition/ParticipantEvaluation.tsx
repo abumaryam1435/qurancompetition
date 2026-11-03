@@ -38,66 +38,145 @@ import {
   formatJuzsFromNumbers,
   extractJuzCount,
   isUnspecifiedJuzCount,
+  getErrorColorStyle,
+  resolveCompetitionErrorCategories,
+  resolveCompetitionErrors,
 } from '../../utils/juzUtils';
 import { preloadMushafPages } from '../../utils/mushafPreload';
 import { preloadVerseLinesForPages } from '../../utils/mushafVerseHighlightService';
 import { Logo, AwqafBadge } from '../Logo';
 
+interface ResolvedScopeDetails {
+  scopeType: 'juzs' | 'surahs';
+  juzs: number[];
+  pages: number[];
+  surahIds: number[];
+}
+
 /**
- * استخراج صفحات المصحف المسموحة للمتسابق بناءً على الأجزاء أو السور المحددة للمتسابق أو للمستوى
+ * استخراج تفاصيل نطاق المتسابق (أجزاء أو سور) وصفحات المصحف المسموحة بدقة
  */
-function resolveAllowedPages(scopeStr: string): number[] {
+function resolveScopeDetails(scopeStr: string): ResolvedScopeDetails {
   const clean = (scopeStr || '').trim();
   const pages = new Set<number>();
+  const all30Juzs = Array.from({ length: 30 }, (_, i) => i + 1);
+  const all604Pages = Array.from({ length: 604 }, (_, i) => i + 1);
 
   if (!clean) {
-    for (let i = 1; i <= 604; i++) pages.add(i);
-    return Array.from(pages);
+    return {
+      scopeType: 'juzs',
+      juzs: all30Juzs,
+      pages: all604Pages,
+      surahIds: [],
+    };
   }
 
   if (clean.startsWith('الأجزاء:')) {
-    const juzs = clean
-      .replace('الأجزاء:', '')
-      .split(/[،,\s]+/)
-      .map(s => parseInt(s.trim(), 10))
-      .filter(n => !isNaN(n) && n >= 1 && n <= 30);
+    const juzs = parseJuzsToNumbers(clean.replace('الأجزاء:', ''));
     juzs.forEach(j => {
       if (juzPagesMap[j]) juzPagesMap[j].forEach(p => pages.add(p));
     });
-  } else if (clean.startsWith('السور:')) {
+    const sortedPages = pages.size > 0 ? Array.from(pages).sort((a, b) => a - b) : all604Pages;
+    return {
+      scopeType: 'juzs',
+      juzs: juzs.length > 0 ? juzs : all30Juzs,
+      pages: sortedPages,
+      surahIds: [],
+    };
+  }
+
+  if (clean.startsWith('السور:')) {
     const names = clean
       .replace('السور:', '')
       .split(/[،,]+/)
       .map(s => s.trim())
       .filter(Boolean);
+    const surahIds: number[] = [];
     names.forEach(name => {
-      const sId = surahNames.indexOf(name);
+      const cleanName = name.replace(/^سورة\s+/, '').trim();
+      const sId = surahNames.indexOf(cleanName);
       if (sId > 0 && surahPagesMap[sId]) {
+        surahIds.push(sId);
         surahPagesMap[sId].forEach(p => pages.add(p));
       }
     });
-  } else {
-    // محاولة ذكية لاستخراج سور أو أجزاء محددة إن وجدت في النص
-    surahNames.slice(1).forEach((sName, idx) => {
-      const sId = idx + 1;
-      if (clean.includes(sName) && surahPagesMap[sId]) {
-        surahPagesMap[sId].forEach(p => pages.add(p));
-      }
-    });
-
-    if (pages.size === 0 && (clean.includes('عم') || clean.includes('الجزء 30') || clean === '30')) {
-      juzPagesMap[30]?.forEach(p => pages.add(p));
-    }
-    if (pages.size === 0 && clean.includes('تبارك')) {
-      juzPagesMap[29]?.forEach(p => pages.add(p));
-    }
+    const sortedPages = pages.size > 0 ? Array.from(pages).sort((a, b) => a - b) : all604Pages;
+    return {
+      scopeType: 'surahs',
+      juzs: [],
+      pages: sortedPages,
+      surahIds,
+    };
   }
 
-  if (pages.size === 0) {
-    for (let i = 1; i <= 604; i++) pages.add(i);
+  // فحص ما إذا كان النص يشير إلى المصحف كاملاً (30 جزءاً)
+  if (
+    clean.includes('القرآن كاملاً') ||
+    clean.includes('القرآن كامل') ||
+    clean.includes('المصحف كاملا') ||
+    clean.includes('المصحف كاملاً') ||
+    extractJuzCount(clean) === 30
+  ) {
+    return {
+      scopeType: 'juzs',
+      juzs: all30Juzs,
+      pages: all604Pages,
+      surahIds: [],
+    };
   }
 
-  return Array.from(pages).sort((a, b) => a - b);
+  if (clean.includes('جزء عم') || clean.includes('الجزء 30') || clean === 'عم') {
+    return {
+      scopeType: 'juzs',
+      juzs: [30],
+      pages: [...(juzPagesMap[30] || [])],
+      surahIds: [],
+    };
+  }
+
+  if (clean.includes('جزء تبارك') || clean.includes('الجزء 29') || clean === 'تبارك') {
+    return {
+      scopeType: 'juzs',
+      juzs: [29],
+      pages: [...(juzPagesMap[29] || [])],
+      surahIds: [],
+    };
+  }
+
+  // فحص أسماء السور ككلمات كاملة فقط لتجنب تطابق حرف (ق) مع كلمة (القرآن)
+  const cleanTokens = clean
+    .replace(/[()،,\-]/g, ' ')
+    .split(/\s+/)
+    .map(t => t.trim())
+    .filter(Boolean);
+  const matchedSurahIds: number[] = [];
+  surahNames.slice(1).forEach((sName, idx) => {
+    const sId = idx + 1;
+    const isExactMatch =
+      clean === sName ||
+      clean.includes(`سورة ${sName}`) ||
+      (sName.length > 2 && cleanTokens.includes(sName));
+    if (isExactMatch && surahPagesMap[sId]) {
+      matchedSurahIds.push(sId);
+      surahPagesMap[sId].forEach(p => pages.add(p));
+    }
+  });
+
+  if (matchedSurahIds.length > 0 && pages.size > 0) {
+    return {
+      scopeType: 'surahs',
+      juzs: [],
+      pages: Array.from(pages).sort((a, b) => a - b),
+      surahIds: matchedSurahIds,
+    };
+  }
+
+  return {
+    scopeType: 'juzs',
+    juzs: all30Juzs,
+    pages: all604Pages,
+    surahIds: [],
+  };
 }
 
 export default function ParticipantEvaluation({
@@ -217,17 +296,19 @@ export default function ParticipantEvaluation({
     return rawParticipantScope || rawLevelScope;
   }, [selectedJuzs, rawParticipantScope, rawLevelScope]);
 
-  const allowedPages = useMemo(
-    () => resolveAllowedPages(effectiveScopeStr),
+  const scopeDetails = useMemo(
+    () => resolveScopeDetails(effectiveScopeStr),
     [effectiveScopeStr]
   );
+
+  const allowedPages = scopeDetails.pages;
 
   const [suggestedPassages, setSuggestedPassages] = useState<SuggestedTestPassage[]>([]);
 
   const activePassageMode = comp.passageMode || 'random';
   const activeManualPassages = comp.manualPassages || [];
 
-  // توليد المقاطع المقترحة المظللة حسب التصنيف المعتمد من المشرف
+  // توليد المقاطع المقترحة المظللة موزعة حسب أجزاء أو صفحات مستوى المتسابق
   useEffect(() => {
     if (isLevelUnspecified && !hasExactJuzsSelected) {
       setSuggestedPassages([]);
@@ -241,6 +322,9 @@ export default function ParticipantEvaluation({
       {
         mode: activePassageMode,
         manualPassages: activeManualPassages,
+        scopeType: scopeDetails.scopeType,
+        explicitJuzs: scopeDetails.juzs,
+        allowedSurahIds: scopeDetails.surahIds,
       }
     );
     setSuggestedPassages(generated);
@@ -253,6 +337,7 @@ export default function ParticipantEvaluation({
   }, [
     participant.id,
     allowedPages,
+    scopeDetails,
     segmentsCount,
     linesPerSegment,
     activePassageMode,
@@ -278,6 +363,9 @@ export default function ParticipantEvaluation({
       {
         mode: activePassageMode,
         manualPassages: activeManualPassages,
+        scopeType: scopeDetails.scopeType,
+        explicitJuzs: scopeDetails.juzs,
+        allowedSurahIds: scopeDetails.surahIds,
       }
     );
     setSuggestedPassages(generated);
@@ -310,15 +398,14 @@ export default function ParticipantEvaluation({
     setIsMushafOpen(true);
   };
 
+  const compErrorCategories = useMemo(
+    () => resolveCompetitionErrorCategories(comp),
+    [comp]
+  );
+
   const levelErrors = useMemo(() => {
-    if (level.errors && level.errors.length > 0) return level.errors;
-    return [
-      { id: 1, name: 'التنبيه', deduction: 0.5 },
-      { id: 2, name: 'الفتح', deduction: 1 },
-      { id: 3, name: 'التشكيل', deduction: 1 },
-      { id: 4, name: 'التجويد', deduction: 0.5 },
-    ];
-  }, [level.errors]);
+    return resolveCompetitionErrors(comp);
+  }, [comp]);
 
   const handleSetSegmentErrorCount = (segIdx: number, errorId: number, newCount: number) => {
     const safeCount = Math.max(0, newCount);
@@ -875,41 +962,6 @@ export default function ParticipantEvaluation({
                     )
                 : seg.passageDescription || `المقطع ${toArabicDigits(idx + 1)}`;
 
-              const errColorStyles = [
-                {
-                  card: 'bg-purple-50/80 dark:bg-purple-950/35 border-purple-200 dark:border-purple-800/70',
-                  activeCard: 'bg-purple-100/90 dark:bg-purple-950/60 border-purple-400 dark:border-purple-600',
-                  title: 'text-purple-950 dark:text-purple-200',
-                  sub: 'text-purple-700 dark:text-purple-400',
-                  plusBtn: 'bg-purple-600 hover:bg-purple-700 text-white',
-                  countBox: 'border-purple-400 text-purple-900 dark:text-purple-200',
-                },
-                {
-                  card: 'bg-rose-50/80 dark:bg-rose-950/35 border-rose-200 dark:border-rose-800/70',
-                  activeCard: 'bg-rose-100/90 dark:bg-rose-950/60 border-rose-400 dark:border-rose-600',
-                  title: 'text-rose-950 dark:text-rose-200',
-                  sub: 'text-rose-700 dark:text-rose-400',
-                  plusBtn: 'bg-rose-600 hover:bg-rose-700 text-white',
-                  countBox: 'border-rose-400 text-rose-900 dark:text-rose-200',
-                },
-                {
-                  card: 'bg-amber-50/80 dark:bg-amber-950/35 border-amber-200 dark:border-amber-800/70',
-                  activeCard: 'bg-amber-100/90 dark:bg-amber-950/60 border-amber-400 dark:border-amber-600',
-                  title: 'text-amber-950 dark:text-amber-200',
-                  sub: 'text-amber-700 dark:text-amber-400',
-                  plusBtn: 'bg-amber-600 hover:bg-amber-700 text-white',
-                  countBox: 'border-amber-400 text-amber-900 dark:text-amber-200',
-                },
-                {
-                  card: 'bg-teal-50/80 dark:bg-teal-950/35 border-teal-200 dark:border-teal-800/70',
-                  activeCard: 'bg-teal-100/90 dark:bg-teal-950/60 border-teal-400 dark:border-teal-600',
-                  title: 'text-teal-950 dark:text-teal-200',
-                  sub: 'text-teal-700 dark:text-teal-400',
-                  plusBtn: 'bg-teal-600 hover:bg-teal-700 text-white',
-                  countBox: 'border-teal-400 text-teal-900 dark:text-teal-200',
-                },
-              ];
-
               return (
                 <div
                   key={passage?.id || `seg-${idx}`}
@@ -922,12 +974,18 @@ export default function ParticipantEvaluation({
                       : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900'
                   }`}
                 >
-                  {/* 1. رأس بطاقة المقطع: رقم المقطع + درجة المقطع المستقلة + حالة التسميع */}
+                  {/* 1. رأس بطاقة المقطع: رقم المقطع + النطاق المخصص له من المستوى + درجة المقطع المستقلة + حالة التسميع */}
                   <div className="flex items-center justify-between gap-2 flex-wrap border-b border-slate-100 dark:border-slate-800 pb-2.5">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="px-2.5 py-1 rounded-xl bg-[#0F2347] text-[#F5D77F] font-black text-xs sm:text-sm shadow-2xs">
                         المقطع {toArabicDigits(idx + 1)}
                       </span>
+
+                      {passage?.allocatedRangeLabel && (
+                        <span className="px-2.5 py-1 rounded-xl bg-indigo-50 dark:bg-indigo-950/70 text-indigo-900 dark:text-indigo-200 border border-indigo-200 dark:border-indigo-800 font-black text-[11px] sm:text-xs">
+                          نطاق المقطع: {passage.allocatedRangeLabel}
+                        </span>
+                      )}
 
                       {isSegUnmem ? (
                         <span className="px-2.5 py-1 rounded-xl text-xs font-black bg-rose-600 text-white shadow-2xs flex items-center gap-1">
@@ -1002,7 +1060,7 @@ export default function ParticipantEvaluation({
                     )}
                   </div>
 
-                  {/* 3. أزرار الخصم المستقلة الخاصة بهذا المقطع فقط (التنبيه، الفتح، التشكيل، التجويد، غير حافظ) */}
+                  {/* 3. أزرار الخصم المستقلة الخاصة بهذا المقطع فقط (يظهر للمقيم لون الزر فقط حسب الصنف) */}
                   <div className="space-y-2.5 pt-1">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <span className="text-xs font-black text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
@@ -1032,7 +1090,7 @@ export default function ParticipantEvaluation({
                       </button>
                     </div>
 
-                    {/* شبكة أزرار الخصم الأربعة (2×2 على الهاتف، 4 أعمدة على الشاشات الأكبر) */}
+                    {/* شبكة أزرار الخصم (يظهر للمقيم لون الزر فقط حسب الصنف المحدد من المشرف) */}
                     <div
                       className={`grid gap-2 ${
                         levelErrors.length >= 4
@@ -1040,10 +1098,10 @@ export default function ParticipantEvaluation({
                           : 'grid-cols-2 sm:grid-cols-3'
                       }`}
                     >
-                      {levelErrors.map((err, errIdx) => {
+                      {levelErrors.map(err => {
                         const count = seg.errorsCount?.[err.id] || 0;
                         const isPlusDisabled = isSegUnmem || isSegCapReached;
-                        const st = errColorStyles[errIdx % errColorStyles.length];
+                        const st = getErrorColorStyle(err, compErrorCategories);
 
                         return (
                           <div

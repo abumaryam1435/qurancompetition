@@ -11,6 +11,7 @@ type View = 'competition' | 'evaluators' | 'passages' | 'settings';
 export const SupervisorDashboard: React.FC = () => {
   const context = useContext(AppContext);
   const [activeView, setActiveView] = useState<View>('competition');
+  const [competitionListTrigger, setCompetitionListTrigger] = useState<number>(0);
 
   if (!context) {
     return <div className="dark:text-gray-200 p-8 text-center font-bold">جاري تحميل البيانات...</div>;
@@ -37,7 +38,10 @@ export const SupervisorDashboard: React.FC = () => {
         >
           <button
             type="button"
-            onClick={() => setActiveView('competition')}
+            onClick={() => {
+              setActiveView('competition');
+              setCompetitionListTrigger(prev => prev + 1);
+            }}
             className={`min-h-[50px] sm:min-h-[44px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-1.5 sm:px-4 py-2 sm:py-2.5 rounded-xl font-black text-[11px] sm:text-sm transition-all active:scale-95 cursor-pointer text-center leading-tight ${
               activeView === 'competition'
                 ? 'bg-emerald-800 text-white shadow-sm dark:bg-emerald-600'
@@ -99,7 +103,11 @@ export const SupervisorDashboard: React.FC = () => {
 
       {/* Main Content */}
       <div className={activeView === 'competition' ? 'block' : 'hidden'}>
-        <CompetitionManager onOpenPassagesPage={() => setActiveView('passages')} />
+        <CompetitionManager
+          onOpenPassagesPage={() => setActiveView('passages')}
+          onOpenEvaluatorsPage={() => setActiveView('evaluators')}
+          resetToListTrigger={competitionListTrigger}
+        />
       </div>
 
       <div className={activeView === 'evaluators' ? 'block' : 'hidden'}>

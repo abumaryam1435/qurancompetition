@@ -182,6 +182,63 @@ export default function EvaluatorDashboard({
     evaluator.id,
   ]);
 
+  // إذا كانت المسابقة غير مفعّلة من قِبل المشرف: لا تظهر أسماء المشاركين للمعلمين/المقيمين
+  if (!comp.isActive) {
+    return (
+      <div
+        className="bg-slate-50 dark:bg-slate-950 min-h-[100dvh] w-full max-w-full overflow-x-hidden text-slate-800 dark:text-slate-100 text-right flex flex-col"
+        dir="rtl"
+      >
+        <header className="bg-emerald-900 dark:bg-slate-900 text-white px-2.5 sm:px-6 py-2 sm:py-2.5 shadow-md sticky top-0 z-20 flex flex-row justify-between items-center gap-2 border-b border-amber-500/30 w-full">
+          <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-1">
+            <Logo size="sm" />
+            <AwqafBadge variant="compact" />
+            <div className="min-w-0 flex-1 text-right">
+              <h1 className="text-[11px] xs:text-xs sm:text-lg font-black text-amber-300 leading-tight line-clamp-2 break-words whitespace-normal">
+                {comp.name}
+              </h1>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] xs:text-[11px] sm:text-xs text-emerald-100 leading-tight mt-0.5">
+                <span className="font-bold leading-tight line-clamp-2 break-words whitespace-normal">
+                  المقيم: {evaluator.name}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={onLogout}
+            className="min-h-[36px] sm:min-h-[40px] px-2.5 sm:px-4 py-1.5 sm:py-2 bg-red-600/90 hover:bg-red-700 rounded-xl transition active:scale-95 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-black shrink-0 shadow-sm cursor-pointer"
+            title="تسجيل الخروج"
+          >
+            <LogOut size={16} />
+            <span>خروج</span>
+          </button>
+        </header>
+
+        <main className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 max-w-lg mx-auto text-center">
+          <div className="bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-3xl shadow-lg border-2 border-amber-300 dark:border-amber-800/60 space-y-4 w-full">
+            <div className="w-16 h-16 rounded-2xl bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-400 flex items-center justify-center mx-auto shadow-xs">
+              <AlertTriangle size={34} />
+            </div>
+            <h2 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white">
+              المسابقة غير مفعّلة حالياً
+            </h2>
+            <p className="text-xs sm:text-sm font-bold text-slate-600 dark:text-slate-300 leading-relaxed">
+              تم إيقاف تفعيل مسابقة «{comp.name}» حالياً من قِبل المشرف. لن تظهر أسماء المشاركين ولن يتاح رصد التقييمات حتى يقوم المشرف بتفعيل المسابقة.
+            </p>
+            <button
+              onClick={onLogout}
+              className="w-full min-h-[48px] px-6 py-3 bg-emerald-700 hover:bg-emerald-800 text-white rounded-2xl font-black text-sm flex items-center justify-center gap-2 shadow-md active:scale-95 cursor-pointer transition"
+            >
+              <LogOut size={18} />
+              <span>تسجيل الخروج والعودة لشاشة الدخول</span>
+            </button>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   if (selectedParticipantId !== null) {
     const participant = allParticipants.find(
       p => Number(p.id) === Number(selectedParticipantId)
