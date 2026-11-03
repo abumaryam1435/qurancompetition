@@ -428,11 +428,91 @@
         } catch (e) {}
       })();
     </script>
+    <style>
+      /* إخفاء شارة أو زر Powered by Netlify وأي عناصر خارجية محقونة خارج #root */
+      html > *:not(head):not(body),
+      body > *:not(#root):not(script):not(style):not(link):not(noscript),
+      a[href*="netlify.com"],
+      a[href*="netlify.app"]:not(#root a),
+      iframe[src*="netlify"],
+      div[id*="netlify"]:not(#root *),
+      div[class*="netlify"]:not(#root *),
+      [data-netlify-deploy-notifications],
+      [data-netlify-drawer],
+      netlify-drawer,
+      netlify-badge {
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        position: fixed !important;
+        left: -99999px !important;
+        top: -99999px !important;
+        width: 0 !important;
+        height: 0 !important;
+        max-width: 0 !important;
+        max-height: 0 !important;
+        overflow: hidden !important;
+        z-index: -99999 !important;
+      }
+    </style>
 </head>
 <body class="bg-[#FAF8F5] dark:bg-[#070E1C] text-slate-900 dark:text-slate-100 transition-colors duration-300 min-h-full">
     <div id="root" class="bg-[#FAF8F5] dark:bg-[#070E1C] text-slate-900 dark:text-slate-100 transition-colors duration-300 min-h-screen min-h-[100dvh]"></div>
     <script type="module" src="/index.tsx"></script>
   <script>
+  // إزالة زر Powered by Netlify تلقائياً في حال تم حقنه عبر السكربتات الخارجية أو Shadow DOM
+  (function() {
+    function removeNetlifyBadge() {
+      try {
+        var root = document.getElementById('root');
+        if (!root) return;
+
+        // إزالة أي عنصر مرئي محقون مباشرة داخل body خارج #root
+        var bodyChildren = Array.prototype.slice.call(document.body.children);
+        bodyChildren.forEach(function(el) {
+          if (!el || el === root) return;
+          var tag = (el.tagName || '').toUpperCase();
+          if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'LINK' || tag === 'NOSCRIPT') return;
+          el.style.setProperty('display', 'none', 'important');
+          el.style.setProperty('visibility', 'hidden', 'important');
+          el.style.setProperty('opacity', '0', 'important');
+          el.style.setProperty('pointer-events', 'none', 'important');
+          if (el.parentNode) {
+            el.parentNode.removeChild(el);
+          }
+        });
+
+        // إزالة أي عنصر محقون خارج head و body في html
+        var htmlChildren = Array.prototype.slice.call(document.documentElement.children);
+        htmlChildren.forEach(function(el) {
+          if (!el) return;
+          var tag = (el.tagName || '').toUpperCase();
+          if (tag === 'HEAD' || tag === 'BODY') return;
+          el.style.setProperty('display', 'none', 'important');
+          if (el.parentNode) {
+            el.parentNode.removeChild(el);
+          }
+        });
+      } catch (e) {}
+    }
+
+    removeNetlifyBadge();
+    window.addEventListener('DOMContentLoaded', removeNetlifyBadge);
+    window.addEventListener('load', removeNetlifyBadge);
+    setInterval(removeNetlifyBadge, 800);
+
+    if (typeof MutationObserver !== 'undefined') {
+      var observer = new MutationObserver(function() {
+        removeNetlifyBadge();
+      });
+      observer.observe(document.documentElement || document.body, {
+        childList: true,
+        subtree: true
+      });
+    }
+  })();
+
   if ('serviceWorker' in navigator) {
     const isDevOrPreview = window.location.hostname.includes('ais-dev') || 
                            window.location.hostname.includes('run.app') || 

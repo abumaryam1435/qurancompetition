@@ -36,6 +36,7 @@ import {
   toArabicDigits,
   parseJuzsToNumbers,
   formatJuzsFromNumbers,
+  formatJuzsOrSurahsDisplay,
   extractJuzCount,
   isUnspecifiedJuzCount,
   getErrorColorStyle,
@@ -291,9 +292,9 @@ export default function ParticipantEvaluation({
 
   const effectiveScopeStr = useMemo(() => {
     if (selectedJuzs.length > 0) {
-      return `الأجزاء: ${selectedJuzs.join('، ')}`;
+      return `الأجزاء: ${formatJuzsFromNumbers(selectedJuzs)}`;
     }
-    return rawParticipantScope || rawLevelScope;
+    return formatJuzsOrSurahsDisplay(rawParticipantScope || rawLevelScope);
   }, [selectedJuzs, rawParticipantScope, rawLevelScope]);
 
   const scopeDetails = useMemo(
@@ -544,8 +545,8 @@ export default function ParticipantEvaluation({
 
     const finalScope =
       selectedJuzs.length > 0
-        ? `الأجزاء: ${selectedJuzs.join('، ')}`
-        : participant.juzsOrSurahs || level.juzsOrSurahs;
+        ? `الأجزاء: ${formatJuzsFromNumbers(selectedJuzs)}`
+        : formatJuzsOrSurahsDisplay(participant.juzsOrSurahs || level.juzsOrSurahs);
 
     const newEval: CompetitionEvaluation = {
       id: existingEval ? existingEval.id : Date.now() + Math.floor(Math.random() * 1000),

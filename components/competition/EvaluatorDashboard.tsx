@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import ParticipantEvaluation from './ParticipantEvaluation';
 import { Logo, AwqafBadge } from '../Logo';
+import { formatJuzsOrSurahsDisplay } from '../../utils/juzUtils';
 
 export default function EvaluatorDashboard({
   evaluatorUser,
@@ -539,8 +540,8 @@ export default function EvaluatorDashboard({
                         {level?.linesPerSegment || 7} أسطر فعلية
                       </span>
                       {(p.juzsOrSurahs || level?.juzsOrSurahs) && (
-                        <span className="bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-lg font-bold truncate max-w-[150px]">
-                          📖 {p.juzsOrSurahs || level?.juzsOrSurahs}
+                        <span className="bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-lg font-bold truncate max-w-[190px]">
+                          📖 {formatJuzsOrSurahsDisplay(p.juzsOrSurahs || level?.juzsOrSurahs)}
                         </span>
                       )}
                     </div>

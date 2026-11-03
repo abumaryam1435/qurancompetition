@@ -35,17 +35,22 @@ export const formatRtlRange = (val: any): string => {
 };
 
 export function parseJuzsToNumbers(input: string | string[]): number[] {
-  const parts = Array.isArray(input) ? input : input.split(/،|,/);
+  if (!input) return [];
+  const cleanInput = Array.isArray(input)
+    ? input
+    : String(input)
+        .replace(/^الأجزاء:\s*/, '')
+        .split(/،|,/);
   const nums = new Set<number>();
 
-  for (let part of parts) {
-    part = part.trim().replace(/[\u200E\u200F\u202A-\u202E]/g, '');
+  for (let part of cleanInput) {
+    part = String(part).trim().replace(/[\u200E\u200F\u202A-\u202E]/g, '');
     if (!part) continue;
 
     // Convert arabic numerals to english
     part = toEnglishDigits(part);
 
-    const rangeMatch = part.match(/^(\d+)\s*[-–—]\s*(\d+)$/);
+    const rangeMatch = part.match(/(?:من\s*)?(\d+)\s*(?:إلى|الى|[-–—])\s*(\d+)/);
     if (rangeMatch) {
       const start = parseInt(rangeMatch[1], 10);
       const end = parseInt(rangeMatch[2], 10);
@@ -57,9 +62,12 @@ export function parseJuzsToNumbers(input: string | string[]): number[] {
         }
       }
     } else {
-      const val = parseInt(part, 10);
-      if (!isNaN(val) && val >= 1 && val <= 30) {
-        nums.add(val);
+      const singleMatch = part.match(/(\d+)/);
+      if (singleMatch) {
+        const val = parseInt(singleMatch[1], 10);
+        if (!isNaN(val) && val >= 1 && val <= 30) {
+          nums.add(val);
+        }
       }
     }
   }
@@ -70,7 +78,11 @@ export function parseJuzsToNumbers(input: string | string[]): number[] {
 export function formatJuzsFromNumbers(nums: number[]): string {
   if (!nums || nums.length === 0) return "";
 
-  const sorted = [...new Set(nums)].sort((a, b) => a - b);
+  const sorted = [...new Set(nums)]
+    .filter(n => !isNaN(n) && n >= 1 && n <= 30)
+    .sort((a, b) => a - b);
+  if (sorted.length === 0) return "";
+
   const ranges: string[] = [];
 
   let start = sorted[0];
@@ -83,10 +95,8 @@ export function formatJuzsFromNumbers(nums: number[]): string {
     } else {
       if (start === prev) {
         ranges.push(toArabicDigits(start));
-      } else if (prev === start + 1) {
-        ranges.push(toArabicDigits(start) + "، " + toArabicDigits(prev));
       } else {
-        ranges.push(formatRtlRange(`${start} - ${prev}`));
+        ranges.push(`من ${toArabicDigits(start)} إلى ${toArabicDigits(prev)}`);
       }
       start = current;
       prev = current;
@@ -94,6 +104,17 @@ export function formatJuzsFromNumbers(nums: number[]): string {
   }
 
   return ranges.join("، ");
+}
+
+export function formatJuzsOrSurahsDisplay(scope: string | undefined): string {
+  if (!scope) return "";
+  const trimmed = String(scope).trim();
+  if (trimmed.startsWith('الأجزاء:')) {
+    const nums = parseJuzsToNumbers(trimmed.replace('الأجزاء:', ''));
+    if (nums.length === 0) return 'الأجزاء: غير محدد';
+    return `الأجزاء: ${formatJuzsFromNumbers(nums)}`;
+  }
+  return trimmed;
 }
 
 export function formatAndCountJuzs(input: string[] | string | undefined): {
