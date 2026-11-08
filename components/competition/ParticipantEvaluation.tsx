@@ -1,5 +1,6 @@
 import React, { useState, useContext, useMemo, useEffect, useRef } from 'react';
 import { AppContext } from '../../App';
+import { getDb } from '../../utils/firebase';
 import {
   Competition,
   CompetitionEvaluator,
@@ -216,25 +217,68 @@ export default function ParticipantEvaluation({
       Number(ev.evaluatorId) !== Number(evaluator.id)
   );
 
-  // قراءة النسخة الحية للمتسابق من المسابقة لضمان المزامنة الفورية بين جميع المقيمين في اللجنة
+  // قراءة النسخة الحية للمسابقة والمتسابق من السياق مباشرة لضمان المزامنة الفورية بين جميع المقيمين في اللجنة
+  const currentComp = useMemo(
+    () =>
+      (context?.competitions || []).find(c => String(c.id) === String(comp.id)) ||
+      comp,
+    [context?.competitions, comp]
+  );
+
   const liveParticipant = useMemo(
     () =>
-      (comp.participants || []).find(p => Number(p.id) === Number(participant.id)) ||
+      (currentComp.participants || []).find(p => Number(p.id) === Number(participant.id)) ||
       participant,
-    [comp.participants, participant]
+    [currentComp.participants, participant]
   );
 
   // ترتيب المتسابق الموحد داخل نفس المستوى (0 للمتسابق الأول، 1 للثاني، 2 للثالث...)
   // لضمان ظهور نفس المقاطع تماماً لدى جميع المقيمين لنفس المتسابق، مع اختلافها من متسابق لآخر
   const participantOrderIndex = useMemo(() => {
-    const sameLevelList = [...(comp.participants || [])]
+    const sameLevelList = [...(currentComp.participants || [])]
       .filter(p => Number(p.levelId) === Number(level.id))
       .sort((a, b) => Number(a.id) - Number(b.id));
     const idx = sameLevelList.findIndex(p => Number(p.id) === Number(participant.id));
     return idx >= 0 ? idx : 0;
-  }, [comp.participants, level.id, participant.id]);
+  }, [currentComp.participants, level.id, participant.id]);
 
   const currentPassageSeed = Number(liveParticipant.passageSeed || 0);
+
+  // فحص نبض حي دوري سريع كل ثانيتين أثناء فتح شاشة التقييم للتأكد من التقاط أي إعادة اقتراح مقاطع أو تحديد نطاق من عضو آخر في اللجنة فوراً
+  useEffect(() => {
+    let isCancelled = false;
+    const interval = setInterval(async () => {
+      try {
+        const db = getDb();
+        if (!db) return;
+        const snap = await db.ref('data/competitions').once('value');
+        if (isCancelled) return;
+        if (snap && snap.exists()) {
+          const comps = snap.val();
+          if (Array.isArray(comps)) {
+            const remoteComp = comps.find((c: any) => String(c.id) === String(comp.id));
+            const remotePart = (remoteComp?.participants || []).find(
+              (p: any) => Number(p.id) === Number(participant.id)
+            );
+            if (remotePart) {
+              const remoteSeed = Number(remotePart.passageSeed || 0);
+              const remoteScope = remotePart.juzsOrSurahs || '';
+              const mySeed = Number(liveParticipant.passageSeed || 0);
+              const myScope = liveParticipant.juzsOrSurahs || '';
+              if (remoteSeed !== mySeed || remoteScope !== myScope) {
+                context?.updateCompetitions(comps);
+              }
+            }
+          }
+        }
+      } catch {}
+    }, 2000);
+
+    return () => {
+      isCancelled = true;
+      clearInterval(interval);
+    };
+  }, [comp.id, participant.id, liveParticipant.passageSeed, liveParticipant.juzsOrSurahs, context]);
 
   const rawLevelScope = level.juzsOrSurahs || '';
   const rawParticipantScope = liveParticipant.juzsOrSurahs || participant.juzsOrSurahs || '';
@@ -467,18 +511,17 @@ export default function ParticipantEvaluation({
     });
 
     // مزامنة بذرة التوليد الجديدة للمتسابق حتى تظهر نفس المقاطع الجديدة لدى بقية المقيمين في اللجنة
-    const updatedParticipants = (comp.participants || []).map(p =>
+    const updatedParticipants = (currentComp.participants || []).map(p =>
       Number(p.id) === Number(participant.id)
         ? { ...p, passageSeed: nextSeed }
         : p
     );
-    context.updateCompetitions(
-      context.competitions.map(c =>
-        String(c.id) === String(comp.id)
-          ? { ...c, participants: updatedParticipants }
-          : c
-      )
+    const updatedCompetitions = (context.competitions || []).map(c =>
+      String(c.id) === String(comp.id)
+        ? { ...c, participants: updatedParticipants }
+        : c
     );
+    context.updateCompetitions(updatedCompetitions);
 
     const passagePages = generated.flatMap(p => p.pages);
     if (passagePages.length > 0) {

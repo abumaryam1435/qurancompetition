@@ -140,9 +140,15 @@ const normalizeToArray = (val: any): any[] => {
   return [];
 };
 
+const broadcastChannel =
+  typeof window !== 'undefined' && 'BroadcastChannel' in window
+    ? new BroadcastChannel('quran_competition_firestore_sync')
+    : null;
+
 /**
  * محول فوري حقيقي (Realtime Adapter) يعمل فوق Firestore بمزامنة لحظية كاملة onSnapshot
- * متوافق بنسبة 100% مع واجهة المزامنة اللحظية db.ref(path).on('value', cb) / set()
+ * مدعوم بإعادة اتصال تلقائي عند انقطاع الاتصال أو خمول شاشة الهاتف، مع فحص نبض دوري خلفي
+ * لضمان التزامن المباشر والفوري 100% بين جميع المقيمين والمشرفين على Netlify وأي استضافة.
  */
 class FirestoreRealtimeDbAdapter {
   private listeners: Map<string, Set<(snap: { val: () => any; exists: () => boolean }) => void>> =
@@ -150,9 +156,13 @@ class FirestoreRealtimeDbAdapter {
   private unsubs: Map<string, Unsubscribe> = new Map();
   private isOnline = true;
   private memoryCache: Record<string, any> = {};
+  private lastCompUpdatedAt = 0;
+  private isHeartbeatRunning = false;
 
   constructor() {
     this.initDocListeners();
+    this.initBroadcastChannel();
+    this.startBackgroundHeartbeat();
   }
 
   private markConnected() {
@@ -162,8 +172,40 @@ class FirestoreRealtimeDbAdapter {
     this.notify('.info/connected', true);
   }
 
+  private initBroadcastChannel() {
+    if (!broadcastChannel) return;
+    broadcastChannel.onmessage = event => {
+      try {
+        const { path, value, updatedAt } = event.data || {};
+        if (path && value !== undefined) {
+          if (path === 'data/competitions' && updatedAt && updatedAt <= this.lastCompUpdatedAt) {
+            return;
+          }
+          if (updatedAt) this.lastCompUpdatedAt = updatedAt;
+          this.memoryCache[path] = value;
+          this.notify(path, value);
+        }
+      } catch (e) {
+        console.warn('Broadcast channel sync note:', e);
+      }
+    };
+  }
+
   private initDocListeners() {
-    // 1. مراقبة المسابقات القرآنية لحظياً
+    this.listenToCompetitions();
+    this.listenToConfig();
+    this.listenToUsers();
+    this.listenToEvaluators();
+  }
+
+  public listenToCompetitions() {
+    if (this.unsubs.has('appData/competitions')) {
+      try {
+        this.unsubs.get('appData/competitions')!();
+      } catch {}
+      this.unsubs.delete('appData/competitions');
+    }
+
     const compDoc = doc(rawFirestore, 'appData', 'competitions');
     const unsubComp = onSnapshot(
       compDoc,
@@ -171,6 +213,8 @@ class FirestoreRealtimeDbAdapter {
         this.markConnected();
         if (!snapshot.exists()) return;
         const data = snapshot.data();
+        const serverUpdatedAt = Number(data?.updatedAt || 0);
+        this.lastCompUpdatedAt = serverUpdatedAt;
         const list = normalizeToArray(data?.list);
         this.memoryCache['data/competitions'] = list;
         this.notify('data/competitions', list);
@@ -181,12 +225,24 @@ class FirestoreRealtimeDbAdapter {
         });
       },
       err => {
-        console.warn('Competitions realtime snapshot note:', err?.message || err);
+        console.warn('Competitions realtime snapshot note (auto-reconnecting):', err?.message || err);
+        // إعادة الاشتراك التلقائي بعد ثانية في حال نوم الشاشة أو تقلب اتصال الجوال
+        setTimeout(() => {
+          this.listenToCompetitions();
+        }, 1500);
       }
     );
     this.unsubs.set('appData/competitions', unsubComp);
+  }
 
-    // 2. مراقبة إعدادات التطبيق العامة لحظياً
+  private listenToConfig() {
+    if (this.unsubs.has('appConfig/main')) {
+      try {
+        this.unsubs.get('appConfig/main')!();
+      } catch {}
+      this.unsubs.delete('appConfig/main');
+    }
+
     const configDoc = doc(rawFirestore, 'appConfig', 'main');
     const unsubCfg = onSnapshot(
       configDoc,
@@ -202,12 +258,21 @@ class FirestoreRealtimeDbAdapter {
           this.notify('config/supervisorPassword', cfg.supervisorPassword);
       },
       err => {
-        console.warn('Config realtime snapshot note:', err?.message || err);
+        console.warn('Config realtime snapshot note (auto-reconnecting):', err?.message || err);
+        setTimeout(() => this.listenToConfig(), 2000);
       }
     );
     this.unsubs.set('appConfig/main', unsubCfg);
+  }
 
-    // 3. مراقبة المستخدمين والمقيمين لحظياً
+  private listenToUsers() {
+    if (this.unsubs.has('appData/users')) {
+      try {
+        this.unsubs.get('appData/users')!();
+      } catch {}
+      this.unsubs.delete('appData/users');
+    }
+
     const userDoc = doc(rawFirestore, 'appData', 'users');
     const unsubUsers = onSnapshot(
       userDoc,
@@ -225,12 +290,21 @@ class FirestoreRealtimeDbAdapter {
         });
       },
       err => {
-        console.warn('Users realtime snapshot note:', err?.message || err);
+        console.warn('Users realtime snapshot note (auto-reconnecting):', err?.message || err);
+        setTimeout(() => this.listenToUsers(), 2000);
       }
     );
     this.unsubs.set('appData/users', unsubUsers);
+  }
 
-    // 4. مراقبة قائمة المقيمين المعتمدين لحظياً
+  private listenToEvaluators() {
+    if (this.unsubs.has('appData/evaluators')) {
+      try {
+        this.unsubs.get('appData/evaluators')!();
+      } catch {}
+      this.unsubs.delete('appData/evaluators');
+    }
+
     const evaluatorsDoc = doc(rawFirestore, 'appData', 'evaluators');
     const unsubEvaluators = onSnapshot(
       evaluatorsDoc,
@@ -244,10 +318,63 @@ class FirestoreRealtimeDbAdapter {
         this.notify('data/evaluators', list);
       },
       err => {
-        console.warn('Evaluators realtime snapshot note:', err?.message || err);
+        console.warn('Evaluators realtime snapshot note (auto-reconnecting):', err?.message || err);
+        setTimeout(() => this.listenToEvaluators(), 2000);
       }
     );
     this.unsubs.set('appData/evaluators', unsubEvaluators);
+  }
+
+  /**
+   * فحص نبض دوري بالخلفية كل ثانيتين للتأكد من مطابقة بيانات السيرفر اللحظية
+   * حتى لو قام متصفح الهاتف أو Netlify بتعليق اتصال السوكيت مؤقتاً
+   */
+  private startBackgroundHeartbeat() {
+    if (typeof window === 'undefined' || this.isHeartbeatRunning) return;
+    this.isHeartbeatRunning = true;
+
+    const pullServerCompetitions = async () => {
+      if (!navigator.onLine || !this.isOnline) return;
+      try {
+        const compDoc = doc(rawFirestore, 'appData', 'competitions');
+        const snap = await getDocFromServer(compDoc);
+        if (snap.exists()) {
+          const data = snap.data();
+          const serverUpdated = Number(data?.updatedAt || 0);
+          if (serverUpdated > this.lastCompUpdatedAt) {
+            this.lastCompUpdatedAt = serverUpdated;
+            const list = normalizeToArray(data?.list);
+            this.memoryCache['data/competitions'] = list;
+            this.notify('data/competitions', list);
+            this.notify('data', {
+              competitions: list,
+              users: this.memoryCache['data/users'] || [],
+              globalEvaluators: this.memoryCache['data/globalEvaluators'] || [],
+            });
+          }
+        }
+      } catch {}
+    };
+
+    // فحص منتظم كل 2.5 ثانية
+    setInterval(() => {
+      pullServerCompetitions();
+    }, 2500);
+
+    // إنعاش فوري بمجرد تنشيط الشاشة أو عودة الاتصال أو التركيز على التطبيق
+    const handleWakeup = () => {
+      enableNetwork(rawFirestore).catch(() => {});
+      this.initDocListeners();
+      pullServerCompetitions();
+    };
+
+    window.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        handleWakeup();
+      }
+    });
+    window.addEventListener('focus', handleWakeup);
+    window.addEventListener('online', handleWakeup);
   }
 
   private notify(cleanPath: string, value: any) {
@@ -422,10 +549,21 @@ class FirestoreRealtimeDbAdapter {
         try {
           if (cleanPath === 'data/competitions') {
             const listToSave = normalizeToArray(sanitized);
+            const now = Date.now();
+            this.lastCompUpdatedAt = now;
             this.memoryCache['data/competitions'] = listToSave;
+            if (broadcastChannel) {
+              try {
+                broadcastChannel.postMessage({
+                  path: 'data/competitions',
+                  value: listToSave,
+                  updatedAt: now,
+                });
+              } catch {}
+            }
             await setDoc(doc(rawFirestore, 'appData', 'competitions'), {
               list: listToSave,
-              updatedAt: Date.now(),
+              updatedAt: now,
             });
           } else if (cleanPath.startsWith('data/competitions/')) {
             const subId = cleanPath.replace('data/competitions/', '');
@@ -438,10 +576,21 @@ class FirestoreRealtimeDbAdapter {
             } else {
               currentList.push(sanitized);
             }
+            const now = Date.now();
+            this.lastCompUpdatedAt = now;
             this.memoryCache['data/competitions'] = currentList;
+            if (broadcastChannel) {
+              try {
+                broadcastChannel.postMessage({
+                  path: 'data/competitions',
+                  value: currentList,
+                  updatedAt: now,
+                });
+              } catch {}
+            }
             await setDoc(doc(rawFirestore, 'appData', 'competitions'), {
               list: currentList,
-              updatedAt: Date.now(),
+              updatedAt: now,
             });
           } else if (cleanPath === 'config') {
             await setDoc(
