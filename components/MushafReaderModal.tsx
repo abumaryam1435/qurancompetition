@@ -3,7 +3,7 @@ import { surahNames, pageSurahsMap, juzPagesMap } from '../utils/quranData';
 import { isPagePreloaded, preloadMushafPages, preloadSurroundingPages } from '../utils/mushafPreload';
 import { SuggestedTestPassage } from '../utils/testPassageGenerator';
 import { toArabicDigits, getErrorColorStyle } from '../utils/juzUtils';
-import { CompetitionErrorType } from '../types';
+import { CompetitionErrorType, CompetitionErrorCategory } from '../types';
 import { preloadVerseLinesForPages } from '../utils/mushafVerseHighlightService';
 import { MushafImagePage } from './MushafImagePage';
 
@@ -38,6 +38,7 @@ interface MushafReaderModalProps {
   sardGroupErrors?: Record<number, { fath: number; tashkeel: number; tajweed: number }>;
   setSardGroupErrors?: React.Dispatch<React.SetStateAction<Record<number, { fath: number; tashkeel: number; tajweed: number }>>>;
   competitionErrors?: CompetitionErrorType[];
+  competitionErrorCategories?: CompetitionErrorCategory[];
   competitionErrorCounts?: Record<string, number>;
   onCompetitionErrorChange?: (errorId: number, newCount: number) => void;
   competitionCurrentScore?: number;
@@ -86,6 +87,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
   sardGroupErrors = {},
   setSardGroupErrors,
   competitionErrors,
+  competitionErrorCategories,
   competitionErrorCounts = {},
   onCompetitionErrorChange,
   competitionCurrentScore,
@@ -687,35 +689,11 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
           </div>
         )}
 
-        {/* Main Mushaf Page Display Area - Expands fully in landscape and allows natural vertical scroll */}
-        <div 
-          ref={readerAreaRef}
-          onClick={handleScreenClick}
-          className="flex-1 min-h-0 w-full relative flex flex-col items-center justify-start overflow-y-auto overflow-x-hidden p-0 sm:p-2 bg-[#f4ece1] dark:bg-gray-950 select-none touch-pan-y scrollbar-thin scrollbar-thumb-amber-700/30 cursor-pointer overscroll-contain"
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
-        >
-          {targetPages.length === 0 ? (
-            <div className="text-center p-6 max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-md border border-gray-200 dark:border-gray-700 my-auto cursor-default" onClick={e => e.stopPropagation()}>
-              <span className="text-4xl mb-3 block">📖</span>
-              <h3 className="text-sm font-bold text-gray-800 dark:text-gray-200 mb-2">
-                لم يتم تحديد صفحات للحفظ أو المراجعة
-              </h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-                يرجى اختيار أرقام الصفحات أو السور لعرض المصحف.
-              </p>
-              <button 
-                type="button" 
-                onClick={onClose}
-                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow transition"
-              >
-                العودة للاستمارة
-              </button>
-            </div>
-          ) : (
-            <div className="relative flex flex-col items-center justify-start min-h-full w-full max-w-full">
-              {/* Prev Page Button (Right in Arabic RTL) - Hidden on mobile as touch swipe is supported */}
+        {/* Main Mushaf Page Display Area Wrapper - Keeps navigation arrows fixed while scrolling vertically */}
+        <div className="flex-1 min-h-0 w-full relative flex flex-col overflow-hidden bg-[#f4ece1] dark:bg-gray-950">
+          {targetPages.length > 1 && (
+            <>
+              {/* زر الصفحة السابقة (جهة اليمين - يتجه السهم لليمين) - ثابت في مكانه عند التمرير */}
               <button
                 type="button"
                 onClick={(e) => {
@@ -723,19 +701,20 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                   handlePrev();
                 }}
                 disabled={currentIndex === 0}
-                className={`hidden sm:flex absolute right-4 top-1/2 -translate-y-1/2 z-30 w-11 h-11 rounded-full bg-black/60 hover:bg-black/80 text-white shadow-xl border border-white/20 items-center justify-center font-black transition-all ${
-                  currentIndex === 0 
-                    ? 'opacity-0 pointer-events-none' 
+                className={`flex absolute right-1.5 sm:right-4 top-1/2 -translate-y-1/2 z-30 w-9 h-9 sm:w-12 sm:h-12 rounded-full bg-black/65 hover:bg-black/85 text-white shadow-xl border border-white/25 items-center justify-center font-black transition-all cursor-pointer ${
+                  currentIndex === 0
+                    ? 'opacity-0 pointer-events-none'
                     : 'hover:scale-110 active:scale-95'
                 }`}
                 title="الصفحة السابقة"
+                aria-label="الصفحة السابقة"
               >
-                <svg className="w-5 h-5 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7" />
+                <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.75" d="M9 5l7 7-7 7" />
                 </svg>
               </button>
 
-              {/* Next Page Button (Left in Arabic RTL) - Hidden on mobile as touch swipe is supported */}
+              {/* زر الصفحة التالية (جهة اليسار - يتجه السهم لليسار) - ثابت في مكانه عند التمرير */}
               <button
                 type="button"
                 onClick={(e) => {
@@ -743,50 +722,81 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                   handleNext();
                 }}
                 disabled={currentIndex === targetPages.length - 1}
-                className={`hidden sm:flex absolute left-4 top-1/2 -translate-y-1/2 z-30 w-11 h-11 rounded-full bg-black/60 hover:bg-black/80 text-white shadow-xl border border-white/20 items-center justify-center font-black transition-all ${
-                  currentIndex === targetPages.length - 1 
-                    ? 'opacity-0 pointer-events-none' 
+                className={`flex absolute left-1.5 sm:left-4 top-1/2 -translate-y-1/2 z-30 w-9 h-9 sm:w-12 sm:h-12 rounded-full bg-black/65 hover:bg-black/85 text-white shadow-xl border border-white/25 items-center justify-center font-black transition-all cursor-pointer ${
+                  currentIndex === targetPages.length - 1
+                    ? 'opacity-0 pointer-events-none'
                     : 'hover:scale-110 active:scale-95'
                 }`}
                 title="الصفحة التالية"
+                aria-label="الصفحة التالية"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7" />
+                <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.75" d="M15 19l-7-7 7-7" />
                 </svg>
               </button>
-
-              {/* Mushaf Page Wrapper - Expands to maximum width for full readability and vertical touch scrolling */}
-              <div 
-                className={`relative w-full flex flex-col items-center justify-start transition-transform duration-200 ease-out py-0 sm:py-2 px-1 sm:px-3 ${
-                  fitMode === 'width' || isLandscape ? 'max-w-full sm:max-w-4xl' : 'max-w-full'
-                }`}
-                style={{
-                  transform: `scale(${zoom})`,
-                  transformOrigin: 'center top'
-                }}
-              >
-                {/* Slight Top Scroll Clearance */}
-                <div className="w-full h-2 sm:h-6 shrink-0 select-none pointer-events-none" />
-
-                {/* صفحة مصحف المدينة النبوية عالية الدقة مع طبقة تظليل المتجهات Responsive SVG Overlay */}
-                <MushafImagePage
-                  pageNumber={currentPage}
-                  activePassage={isTestMode ? activePassage : null}
-                  fitMode={fitMode}
-                  isLandscape={isLandscape}
-                />
-
-                {/* Bottom Clearance Indicator */}
-                <div className="w-full max-w-[620px] md:max-w-[700px] lg:max-w-[760px] mx-auto flex items-center justify-center gap-2 py-1.5 sm:py-2 text-[11px] sm:text-xs text-amber-950/70 dark:text-gray-400 font-bold select-none bg-amber-100/50 dark:bg-gray-900/50 rounded-xl mt-2 border border-amber-700/20">
-                  <span>🏁 نهاية صفحة المصحف ({currentPage})</span>
-                </div>
-
-                {/* Slight Bottom Scroll Clearance */}
-                <div className="w-full h-4 sm:h-10 shrink-0 select-none pointer-events-none" />
-              </div>
-            </div>
+            </>
           )}
 
+          {/* Scrollable Mushaf Page Area */}
+          <div
+            ref={readerAreaRef}
+            onClick={handleScreenClick}
+            className="flex-1 min-h-0 w-full relative flex flex-col items-center justify-start overflow-y-auto overflow-x-hidden p-0 sm:p-2 select-none touch-pan-y scrollbar-thin scrollbar-thumb-amber-700/30 cursor-pointer overscroll-contain"
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+          >
+            {targetPages.length === 0 ? (
+              <div className="text-center p-6 max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-md border border-gray-200 dark:border-gray-700 my-auto cursor-default" onClick={e => e.stopPropagation()}>
+                <span className="text-4xl mb-3 block">📖</span>
+                <h3 className="text-sm font-bold text-gray-800 dark:text-gray-200 mb-2">
+                  لم يتم تحديد صفحات للحفظ أو المراجعة
+                </h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                  يرجى اختيار أرقام الصفحات أو السور لعرض المصحف.
+                </p>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow transition"
+                >
+                  العودة للاستمارة
+                </button>
+              </div>
+            ) : (
+              <div className="relative flex flex-col items-center justify-start min-h-full w-full max-w-full">
+                {/* Mushaf Page Wrapper - Expands to maximum width for full readability and vertical touch scrolling */}
+                <div
+                  className={`relative w-full flex flex-col items-center justify-start transition-transform duration-200 ease-out py-0 sm:py-2 px-1 sm:px-3 ${
+                    fitMode === 'width' || isLandscape ? 'max-w-full sm:max-w-4xl' : 'max-w-full'
+                  }`}
+                  style={{
+                    transform: `scale(${zoom})`,
+                    transformOrigin: 'center top'
+                  }}
+                >
+                  {/* Slight Top Scroll Clearance */}
+                  <div className="w-full h-2 sm:h-6 shrink-0 select-none pointer-events-none" />
+
+                  {/* صفحة مصحف المدينة النبوية عالية الدقة مع طبقة تظليل المتجهات Responsive SVG Overlay */}
+                  <MushafImagePage
+                    pageNumber={currentPage}
+                    activePassage={isTestMode ? activePassage : null}
+                    fitMode={fitMode}
+                    isLandscape={isLandscape}
+                  />
+
+                  {/* Bottom Clearance Indicator */}
+                  <div className="w-full max-w-[620px] md:max-w-[700px] lg:max-w-[760px] mx-auto flex items-center justify-center gap-2 py-1.5 sm:py-2 text-[11px] sm:text-xs text-amber-950/70 dark:text-gray-400 font-bold select-none bg-amber-100/50 dark:bg-gray-900/50 rounded-xl mt-2 border border-amber-700/20">
+                    <span>🏁 نهاية صفحة المصحف ({currentPage})</span>
+                  </div>
+
+                  {/* Slight Bottom Scroll Clearance */}
+                  <div className="w-full h-4 sm:h-10 shrink-0 select-none pointer-events-none" />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Unified Horizontal Error Controls & Result Bar - Ultra-compact for mobile phone screens */}
@@ -794,7 +804,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
           showControls ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0 pointer-events-none'
         }`}>
           <div className={showControls ? 'overflow-visible' : 'overflow-hidden'}>
-            <div className="bg-white/95 dark:bg-gray-950/95 text-gray-900 dark:text-white border-t border-gray-200 dark:border-amber-500/40 px-1.5 sm:px-3 py-1 sm:py-1.5 flex flex-col gap-1 shadow-2xl backdrop-blur-md relative z-40">
+            <div className="bg-white/95 dark:bg-gray-950/95 text-gray-900 dark:text-white border-t border-gray-200 dark:border-amber-500/40 px-2 sm:px-3 py-1.5 sm:py-2 flex flex-col gap-1.5 shadow-2xl backdrop-blur-md relative z-40 w-full">
               {/* Top Row: Competition Custom Error Buttons OR Standard (الفتح، التشكيل، التجويد) */}
               {hasCompetitionControls && competitionErrors ? (
                 (() => {
@@ -837,12 +847,32 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                     }
                   };
 
+                  const errCount = competitionErrors.length;
+                  // في شاشة الهاتف: تتوزع أزرار الأخطاء في صفين بعرض الشاشة تلقائياً (مثلاً 4 -> 2×2، 6 -> 3×2)
+                  // أما في الشاشات الكبيرة (sm فأكبر): تظهر جميع أزرار الأخطاء في صف واحد
+                  const gridColsClass =
+                    errCount === 1
+                      ? 'grid-cols-1'
+                      : errCount === 2
+                      ? 'grid-cols-2'
+                      : errCount === 3
+                      ? 'grid-cols-2 sm:grid-cols-3'
+                      : errCount === 4
+                      ? 'grid-cols-2 sm:grid-cols-4'
+                      : errCount === 5
+                      ? 'grid-cols-3 sm:grid-cols-5'
+                      : errCount === 6
+                      ? 'grid-cols-3 sm:grid-cols-6'
+                      : errCount === 7
+                      ? 'grid-cols-4 sm:grid-cols-7'
+                      : 'grid-cols-4 sm:grid-cols-8';
+
                   return (
-                    <div className="flex flex-col gap-1 w-full max-w-4xl mx-auto">
-                      {/* السطر العلوي المختصر: تبديل المقاطع + غير حافظ + الدرجة الكلية + رقم الصفحة في شريط واحد مدمج للهاتف */}
-                      <div className="flex items-center justify-between gap-1 bg-slate-100/90 dark:bg-gray-900/90 px-1.5 py-1 rounded-lg border border-slate-200 dark:border-gray-800 overflow-x-auto no-scrollbar">
+                    <div className="flex flex-col gap-1.5 w-full max-w-5xl mx-auto">
+                      {/* السطر العلوي: تبديل المقاطع + غير حافظ + الدرجة الكلية + رقم الصفحة بدون أي قص لعناصر الشريط */}
+                      <div className="flex flex-wrap items-center justify-between gap-1 bg-slate-100/90 dark:bg-gray-900/90 px-1.5 py-1 rounded-xl border border-slate-200 dark:border-gray-800 w-full">
                         {/* أزرار التنقل المختصرة بين المقاطع المقترحة */}
-                        <div className="flex items-center gap-1 shrink-0">
+                        <div className="flex flex-wrap items-center gap-1 min-w-0">
                           {Array.from({ length: totalSegs }, (_, i) => {
                             const pNum = i + 1;
                             const segItem = competitionSegments?.[i];
@@ -865,7 +895,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                                     onSelectPassage(passageObj);
                                   }
                                 }}
-                                className={`min-h-[26px] sm:min-h-[30px] px-1.5 sm:px-2.5 py-0.5 rounded-md text-[10px] sm:text-xs font-black transition-all flex items-center gap-1 shrink-0 cursor-pointer active:scale-95 border ${
+                                className={`min-h-[28px] sm:min-h-[32px] px-2 sm:px-2.5 py-0.5 rounded-lg text-[11px] sm:text-xs font-black transition-all flex items-center gap-1 shrink-0 cursor-pointer active:scale-95 border ${
                                   isSelected
                                     ? 'bg-[#0F2347] text-[#F5D77F] border-[#D4AF37] shadow-2xs ring-1 ring-[#D4AF37]/50'
                                     : 'bg-white dark:bg-gray-800 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-gray-700 hover:bg-amber-50'
@@ -874,11 +904,11 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                                 <span className="sm:hidden">م{toArabicDigits(pNum)}</span>
                                 <span className="hidden sm:inline">مقطع {toArabicDigits(pNum)}</span>
                                 {segUnmem ? (
-                                  <span className="px-1 rounded bg-rose-600 text-white text-[8px] sm:text-[9px] font-black">
+                                  <span className="px-1 rounded bg-rose-600 text-white text-[9px] font-black">
                                     ٠
                                   </span>
                                 ) : segDed > 0 ? (
-                                  <span className="px-1 rounded bg-amber-500 text-slate-950 text-[8px] sm:text-[9px] font-black">
+                                  <span className="px-1 rounded bg-amber-500 text-slate-950 text-[9px] font-black">
                                     -{segDed}
                                   </span>
                                 ) : null}
@@ -893,7 +923,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                               onClick={() =>
                                 onToggleSegmentUnmemorized(currentSegIdx, !isCurrentSegUnmem)
                               }
-                              className={`min-h-[26px] sm:min-h-[30px] px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-black transition-all flex items-center justify-center gap-1 shrink-0 cursor-pointer active:scale-95 border ${
+                              className={`min-h-[28px] sm:min-h-[32px] px-2 sm:px-2.5 py-0.5 rounded-lg text-[11px] sm:text-xs font-black transition-all flex items-center justify-center gap-1 shrink-0 cursor-pointer active:scale-95 border ${
                                 isCurrentSegUnmem
                                   ? 'bg-rose-600 text-white border-rose-700 shadow-2xs'
                                   : 'bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-700 hover:bg-rose-100'
@@ -909,16 +939,16 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                           )}
                         </div>
 
-                        {/* الدرجة النهائية + زر اختيار الصفحة مدمجان في نفس السطر لتوفير مساحة شاشة الهاتف */}
-                        <div className="flex items-center gap-1 shrink-0">
-                          <div className="flex items-center gap-1 bg-emerald-50 dark:bg-gray-800 px-2 py-0.5 min-h-[26px] sm:min-h-[30px] rounded-md border border-emerald-300 dark:border-emerald-500/40">
-                            <span className="text-[9px] sm:text-[11px] text-gray-600 dark:text-gray-300 font-bold hidden xs:inline">
+                        {/* الدرجة النهائية + زر اختيار الصفحة */}
+                        <div className="flex items-center gap-1 shrink-0 mr-auto">
+                          <div className="flex items-center gap-1 bg-emerald-50 dark:bg-gray-800 px-2 py-0.5 min-h-[28px] sm:min-h-[32px] rounded-lg border border-emerald-300 dark:border-emerald-500/40">
+                            <span className="text-[10px] sm:text-[11px] text-gray-600 dark:text-gray-300 font-bold hidden xs:inline">
                               الدرجة:
                             </span>
-                            <span className="text-[11px] sm:text-xs font-black text-emerald-700 dark:text-emerald-400">
+                            <span className="text-xs sm:text-sm font-black text-emerald-700 dark:text-emerald-400">
                               {competitionCurrentScore !== undefined ? competitionCurrentScore : testScore}
                             </span>
-                            <span className="text-[9px] text-gray-400">
+                            <span className="text-[10px] text-gray-400">
                               /{competitionMaxScore !== undefined ? competitionMaxScore : testScore}
                             </span>
                           </div>
@@ -930,7 +960,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                                 setIsPageDropdownOpen(!isPageDropdownOpen);
                                 setPageSearchTerm('');
                               }}
-                              className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 dark:bg-gray-800 dark:text-amber-200 dark:border-amber-500/40 px-2 py-0.5 min-h-[26px] sm:min-h-[30px] rounded-md text-[10px] sm:text-xs font-black transition-all cursor-pointer active:scale-95"
+                              className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 dark:bg-gray-800 dark:text-amber-200 dark:border-amber-500/40 px-2 py-0.5 min-h-[28px] sm:min-h-[32px] rounded-lg text-[11px] sm:text-xs font-black transition-all cursor-pointer active:scale-95"
                               title="اضغط لاختيار صفحة أخرى"
                             >
                               <span>ص {currentPage}</span>
@@ -942,46 +972,53 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                         </div>
                       </div>
 
-                      {/* السطر السفلي المختصر: أزرار الخصم في صف واحد على شاشة الهاتف (يظهر للمقيم لون الزر حسب الصنف) */}
-                      <div
-                        className={`grid gap-1 sm:gap-1.5 w-full ${
-                          competitionErrors.length >= 4 ? 'grid-cols-4' : 'grid-cols-3'
-                        }`}
-                      >
-                        {competitionErrors.map(err => {
+                      {/* شبكة أزرار تحديد الأخطاء: صفان في شاشة الهاتف وصف واحد في الشاشات الكبيرة */}
+                      <div className={`grid gap-1.5 sm:gap-2 w-full ${gridColsClass}`}>
+                        {competitionErrors.map((err, errIdx) => {
                           const count = currentCounts?.[err.id] || 0;
                           const isPlusDisabled = isCurrentSegUnmem || isCurrentCapReached;
-                          const st = getErrorColorStyle(err);
+                          const st = getErrorColorStyle(err, competitionErrorCategories);
+                          // في شاشة الهاتف فقط إذا كان عدد الأزرار 3 يتمدد الزر الثالث ليملأ الصف الثاني
+                          const spanClass =
+                            errCount === 3 && errIdx === 2 ? 'col-span-2 sm:col-span-1' : '';
 
                           return (
                             <div
                               key={err.id}
-                              className={`flex flex-col sm:flex-row sm:items-center sm:justify-between rounded-lg border px-1 sm:px-2 py-1 shadow-2xs transition-all ${
-                                st.mushafBox
-                              } ${isCurrentSegUnmem ? 'opacity-40 pointer-events-none' : ''}`}
+                              className={`min-w-0 w-full flex flex-col justify-between gap-1.5 rounded-xl border-2 px-2 sm:px-3 py-1.5 sm:py-2 shadow-xs transition-all ${
+                                count > 0 ? st.activeCard : st.mushafBox
+                              } ${
+                                isCurrentSegUnmem ? 'opacity-40 pointer-events-none' : ''
+                              } ${spanClass}`}
                             >
-                              <div className="flex items-center justify-between sm:flex-col sm:items-start leading-none mb-1 sm:mb-0 min-w-0 px-0.5">
-                                <span className={`text-[10px] sm:text-xs font-black truncate ${st.mushafText}`}>
+                              {/* السطر العلوي داخل الزر: اسم الخطأ ومقدار الخصم */}
+                              <div className="flex items-center justify-between gap-1 leading-tight min-w-0 px-0.5">
+                                <span
+                                  className={`text-xs sm:text-sm font-black truncate ${st.mushafText}`}
+                                >
                                   {err.name}
                                 </span>
-                                <span className={`text-[8px] sm:text-[9px] font-bold shrink-0 ${st.mushafSub}`}>
+                                <span
+                                  className={`text-[10px] sm:text-xs font-extrabold shrink-0 ${st.mushafSub}`}
+                                >
                                   (-{err.deduction})
                                 </span>
                               </div>
 
-                              <div className="flex items-center justify-between sm:justify-end gap-0.5 sm:gap-1 shrink-0">
+                              {/* السطر السفلي داخل الزر: زر + وزر - متساويان في الحجم والرقم في المنتصف تماماً */}
+                              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-1 sm:gap-1.5 w-full">
                                 <button
                                   type="button"
                                   disabled={isPlusDisabled}
                                   onClick={() => updateErrorForCurrentSeg(err.id, count + 1)}
-                                  className={`flex-1 sm:flex-initial sm:w-7 h-6 sm:h-7 rounded font-black text-xs sm:text-sm flex items-center justify-center shadow-2xs active:scale-95 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${st.mushafPlus}`}
+                                  className={`w-full h-8 sm:h-9 rounded-lg font-black text-base sm:text-lg flex items-center justify-center shadow-xs active:scale-95 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${st.mushafPlus}`}
                                   title={`زيادة ${err.name} للمقطع ${currentSegIdx + 1}`}
                                 >
                                   +
                                 </button>
 
                                 <span
-                                  className={`min-w-[20px] sm:min-w-[26px] h-6 sm:h-7 px-0.5 rounded bg-white dark:bg-gray-900 border font-black text-[11px] sm:text-xs flex items-center justify-center ${st.mushafBadge}`}
+                                  className={`min-w-[32px] sm:min-w-[38px] h-8 sm:h-9 px-1.5 rounded-lg bg-white dark:bg-gray-900 border-2 font-black text-sm sm:text-base flex items-center justify-center shrink-0 ${st.mushafBadge}`}
                                 >
                                   {count}
                                 </span>
@@ -992,7 +1029,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                                   onClick={() =>
                                     updateErrorForCurrentSeg(err.id, Math.max(0, count - 1))
                                   }
-                                  className="w-5 sm:w-7 h-6 sm:h-7 rounded bg-white/90 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-200 font-black text-xs sm:text-sm flex items-center justify-center active:scale-95 transition cursor-pointer disabled:opacity-35 disabled:cursor-not-allowed"
+                                  className="w-full h-8 sm:h-9 rounded-lg bg-white/95 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-200 font-black text-base sm:text-lg flex items-center justify-center shadow-xs active:scale-95 transition cursor-pointer disabled:opacity-35 disabled:cursor-not-allowed"
                                   title={`إنقاص ${err.name} للمقطع ${currentSegIdx + 1}`}
                                 >
                                   -

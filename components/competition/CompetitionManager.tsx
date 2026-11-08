@@ -61,6 +61,7 @@ import {
   formatJuzsOrSurahsDisplay,
 } from '../../utils/juzUtils';
 import ConfirmDeleteModal from '../ConfirmDeleteModal';
+import MultiSelectFilterDropdown from './MultiSelectFilterDropdown';
 
 /**
  * تنظيف اسم المتسابق عند اللصق من قوائم مرقمة (مثل واتساب أو وورد: "1- أحمد" أو "١. محمد")
@@ -95,6 +96,1043 @@ export interface CreateCompetitionOptions {
   sourceCompetitionId?: string;
   copyEvaluators?: boolean;
   copyParticipants?: boolean;
+}
+
+/**
+ * حقول قالب الإكسل المعتمدة بالترتيب (الأصل من اليمين إلى اليسار):
+ * رقم الطلب ، الاسم الكامل ، الرقم المدني ، رقم الهاتف ، الجنس ، الولاية ، مستوى المشاركة ، وقت وتاريخ التسجيل
+ */
+export const EXCEL_TEMPLATE_HEADERS = [
+  'رقم الطلب',
+  'الاسم الكامل',
+  'الرقم المدني',
+  'رقم الهاتف',
+  'الجنس',
+  'الولاية',
+  'مستوى المشاركة',
+  'وقت وتاريخ التسجيل',
+] as const;
+
+const normalizeArabicText = (str: string): string => {
+  return String(str || '')
+    .trim()
+    .replace(/[\u064B-\u065F\u0670]/g, '')
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/\s+/g, ' ');
+};
+
+const inferInitialScopeFromLevelName = (levelName: string): string => {
+  const norm = normalizeArabicText(levelName);
+  if (norm.includes('30') || norm.includes('ثلاثين') || norm.includes('ثلاثون') || norm.includes('كاملا') || norm.includes('كامل')) {
+    return 'الأجزاء: من 1 إلى 30';
+  }
+  if (norm.includes('25') || norm.includes('خمسه وعشرين') || norm.includes('خمس وعشرين')) {
+    return 'الأجزاء: من 1 إلى 25';
+  }
+  if (norm.includes('20') || norm.includes('عشرين') || norm.includes('عشرون')) {
+    return 'الأجزاء: من 1 إلى 20';
+  }
+  if (norm.includes('15') || norm.includes('خمسه عشر') || norm.includes('خمس عشر')) {
+    return 'الأجزاء: من 1 إلى 15';
+  }
+  if (norm.includes('10') || norm.includes('عشره') || norm.includes('عشر اجزاء')) {
+    return 'الأجزاء: من 1 إلى 10';
+  }
+  if (norm.includes('5') || norm.includes('خمسه') || norm.includes('خمس اجزاء')) {
+    return 'الأجزاء: من 1 إلى 5';
+  }
+  if (norm.includes('3') || norm.includes('ثلاثه') || norm.includes('ثلاث اجزاء')) {
+    return 'الأجزاء: من 28 إلى 30';
+  }
+  if (norm.includes('جزءين') || norm.includes('جزئين') || norm.includes('2')) {
+    return 'الأجزاء: من 29 إلى 30';
+  }
+  if (norm.includes('عم') || norm.includes('جزء واحد')) {
+    return 'الأجزاء: 30';
+  }
+  if (norm.includes('تبارك')) {
+    return 'الأجزاء: من 29 إلى 30';
+  }
+  return 'الأجزاء: من 1 إلى 5';
+};
+
+type ExcelFieldKey =
+  | 'requestNumber'
+  | 'name'
+  | 'civilId'
+  | 'phone'
+  | 'gender'
+  | 'wilayat'
+  | 'levelName'
+  | 'registrationDate'
+  | 'scope';
+
+const detectHeaderFieldKey = (rawHeader: string): ExcelFieldKey | null => {
+  const h = normalizeArabicText(rawHeader);
+  if (!h) return null;
+  if (h.includes('رقم الطلب') || h === 'الطلب' || h === 'رقم التسجيل' || h === 'تسلسل' || h === 'م') {
+    return 'requestNumber';
+  }
+  if (
+    h.includes('الاسم الكامل') ||
+    h.includes('الاسم بالكامل') ||
+    h.includes('اسم المتسابق') ||
+    h.includes('اسم المشارك') ||
+    h === 'الاسم' ||
+    h === 'المتسابق' ||
+    h === 'المشارك' ||
+    h.includes('الاسم الثلاثي') ||
+    h.includes('الاسم الرباعي')
+  ) {
+    return 'name';
+  }
+  if (h.includes('الرقم المدني') || h.includes('المدني') || h.includes('رقم الهويه') || h === 'الهويه') {
+    return 'civilId';
+  }
+  if (h.includes('رقم الهاتف') || h.includes('الهاتف') || h.includes('الجوال') || h.includes('النقال')) {
+    return 'phone';
+  }
+  if (h === 'الجنس' || h.includes('الجنس') || h === 'النوع') {
+    return 'gender';
+  }
+  if (h === 'الولايه' || h.includes('الولايه') || h.includes('المحافظه') || h.includes('المنطقه')) {
+    return 'wilayat';
+  }
+  if (
+    h.includes('مستوي المشاركه') ||
+    h === 'المستوي' ||
+    h.includes('اسم المستوي') ||
+    h.includes('فرع المسابقه') ||
+    h === 'الفرع' ||
+    h === 'الفئه'
+  ) {
+    return 'levelName';
+  }
+  if (
+    h.includes('وقت وتاريخ التسجيل') ||
+    h.includes('تاريخ التسجيل') ||
+    h.includes('وقت التسجيل') ||
+    h.includes('تاريخ الطلب') ||
+    h === 'التاريخ'
+  ) {
+    return 'registrationDate';
+  }
+  if (h.includes('الاجزاء او السور') || h === 'النطاق' || h === 'الاجزاء' || h === 'السور') {
+    return 'scope';
+  }
+  return null;
+};
+
+/**
+ * تحميل قالب الإكسل المعتمد بالحقول الـ 8 مرتبة من اليمين إلى اليسار
+ */
+const downloadCompetitionExcelTemplate = (
+  comp: Competition,
+  customLevels?: CompetitionLevel[]
+) => {
+  const activeLevels =
+    customLevels && customLevels.length > 0
+      ? customLevels
+      : comp.levels && comp.levels.length > 0
+      ? comp.levels
+      : [];
+
+  const sampleWilayats = ['عبري', 'ينقل', 'ضنك'];
+  const sampleNames = [
+    'عبدالرحمن بن محمد بن سالم الغافري',
+    'فاطمة بنت عبدالله بن سعيد الهنائية',
+    'أحمد بن خالد بن علي المعمري',
+  ];
+
+  const rows =
+    activeLevels.length > 0
+      ? activeLevels.map((lvl, idx) => ({
+          'رقم الطلب': `${1001 + idx}`,
+          'الاسم الكامل': sampleNames[idx % sampleNames.length],
+          'الرقم المدني': `${10203040 + idx}`,
+          'رقم الهاتف': `9911223${idx}`,
+          'الجنس': idx % 2 === 1 ? 'أنثى' : 'ذكر',
+          'الولاية': sampleWilayats[idx % sampleWilayats.length],
+          'مستوى المشاركة': lvl.name,
+          'وقت وتاريخ التسجيل': '2026-11-03 08:30:00',
+        }))
+      : [
+          {
+            'رقم الطلب': '1001',
+            'الاسم الكامل': 'عبدالرحمن بن محمد بن سالم الغافري',
+            'الرقم المدني': '10203040',
+            'رقم الهاتف': '99112233',
+            'الجنس': 'ذكر',
+            'الولاية': 'عبري',
+            'مستوى المشاركة': 'المستوى الأول (خمسة أجزاء)',
+            'وقت وتاريخ التسجيل': '2026-11-03 08:30:00',
+          },
+          {
+            'رقم الطلب': '1002',
+            'الاسم الكامل': 'فاطمة بنت عبدالله بن سعيد الهنائية',
+            'الرقم المدني': '10203041',
+            'رقم الهاتف': '99112234',
+            'الجنس': 'أنثى',
+            'الولاية': 'ينقل',
+            'مستوى المشاركة': 'المستوى الثاني (ثلاثة أجزاء)',
+            'وقت وتاريخ التسجيل': '2026-11-03 09:15:00',
+          },
+        ];
+
+  const ws = XLSX.utils.json_to_sheet(rows, {
+    header: [...EXCEL_TEMPLATE_HEADERS],
+  });
+
+  // جعل اتجاه ورقة الإكسل من اليمين إلى اليسار كأصل معتمد
+  ws['!views'] = [{ rightToLeft: true }];
+  ws['!cols'] = [
+    { wch: 14 }, // رقم الطلب
+    { wch: 32 }, // الاسم الكامل
+    { wch: 16 }, // الرقم المدني
+    { wch: 16 }, // رقم الهاتف
+    { wch: 12 }, // الجنس
+    { wch: 16 }, // الولاية
+    { wch: 30 }, // مستوى المشاركة
+    { wch: 24 }, // وقت وتاريخ التسجيل
+  ];
+
+  const wb = XLSX.utils.book_new();
+  if (!wb.Workbook) wb.Workbook = {};
+  if (!wb.Workbook.Views) wb.Workbook.Views = [{}];
+  wb.Workbook.Views[0].RTL = true;
+
+  XLSX.utils.book_append_sheet(wb, ws, 'المشاركين_والمستويات');
+  XLSX.writeFile(wb, `قالب_متسابقي_${comp.name || 'المسابقة'}.xlsx`);
+};
+
+/**
+ * قراءة واستيراد ملف الإكسل بذكاء (يقبل الترتيب من اليمين إلى اليسار أو من اليسار إلى اليمين)
+ * ويقوم بتفعيل المستويات وإضافة مستويات جديدة تلقائياً إذا لم تكن موجودة
+ */
+const parseAndImportCompetitionExcel = (
+  ws: XLSX.WorkSheet,
+  comp: Competition,
+  currentLevels: CompetitionLevel[],
+  targetLevelId?: number | null
+): {
+  updatedLevels: CompetitionLevel[];
+  newParticipants: CompetitionParticipant[];
+  addedLevelsCount: number;
+} => {
+  const rawMatrix = XLSX.utils.sheet_to_json(ws, {
+    header: 1,
+    defval: '',
+    raw: false,
+  }) as any[][];
+
+  const compErrorCategories = resolveCompetitionErrorCategories(comp);
+  const compErrors = resolveCompetitionErrors(comp);
+
+  // البحث عن صف العناوين في أول 10 صفوف
+  let headerRowIndex = -1;
+  const colMap: Record<number, ExcelFieldKey> = {};
+
+  for (let r = 0; r < Math.min(10, rawMatrix.length); r++) {
+    const row = rawMatrix[r] || [];
+    const tempMap: Record<number, ExcelFieldKey> = {};
+    let matchedCount = 0;
+
+    row.forEach((cell, colIdx) => {
+      const detected = detectHeaderFieldKey(String(cell || ''));
+      if (detected) {
+        tempMap[colIdx] = detected;
+        matchedCount++;
+      }
+    });
+
+    if (matchedCount >= 2 || (matchedCount === 1 && Object.values(tempMap).includes('name'))) {
+      headerRowIndex = r;
+      Object.assign(colMap, tempMap);
+      break;
+    }
+  }
+
+  // إذا لم يكن هناك صف عناوين صريح، نستنتج ترتيب الأعمدة (من اليمين أو من اليسار)
+  const standardOrder: ExcelFieldKey[] = [
+    'requestNumber',
+    'name',
+    'civilId',
+    'phone',
+    'gender',
+    'wilayat',
+    'levelName',
+    'registrationDate',
+  ];
+
+  const dataStartRow = headerRowIndex >= 0 ? headerRowIndex + 1 : 0;
+
+  if (headerRowIndex === -1 && rawMatrix.length > 0) {
+    const firstNonEmpty = rawMatrix.find(
+      row => Array.isArray(row) && row.some(c => String(c || '').trim() !== '')
+    );
+    if (firstNonEmpty) {
+      const nonEmptyCols = firstNonEmpty.length;
+      if (nonEmptyCols >= 7) {
+        const col0 = String(firstNonEmpty[0] || '').trim();
+        const col1 = String(firstNonEmpty[1] || '').trim();
+        const colLast = String(firstNonEmpty[nonEmptyCols - 1] || '').trim();
+        const colBeforeLast = String(firstNonEmpty[nonEmptyCols - 2] || '').trim();
+
+        const looksLikeDate = (v: string) =>
+          /(\d{4}[-/]\d{1,2}|\d{1,2}[-/]\d{4}|\d{1,2}:\d{2})/.test(v);
+        const looksLikeArabicName = (v: string) =>
+          /[\u0600-\u06FF]{2,}\s+[\u0600-\u06FF]{2,}/.test(v);
+
+        const isReversedLTR =
+          (looksLikeDate(col0) && !looksLikeDate(colLast)) ||
+          (!looksLikeArabicName(col1) && looksLikeArabicName(colBeforeLast));
+
+        if (isReversedLTR) {
+          const reversed = [...standardOrder].reverse();
+          reversed.forEach((key, idx) => {
+            colMap[idx] = key;
+          });
+        } else {
+          standardOrder.forEach((key, idx) => {
+            colMap[idx] = key;
+          });
+        }
+      } else {
+        colMap[0] = 'name';
+        if (nonEmptyCols >= 2) colMap[1] = 'levelName';
+        if (nonEmptyCols >= 3) colMap[2] = 'scope';
+      }
+    }
+  }
+
+  let updatedLevels = [...currentLevels];
+  const initialLevelsCount = updatedLevels.length;
+
+  // هل المسابقة تحتوي فقط على المستوى الافتراضي الأولي الفارغ بدون أي مشاركين سابقين؟
+  const hadOnlyDefaultEmptyLevel =
+    updatedLevels.length === 1 &&
+    (comp.participants || []).length === 0 &&
+    updatedLevels[0].name === 'المستوى الأول (خمسة أجزاء)';
+  let defaultLevelWasMatched = false;
+
+  const newParticipants: CompetitionParticipant[] = [];
+  const baseId = Date.now();
+  let addedLevelsCount = 0;
+
+  for (let r = dataStartRow; r < rawMatrix.length; r++) {
+    const row = rawMatrix[r];
+    if (!Array.isArray(row) || row.every(c => String(c || '').trim() === '')) {
+      continue;
+    }
+
+    const extracted: Partial<Record<ExcelFieldKey, string>> = {};
+    Object.entries(colMap).forEach(([colIdxStr, fieldKey]) => {
+      const val = String(row[Number(colIdxStr)] ?? '').trim();
+      if (val && !extracted[fieldKey]) {
+        extracted[fieldKey] = val;
+      }
+    });
+
+    // إذا لم يُلتقط الاسم من colMap، نبحث عن أول خلية نصية مناسبة
+    const rawName = extracted.name || '';
+    const pName = cleanParticipantLine(rawName);
+
+    // تخطي صفوف العناوين المكررة أو الفارغة
+    if (
+      !pName ||
+      detectHeaderFieldKey(pName) === 'name' ||
+      pName === 'الاسم الكامل' ||
+      pName === 'الاسم بالكامل' ||
+      pName === 'اسم المتسابق'
+    ) {
+      continue;
+    }
+
+    const rawLevelName = (extracted.levelName || '').trim();
+    const rawScope = (extracted.scope || '').trim();
+
+    let matchedLevel: CompetitionLevel | undefined;
+
+    if (targetLevelId && !rawLevelName) {
+      matchedLevel = updatedLevels.find(l => Number(l.id) === Number(targetLevelId));
+    }
+
+    if (!matchedLevel && rawLevelName) {
+      const normTarget = normalizeArabicText(rawLevelName);
+      matchedLevel = updatedLevels.find(l => {
+        const normExisting = normalizeArabicText(l.name);
+        return (
+          normExisting === normTarget ||
+          (normExisting.length > 4 &&
+            normTarget.length > 4 &&
+            (normExisting.includes(normTarget) || normTarget.includes(normExisting)))
+        );
+      });
+
+      if (matchedLevel && hadOnlyDefaultEmptyLevel && matchedLevel.id === updatedLevels[0]?.id) {
+        defaultLevelWasMatched = true;
+      }
+
+      // إذا لم يكن المستوى موجوداً في المسابقة، ننشئ مستوى جديداً تلقائياً
+      if (!matchedLevel) {
+        const newLvId =
+          updatedLevels.length > 0
+            ? Math.max(...updatedLevels.map(l => Number(l.id) || 0)) + 1
+            : 1;
+        matchedLevel = {
+          id: newLvId,
+          name: rawLevelName,
+          juzsOrSurahs: rawScope || inferInitialScopeFromLevelName(rawLevelName),
+          segmentsCount: 5,
+          linesPerSegment: 7,
+          maxScore: 100,
+          errorCategories: compErrorCategories.map(c => ({ ...c })),
+          errors: compErrors.map(e => ({ ...e })),
+        };
+        updatedLevels.push(matchedLevel);
+        addedLevelsCount++;
+      }
+    }
+
+    if (!matchedLevel) {
+      matchedLevel =
+        (targetLevelId
+          ? updatedLevels.find(l => Number(l.id) === Number(targetLevelId))
+          : undefined) || updatedLevels[0];
+
+      if (!matchedLevel) {
+        matchedLevel = {
+          id: 1,
+          name: 'المستوى الأول',
+          juzsOrSurahs: 'الأجزاء: من 1 إلى 5',
+          segmentsCount: 5,
+          linesPerSegment: 7,
+          maxScore: 100,
+          errorCategories: compErrorCategories.map(c => ({ ...c })),
+          errors: compErrors.map(e => ({ ...e })),
+        };
+        updatedLevels.push(matchedLevel);
+        addedLevelsCount++;
+      } else if (hadOnlyDefaultEmptyLevel && matchedLevel.id === updatedLevels[0]?.id) {
+        defaultLevelWasMatched = true;
+      }
+    }
+
+    newParticipants.push({
+      id: baseId + r,
+      name: pName,
+      levelId: matchedLevel.id,
+      juzsOrSurahs: rawScope || matchedLevel.juzsOrSurahs,
+      requestNumber: extracted.requestNumber || undefined,
+      civilId: extracted.civilId || undefined,
+      phone: extracted.phone || undefined,
+      gender: extracted.gender || undefined,
+      wilayat: extracted.wilayat || undefined,
+      registrationDate: extracted.registrationDate || undefined,
+    });
+  }
+
+  // إذا كانت المسابقة تحتوي فقط على المستوى الافتراضي الأولي الفارغ وتم استيراد مستويات جديدة من ملف الإكسل، نحذف المستوى الافتراضي الفارغ غير المستخدم
+  if (
+    hadOnlyDefaultEmptyLevel &&
+    !defaultLevelWasMatched &&
+    updatedLevels.length > initialLevelsCount
+  ) {
+    const unusedDefaultId = currentLevels[0].id;
+    updatedLevels = updatedLevels.filter(l => l.id !== unusedDefaultId);
+  }
+
+  return {
+    updatedLevels,
+    newParticipants,
+    addedLevelsCount,
+  };
+};
+
+/**
+ * استخراج المستويات المسندة لكل مقيم بوضوح (مثل: المستوى الأول، المستوى الثاني...)
+ */
+function getEvaluatorAssignedLevelsInfo(
+  ev: CompetitionEvaluator,
+  levels: CompetitionLevel[],
+  participants: CompetitionParticipant[] = []
+) {
+  const safeLevels = levels || [];
+  const rawIds = Array.isArray(ev.levelIds) ? ev.levelIds.map(Number) : [];
+  const assignedLevels =
+    rawIds.length > 0
+      ? safeLevels.filter(l => rawIds.includes(Number(l.id)))
+      : safeLevels;
+
+  const assignedLevelNames = assignedLevels.map(l => l.name);
+  const isAllLevels =
+    safeLevels.length > 0 && assignedLevels.length === safeLevels.length;
+
+  const formattedLabel =
+    assignedLevelNames.length > 0
+      ? assignedLevelNames.join(' ، ')
+      : 'جميع المستويات';
+
+  const assignedLevelIdsSet = new Set(assignedLevels.map(l => Number(l.id)));
+  const participantsCount = (participants || []).filter(p =>
+    assignedLevelIdsSet.has(Number(p.levelId))
+  ).length;
+
+  return {
+    assignedLevels,
+    assignedLevelNames,
+    formattedLabel,
+    isAllLevels,
+    participantsCount,
+  };
+}
+
+/**
+ * تصدير كافة بيانات إعداد المسابقة وتوزيع المقيمين على المستويات بصيغة إكسل (Excel) منسقة من اليمين لليسار
+ */
+function exportCompetitionSetupExcel(
+  comp: Competition,
+  showToast?: (msg: string, type?: 'success' | 'error' | 'info') => void
+) {
+  const levels = comp.levels || [];
+  const evaluators = comp.evaluators || [];
+  const participants = comp.participants || [];
+  const compCategories = resolveCompetitionErrorCategories(comp);
+  const compErrors = resolveCompetitionErrors(comp);
+
+  // الورقة 1: بيانات المقيمين والمستويات المسندة لكل مقيم
+  const evaluatorsSheetData =
+    evaluators.length > 0
+      ? evaluators.map((ev, idx) => {
+          const info = getEvaluatorAssignedLevelsInfo(ev, levels, participants);
+          return {
+            'م': idx + 1,
+            'اسم المقيم': ev.name,
+            'رمز الدخول (PIN)': ev.pin || '',
+            'المستويات المسندة للمقيم': info.formattedLabel,
+            'نطاق الإسناد': info.isAllLevels
+              ? `جميع المستويات (${info.assignedLevels.length})`
+              : `${info.assignedLevels.length} من ${levels.length} مستويات`,
+            'عدد المتسابقين المشمولين بتحكيمه': info.participantsCount,
+          };
+        })
+      : [
+          {
+            'م': 1,
+            'اسم المقيم': 'لم يتم إضافة مقيمين بعد',
+            'رمز الدخول (PIN)': '-',
+            'المستويات المسندة للمقيم': '-',
+            'نطاق الإسناد': '-',
+            'عدد المتسابقين المشمولين بتحكيمه': 0,
+          },
+        ];
+
+  // الورقة 2: تقسيم اللجان وإعدادات كل مستوى
+  const levelsSheetData = levels.map((lvl, idx) => {
+    const levelEvaluators = evaluators.filter(ev => {
+      const ids = Array.isArray(ev.levelIds) ? ev.levelIds.map(Number) : [];
+      return ids.length === 0 || ids.includes(Number(lvl.id));
+    });
+    const levelParticipants = participants.filter(
+      p => Number(p.levelId) === Number(lvl.id)
+    );
+    return {
+      'م': idx + 1,
+      'اسم المستوى': lvl.name,
+      'المقرر (الأجزاء أو السور)': formatJuzsOrSurahsDisplay(lvl.juzsOrSurahs),
+      'عدد المقاطع': lvl.segmentsCount,
+      'عدد الأسطر لكل مقطع': lvl.linesPerSegment,
+      'الدرجة النهائية': lvl.maxScore,
+      'عدد المقيمين في هذا المستوى': levelEvaluators.length,
+      'أسماء مقيمي هذا المستوى':
+        levelEvaluators.length > 0
+          ? levelEvaluators.map(e => e.name).join(' ، ')
+          : 'لم يسند مقيمون بعد',
+      'عدد المتسابقين المسجلين': levelParticipants.length,
+    };
+  });
+
+  // الورقة 3: الإعدادات العامة للمسابقة وأزرار خصم الأخطاء
+  const passageModeLabel =
+    comp.passageMode === 'international'
+      ? 'تصنيف المسابقات العالمية (الأكثر صعوبة / متوسطة / الأقل)'
+      : comp.passageMode === 'manual'
+      ? `التحديد اليدوي للمشرف (${(comp.manualPassages || []).length} نطاق)`
+      : 'المقاطع العشوائية المتوازنة';
+
+  const generalAndErrorsData: Record<string, any>[] = [
+    {
+      'البند': 'اسم المسابقة',
+      'القيمة / التفاصيل': comp.name,
+      'ملاحظات إضافية': comp.seasonText || '',
+    },
+    {
+      'البند': 'حالة تفعيل المسابقة للمقيمين',
+      'القيمة / التفاصيل': comp.isActive ? 'مفعّلة (متاحة للدخول والتقييم)' : 'غير مفعّلة (محجوبة)',
+      'ملاحظات إضافية': `نظام المقاطع: ${passageModeLabel}`,
+    },
+    {
+      'البند': 'إحصائية الإعدادات',
+      'القيمة / التفاصيل': `المستويات: ${levels.length} | المقيمون: ${evaluators.length} | المشاركون: ${participants.length}`,
+      'ملاحظات إضافية': `بنود الخصم: ${compErrors.length} أزرار في ${compCategories.length} أصناف`,
+    },
+    ...compErrors.map((err, i) => {
+      const cat = compCategories.find(
+        c => c.id === err.category || c.name === err.category
+      );
+      return {
+        'البند': `زر خصم (${i + 1}): ${err.name}`,
+        'القيمة / التفاصيل': `خصم (-${err.deduction}) درجة`,
+        'ملاحظات إضافية': `الصنف: ${cat?.name || err.category || 'حفظ'}`,
+      };
+    }),
+  ];
+
+  // الورقة 4: كشف المشاركين المسجلين في المسابقة
+  const participantsSheetData =
+    participants.length > 0
+      ? participants.map((p, idx) => {
+          const lvl = levels.find(l => Number(l.id) === Number(p.levelId));
+          return {
+            'رقم الطلب': p.requestNumber || String(idx + 1),
+            'الاسم الكامل': p.name,
+            'الرقم المدني': p.civilId || '',
+            'رقم الهاتف': p.phone || '',
+            'الجنس': p.gender || '',
+            'الولاية': p.wilayat || '',
+            'مستوى المشاركة': lvl?.name || 'غير محدد',
+            'المقرر المعتمد': formatJuzsOrSurahsDisplay(
+              p.juzsOrSurahs || lvl?.juzsOrSurahs || ''
+            ),
+            'وقت وتاريخ التسجيل': p.registrationDate || '',
+          };
+        })
+      : [
+          {
+            'رقم الطلب': '-',
+            'الاسم الكامل': 'لا يوجد مشاركون مسجلون بعد',
+            'الرقم المدني': '',
+            'رقم الهاتف': '',
+            'الجنس': '',
+            'الولاية': '',
+            'مستوى المشاركة': '',
+            'المقرر المعتمد': '',
+            'وقت وتاريخ التسجيل': '',
+          },
+        ];
+
+  const wb = XLSX.utils.book_new();
+  (wb as any).Workbook = { Views: [{ RTL: true }] };
+
+  const wsEvals = XLSX.utils.json_to_sheet(evaluatorsSheetData);
+  (wsEvals as any)['!views'] = [{ rightToLeft: true }];
+  wsEvals['!cols'] = [
+    { wch: 6 },
+    { wch: 28 },
+    { wch: 18 },
+    { wch: 45 },
+    { wch: 22 },
+    { wch: 26 },
+  ];
+  XLSX.utils.book_append_sheet(wb, wsEvals, 'المقيمون ومستوياتهم');
+
+  const wsLevels = XLSX.utils.json_to_sheet(levelsSheetData);
+  (wsLevels as any)['!views'] = [{ rightToLeft: true }];
+  wsLevels['!cols'] = [
+    { wch: 6 },
+    { wch: 26 },
+    { wch: 32 },
+    { wch: 14 },
+    { wch: 18 },
+    { wch: 15 },
+    { wch: 20 },
+    { wch: 45 },
+    { wch: 20 },
+  ];
+  XLSX.utils.book_append_sheet(wb, wsLevels, 'المستويات وتقسيم اللجان');
+
+  const wsGeneral = XLSX.utils.json_to_sheet(generalAndErrorsData);
+  (wsGeneral as any)['!views'] = [{ rightToLeft: true }];
+  wsGeneral['!cols'] = [{ wch: 30 }, { wch: 42 }, { wch: 42 }];
+  XLSX.utils.book_append_sheet(wb, wsGeneral, 'الإعدادات وبنود الخصم');
+
+  const wsParticipants = XLSX.utils.json_to_sheet(participantsSheetData);
+  (wsParticipants as any)['!views'] = [{ rightToLeft: true }];
+  wsParticipants['!cols'] = [
+    { wch: 14 },
+    { wch: 32 },
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 10 },
+    { wch: 16 },
+    { wch: 26 },
+    { wch: 28 },
+    { wch: 22 },
+  ];
+  XLSX.utils.book_append_sheet(wb, wsParticipants, 'كشف المشاركين');
+
+  const safeName = (comp.name || 'المسابقة').replace(/[\\/:*?"<>|]/g, '_');
+  XLSX.writeFile(wb, `إعدادات_ومراجعة_${safeName}.xlsx`);
+  showToast?.(
+    'تم تصدير ملف إكسل الشامل لإعدادات المسابقة وتقسيم المقيمين والمستويات بنجاح!',
+    'success'
+  );
+}
+
+/**
+ * تصدير وطباعة بيانات إعداد المسابقة وتقسيم المقيمين والمستويات بصيغة PDF رسمية منسقة
+ */
+async function exportCompetitionSetupPDF(
+  comp: Competition,
+  showToast?: (msg: string, type?: 'success' | 'error' | 'info') => void
+) {
+  const levels = comp.levels || [];
+  const evaluators = comp.evaluators || [];
+  const participants = comp.participants || [];
+  const compCategories = resolveCompetitionErrorCategories(comp);
+  const compErrors = resolveCompetitionErrors(comp);
+
+  showToast?.('جارِ تجهيز وثيقة إعدادات المسابقة وتقسيم اللجان بصيغة PDF...', 'info');
+
+  const passageModeLabel =
+    comp.passageMode === 'international'
+      ? 'تصنيف المسابقات العالمية (الأكثر صعوبة / متوسطة / الأقل)'
+      : comp.passageMode === 'manual'
+      ? `التحديد اليدوي للمشرف (${(comp.manualPassages || []).length} نطاق)`
+      : 'المقاطع العشوائية المتوازنة';
+
+  const dateStr = new Date().toLocaleDateString('ar-OM', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+
+  const evaluatorsRowsHtml =
+    evaluators.length > 0
+      ? evaluators
+          .map((ev, idx) => {
+            const info = getEvaluatorAssignedLevelsInfo(ev, levels, participants);
+            const badgesHtml = info.assignedLevels
+              .map(
+                l =>
+                  `<span style="display:inline-block;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0;border-radius:6px;padding:2px 8px;margin:2px;font-size:11px;font-weight:800;">${l.name}</span>`
+              )
+              .join(' ');
+            return `
+              <tr style="background:${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
+                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${idx + 1}</td>
+                <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:800;color:#0f172a;">${ev.name}</td>
+                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-family:monospace;font-weight:900;color:#b45309;background:#fffbeb;">${ev.pin || '-'}</td>
+                <td style="padding:8px 10px;border:1px solid #cbd5e1;">${badgesHtml || 'جميع المستويات'}</td>
+                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${info.assignedLevels.length} من ${levels.length}</td>
+                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;color:#047857;">${info.participantsCount}</td>
+              </tr>
+            `;
+          })
+          .join('')
+      : `<tr><td colspan="6" style="padding:14px;border:1px solid #cbd5e1;text-align:center;color:#64748b;font-weight:700;">لا يوجد مقيمون مضافون لهذه المسابقة حالياً</td></tr>`;
+
+  const levelsRowsHtml =
+    levels.length > 0
+      ? levels
+          .map((lvl, idx) => {
+            const levelEvaluators = evaluators.filter(ev => {
+              const ids = Array.isArray(ev.levelIds) ? ev.levelIds.map(Number) : [];
+              return ids.length === 0 || ids.includes(Number(lvl.id));
+            });
+            const levelParticipantsCount = participants.filter(
+              p => Number(p.levelId) === Number(lvl.id)
+            ).length;
+            const evalBadges =
+              levelEvaluators.length > 0
+                ? levelEvaluators
+                    .map(
+                      e =>
+                        `<span style="display:inline-block;background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;border-radius:6px;padding:2px 8px;margin:2px;font-size:11px;font-weight:800;">${e.name}</span>`
+                    )
+                    .join(' ')
+                : `<span style="color:#dc2626;font-size:11px;font-weight:700;">لم يسند مقيمون بعد</span>`;
+
+            return `
+              <tr style="background:${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
+                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${idx + 1}</td>
+                <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:800;color:#064e3b;">${lvl.name}</td>
+                <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:700;">${formatJuzsOrSurahsDisplay(lvl.juzsOrSurahs)}</td>
+                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${lvl.segmentsCount} مقاطع × ${lvl.linesPerSegment} أسطر</td>
+                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${lvl.maxScore}</td>
+                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;color:#047857;">${levelParticipantsCount}</td>
+                <td style="padding:8px 10px;border:1px solid #cbd5e1;">${evalBadges}</td>
+              </tr>
+            `;
+          })
+          .join('')
+      : '';
+
+  const errorsBadgesHtml = compErrors
+    .map(err => {
+      const cat = compCategories.find(
+        c => c.id === err.category || c.name === err.category
+      );
+      return `<div style="display:inline-flex;align-items:center;gap:6px;background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:5px 10px;margin:3px;">
+        <span style="font-weight:900;color:#881337;font-size:12px;">${err.name}</span>
+        <span style="font-weight:800;color:#be123c;font-size:11px;">(-${err.deduction})</span>
+        <span style="background:#ffe4e6;color:#9f1239;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;">صنف: ${cat?.name || err.category || 'حفظ'}</span>
+      </div>`;
+    })
+    .join('');
+
+  const participantsRowsHtml =
+    participants.length > 0
+      ? participants
+          .map((p, idx) => {
+            const lvl = levels.find(l => Number(l.id) === Number(p.levelId));
+            return `
+              <tr style="background:${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
+                <td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;font-weight:700;">${p.requestNumber || idx + 1}</td>
+                <td style="padding:6px 8px;border:1px solid #cbd5e1;font-weight:800;">${p.name}</td>
+                <td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${p.civilId || '-'}</td>
+                <td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${p.phone || '-'}</td>
+                <td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${p.gender || '-'}</td>
+                <td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${p.wilayat || '-'}</td>
+                <td style="padding:6px 8px;border:1px solid #cbd5e1;font-weight:800;color:#065f46;">${lvl?.name || '-'}</td>
+                <td style="padding:6px 8px;border:1px solid #cbd5e1;font-size:11px;">${formatJuzsOrSurahsDisplay(p.juzsOrSurahs || lvl?.juzsOrSurahs || '')}</td>
+              </tr>
+            `;
+          })
+          .join('')
+      : '';
+
+  const fullHtml = `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <base href="${window.location.origin}/" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=Tajawal:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    @page { size: A4 portrait; margin: 8mm; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    body {
+      margin: 0; padding: 0;
+      font-family: 'Tajawal', 'Cairo', sans-serif;
+      direction: rtl; text-align: right;
+      color: #0f172a; background: #ffffff;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; page-break-inside: auto; }
+    tr { page-break-inside: avoid; break-inside: avoid; }
+    thead { display: table-header-group; }
+    .section-title {
+      background: #064e3b; color: #ffffff;
+      padding: 8px 14px; border-radius: 8px;
+      font-size: 14px; font-weight: 900;
+      margin: 16px 0 8px 0;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+  </style>
+</head>
+<body dir="rtl">
+  <div style="border: 2px solid #065f46; border-radius: 14px; padding: 16px; background: #ffffff;">
+    <!-- الترويسة الرسمية -->
+    <div style="background: linear-gradient(135deg, #064e3b, #0f2347); color: #ffffff; padding: 16px 20px; border-radius: 12px; border-bottom: 4px solid #d4af37; display: flex; justify-content: space-between; align-items: center;">
+      <div>
+        <div style="font-size: 12px; color: #fcd34d; font-weight: 800;">سلطنة عُمان • وزارة الأوقاف والشؤون الدينية</div>
+        <div style="font-size: 12px; color: #e2e8f0; font-weight: 700; margin-bottom: 6px;">إدارة الأوقاف والشؤون الدينية بمحافظة الظاهرة</div>
+        <div style="font-size: 20px; font-weight: 900; color: #ffffff;">وثيقة إعدادات ومراجعة المسابقة وتوزيع اللجان</div>
+        <div style="font-size: 14px; font-weight: 800; color: #fde68a; margin-top: 2px;">${comp.name} ${comp.seasonText ? `— ${comp.seasonText}` : ''}</div>
+      </div>
+      <div style="text-align: left; font-size: 11px; color: #e2e8f0; line-height: 1.7;">
+        <div><strong>تاريخ الإصدار:</strong> ${dateStr}</div>
+        <div><strong>حالة المسابقة:</strong> ${comp.isActive ? 'مفعّلة للمقيمين' : 'غير مفعّلة'}</div>
+        <div><strong>نظام المقاطع:</strong> ${passageModeLabel}</div>
+      </div>
+    </div>
+
+    <!-- ملخص الإحصائيات السريع -->
+    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 12px;">
+      <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 10px; text-align: center;">
+        <div style="font-size: 11px; color: #166534; font-weight: 800;">إجمالي المستويات</div>
+        <div style="font-size: 20px; color: #14532d; font-weight: 900;">${levels.length}</div>
+      </div>
+      <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 10px; text-align: center;">
+        <div style="font-size: 11px; color: #1e40af; font-weight: 800;">إجمالي المقيمين</div>
+        <div style="font-size: 20px; color: #1e3a8a; font-weight: 900;">${evaluators.length}</div>
+      </div>
+      <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 10px; text-align: center;">
+        <div style="font-size: 11px; color: #92400e; font-weight: 800;">إجمالي المتسابقين</div>
+        <div style="font-size: 20px; color: #78350f; font-weight: 900;">${participants.length}</div>
+      </div>
+      <div style="background: #fff1f2; border: 1px solid #fecdd3; border-radius: 10px; padding: 10px; text-align: center;">
+        <div style="font-size: 11px; color: #9f1239; font-weight: 800;">بنود خصم الأخطاء</div>
+        <div style="font-size: 20px; color: #881337; font-weight: 900;">${compErrors.length}</div>
+      </div>
+    </div>
+
+    <!-- أولاً: جدول المقيمين والمستويات المسندة لكل مقيم -->
+    <div class="section-title">
+      <span>أولاً: بيانات المقيمين وتوزيع المستويات المسندة لكل مقيم</span>
+      <span style="font-size: 11px; color: #fde68a;">إجمالي المقيمين: ${evaluators.length}</span>
+    </div>
+    <table>
+      <thead>
+        <tr style="background: #ecfdf5; color: #064e3b;">
+          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 38px; text-align: center;">م</th>
+          <th style="padding: 8px 10px; border: 1px solid #cbd5e1;">اسم المقيم</th>
+          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 100px; text-align: center;">رمز الدخول</th>
+          <th style="padding: 8px 10px; border: 1px solid #cbd5e1;">المستويات المسندة إليه (في أي المستويات هو)</th>
+          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 85px; text-align: center;">عدد المستويات</th>
+          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 85px; text-align: center;">عدد الطلاب</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${evaluatorsRowsHtml}
+      </tbody>
+    </table>
+
+    <!-- ثانياً: جدول المستويات وتقسيم لجان التقييم -->
+    <div class="section-title">
+      <span>ثانياً: إعدادات المستويات وتقسيم لجان المقيمين حسب كل مستوى</span>
+      <span style="font-size: 11px; color: #fde68a;">إجمالي المستويات: ${levels.length}</span>
+    </div>
+    <table>
+      <thead>
+        <tr style="background: #ecfdf5; color: #064e3b;">
+          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 38px; text-align: center;">م</th>
+          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 140px;">اسم المستوى</th>
+          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 150px;">المقرر (الأجزاء / السور)</th>
+          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 115px; text-align: center;">المقاطع والأسطر</th>
+          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 65px; text-align: center;">الدرجة</th>
+          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 65px; text-align: center;">المشاركون</th>
+          <th style="padding: 8px 10px; border: 1px solid #cbd5e1;">المقيمون المسندون لهذا المستوى</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${levelsRowsHtml}
+      </tbody>
+    </table>
+
+    <!-- ثالثاً: بنود خصم الأخطاء المعتمدة -->
+    <div class="section-title">
+      <span>ثالثاً: إعدادات أزرار وأصناف خصم الأخطاء في المسابقة</span>
+      <span style="font-size: 11px; color: #fde68a;">موحدة لجميع مستويات المسابقة</span>
+    </div>
+    <div style="border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px; background: #f8fafc;">
+      ${errorsBadgesHtml}
+    </div>
+
+    ${
+      participants.length > 0
+        ? `
+    <!-- رابعاً: كشف المشاركين المسجلين في المسابقة -->
+    <div class="section-title" style="page-break-before: auto;">
+      <span>رابعاً: كشف المتسابقين المسجلين في المسابقة</span>
+      <span style="font-size: 11px; color: #fde68a;">إجمالي المتسابقين: ${participants.length}</span>
+    </div>
+    <table>
+      <thead>
+        <tr style="background: #ecfdf5; color: #064e3b;">
+          <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 55px; text-align: center;">رقم الطلب</th>
+          <th style="padding: 6px 8px; border: 1px solid #cbd5e1;">الاسم الكامل</th>
+          <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 90px; text-align: center;">الرقم المدني</th>
+          <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 85px; text-align: center;">الهاتف</th>
+          <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 55px; text-align: center;">الجنس</th>
+          <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 80px; text-align: center;">الولاية</th>
+          <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 120px;">المستوى</th>
+          <th style="padding: 6px 8px; border: 1px solid #cbd5e1;">المقرر</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${participantsRowsHtml}
+      </tbody>
+    </table>
+    `
+        : ''
+    }
+  </div>
+</body>
+</html>`;
+
+  const safeName = (comp.name || 'المسابقة').replace(/[\\/:*?"<>|]/g, '_');
+  const fileName = `إعدادات_ومراجعة_${safeName}`;
+
+  try {
+    const res = await fetch('/api/pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ html: fullHtml, orientation: 'portrait' }),
+    });
+    if (res.ok) {
+      const pdfBlob = await res.blob();
+      if (pdfBlob.size > 500) {
+        const url = URL.createObjectURL(pdfBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${fileName}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        showToast?.('تم تصدير وثيقة إعدادات المسابقة بصيغة PDF بنجاح!', 'success');
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn('Server PDF fallback to client canvas:', err);
+  }
+
+  // Fallback via html2canvas + jsPDF if /api/pdf is unavailable (e.g. static hosting)
+  const tempContainer = document.createElement('div');
+  tempContainer.style.position = 'fixed';
+  tempContainer.style.top = '-10000px';
+  tempContainer.style.left = '0';
+  tempContainer.style.width = '960px';
+  tempContainer.style.background = '#ffffff';
+  tempContainer.style.zIndex = '-1';
+  tempContainer.setAttribute('dir', 'rtl');
+  tempContainer.innerHTML = fullHtml;
+  document.body.appendChild(tempContainer);
+
+  try {
+    if (document.fonts && document.fonts.ready) {
+      await document.fonts.ready;
+    }
+    const canvas = await html2canvas(tempContainer, {
+      scale: 2,
+      useCORS: true,
+      logging: false,
+      backgroundColor: '#ffffff',
+      windowWidth: 960,
+    });
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4',
+    });
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    let heightLeft = pdfHeight;
+    let position = 0;
+
+    pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+    heightLeft -= pageHeight;
+    while (heightLeft > 0) {
+      position = heightLeft - pdfHeight;
+      pdf.addPage();
+      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+      heightLeft -= pageHeight;
+    }
+    pdf.save(`${fileName}.pdf`);
+    showToast?.('تم تصدير وثيقة إعدادات المسابقة بصيغة PDF بنجاح!', 'success');
+  } catch (e) {
+    console.error('Setup PDF fallback error:', e);
+    showToast?.('تعذر تصدير PDF، يرجى المحاولة مرة أخرى', 'error');
+  } finally {
+    document.body.removeChild(tempContainer);
+  }
 }
 
 export default function CompetitionManager({
@@ -310,8 +1348,28 @@ export default function CompetitionManager({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
+            onClick={() => exportCompetitionSetupExcel(activeCompetition, showToast)}
+            className="flex-1 sm:flex-initial min-h-[42px] text-xs font-black py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800 transition active:scale-95 cursor-pointer"
+            title="تصدير كافة بيانات إعداد المسابقة وتوزيع المقيمين بصيغة إكسل"
+          >
+            <FileSpreadsheet size={15} />
+            <span>تصدير الإعدادات Excel</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => exportCompetitionSetupPDF(activeCompetition, showToast)}
+            className="flex-1 sm:flex-initial min-h-[42px] text-xs font-black py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800 transition active:scale-95 cursor-pointer"
+            title="تصدير وطباعة بيانات إعداد المسابقة وتوزيع المقيمين بصيغة PDF"
+          >
+            <Printer size={15} />
+            <span>تصدير الإعدادات PDF</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => handleToggleCompetitionActive(activeCompetition.id)}
-            className={`flex-1 sm:flex-initial min-h-[44px] text-xs sm:text-sm font-black py-2.5 px-4 rounded-xl flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer border ${
+            className={`flex-1 sm:flex-initial min-h-[42px] text-xs sm:text-sm font-black py-2 px-3.5 rounded-xl flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer border ${
               activeCompetition.isActive
                 ? 'bg-red-50 hover:bg-red-100 text-red-700 border-red-200 dark:bg-red-950/50 dark:text-red-300 dark:border-red-900/60'
                 : 'bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 shadow-xs'
@@ -327,7 +1385,7 @@ export default function CompetitionManager({
 
           <button
             onClick={() => setIsViewingDetails(false)}
-            className="flex-1 sm:flex-initial min-h-[44px] text-xs sm:text-sm bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer"
+            className="flex-1 sm:flex-initial min-h-[42px] text-xs sm:text-sm bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold py-2 px-3.5 rounded-xl flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer"
           >
             <span>العودة لقائمة المسابقات</span>
             <ChevronRight size={16} className="rotate-180" />
@@ -901,7 +1959,118 @@ function CompetitionSettings({
   const currentPassageMode = comp.passageMode || 'random';
 
   return (
-    <div className="max-w-xl space-y-6">
+    <div className="max-w-4xl space-y-6">
+      {/* بطاقة تصدير ومراجعة بيانات إعداد المسابقة وتقسيم المقيمين على المستويات */}
+      <div className="p-4 sm:p-5 rounded-2xl border-2 border-emerald-300 dark:border-emerald-800/80 bg-gradient-to-br from-emerald-50/90 via-white to-amber-50/40 dark:from-slate-800/90 dark:via-slate-900 dark:to-slate-800/80 space-y-4 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-emerald-200/80 dark:border-slate-700 pb-3.5">
+          <div className="space-y-1">
+            <h3 className="text-sm sm:text-base font-black text-emerald-950 dark:text-emerald-300 flex items-center gap-2">
+              <Printer size={19} className="text-emerald-700 dark:text-emerald-400 shrink-0" />
+              <span>مراجعة وتصدير بيانات إعداد المسابقة وتقسيم المقيمين على المستويات</span>
+            </h3>
+            <p className="text-xs font-bold text-slate-600 dark:text-slate-300 leading-relaxed">
+              تصدير شامل ومنسق لإعدادات المسابقة، المستويات، توزيع المقيمين ولجان التحكيم، بنود الخصم، وكشف المتسابقين بصيغتي Excel و PDF للطباعة أو المراجعة والاحتفاظ بها.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => exportCompetitionSetupExcel(comp, context?.showToast)}
+              className="min-h-[44px] px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition active:scale-95 shadow-sm cursor-pointer"
+            >
+              <FileSpreadsheet size={17} />
+              <span>تصدير إعداد المسابقة (Excel)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => exportCompetitionSetupPDF(comp, context?.showToast)}
+              className="min-h-[44px] px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition active:scale-95 shadow-sm cursor-pointer"
+            >
+              <Printer size={17} />
+              <span>تصدير / طباعة الإعدادات (PDF)</span>
+            </button>
+          </div>
+        </div>
+
+        {/* ملخص مراجعة تقسيم المقيمين حسب المستويات للمشرف */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+              <UserCheck size={16} className="text-emerald-700 dark:text-emerald-400" />
+              <span>بيانات المقيمين وتوزيعهم على المستويات ({(comp.evaluators || []).length} مقيم)</span>
+            </h4>
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+              يظهر لكل مقيم المستويات المسندة إليه بالتفصيل
+            </span>
+          </div>
+
+          {(comp.evaluators || []).length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {(comp.evaluators || []).map((ev, idx) => {
+                const info = getEvaluatorAssignedLevelsInfo(
+                  ev,
+                  comp.levels || [],
+                  comp.participants || []
+                );
+                return (
+                  <div
+                    key={ev.id}
+                    className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200/80 dark:border-slate-700 flex flex-col justify-between gap-2 shadow-2xs"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-6 h-6 rounded-lg bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-xs font-black flex items-center justify-center shrink-0">
+                          {idx + 1}
+                        </span>
+                        <span className="font-black text-xs sm:text-sm text-slate-900 dark:text-white truncate">
+                          {ev.name}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/70 text-amber-900 dark:text-amber-300 font-mono text-[11px] font-black border border-amber-200 dark:border-amber-800">
+                          الرمز: {ev.pin}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-extrabold">
+                          {info.participantsCount} متسابق
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="pt-1.5 border-t border-slate-100 dark:border-slate-800">
+                      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block mb-1">
+                        المستويات المسندة للمقيم ({info.assignedLevels.length} من {(comp.levels || []).length}):
+                      </span>
+                      <div className="flex flex-wrap gap-1">
+                        {info.assignedLevels.length > 0 ? (
+                          info.assignedLevels.map(lvl => (
+                            <span
+                              key={lvl.id}
+                              className="px-2 py-0.5 rounded-lg bg-emerald-100/90 dark:bg-emerald-950 text-emerald-900 dark:text-emerald-300 text-[11px] font-black border border-emerald-300/60 dark:border-emerald-800"
+                            >
+                              {lvl.name}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-xs font-bold text-slate-400">
+                            لا توجد مستويات مضافة بعد
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="p-3.5 rounded-xl bg-white/80 dark:bg-slate-900/60 border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs font-bold text-slate-500">
+              لم يتم اختيار مقيمين لهذه المسابقة بعد. يمكنك إسنادهم وتحديد مستويات كل مقيم من تبويب "المقيمين".
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="max-w-xl space-y-6">
       {/* خيار تفعيل المسابقة أو عدم التفعيل للمقيمين والمعلمين */}
       <div
         className={`p-4 sm:p-5 rounded-2xl border-2 space-y-3.5 transition ${
@@ -1160,6 +2329,7 @@ function CompetitionSettings({
           <Copy size={18} />
           <span>نسخ لمسابقة جديدة والانتقال لتعديلها</span>
         </button>
+      </div>
       </div>
     </div>
   );
@@ -1432,35 +2602,17 @@ function LevelEditor({
     });
   };
 
-  // تحميل قالب إكسل للاسم والمستوى
+  // تحميل قالب إكسل بالحقول المعتمدة (رقم الطلب، الاسم الكامل، الرقم المدني، رقم الهاتف، الجنس، الولاية، مستوى المشاركة، وقت وتاريخ التسجيل)
   const handleDownloadLevelExcelTemplate = () => {
-    const rows =
-      levels.length > 0
-        ? levels.map((l, idx) => ({
-            'اسم المتسابق': `متسابق تجريبي ${idx + 1}`,
-            المستوى: l.name,
-            'الأجزاء أو السور المختارة': l.juzsOrSurahs || '',
-          }))
-        : [
-            {
-              'اسم المتسابق': 'أحمد محمد علي',
-              المستوى: 'المستوى الأول',
-              'الأجزاء أو السور المختارة': '5 أجزاء',
-            },
-          ];
-
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'المتسابقين_والمستويات');
-    XLSX.writeFile(wb, `قالب_متسابقي_${comp.name}.xlsx`);
+    downloadCompetitionExcelTemplate(comp, levels);
   };
 
-  // استيراد ملف إكسل للاسم والمستوى (سواء لمستوى محدد أو لجميع المستويات)
+  // استيراد ملف إكسل وتفعيل المستويات وأسماء المشاركين في كل مستوى
   const handleExcelImportForLevels = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const fallbackLevelId = targetImportLevelId ?? levels[0]?.id;
+    const fallbackLevelId = targetImportLevelId;
     const reader = new FileReader();
     reader.onload = evt => {
       try {
@@ -1468,91 +2620,22 @@ function LevelEditor({
         const wb = XLSX.read(bstr, { type: 'binary' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
-        const rows = XLSX.utils.sheet_to_json(ws, { defval: '' }) as any[];
 
-        const updatedLevels = [...levels];
-        const newParticipants: CompetitionParticipant[] = [];
-        const baseId = Date.now();
-
-        rows.forEach((row, i) => {
-          const keys = Object.keys(row);
-          const rawName =
-            row['اسم المتسابق'] ||
-            row['اسم المشارك'] ||
-            row['الاسم'] ||
-            row['المتسابق'] ||
-            row['المشارك'] ||
-            (keys.length > 0 ? row[keys[0]] : '');
-
-          const pName = cleanParticipantLine(String(rawName || ''));
-          if (!pName || pName === 'اسم المتسابق' || pName === 'اسم المشارك' || pName === 'الاسم') {
-            return;
-          }
-
-          const rawLevelName = String(
-            row['المستوى'] || row['اسم المستوى'] || row['فرع المسابقة'] || ''
-          ).trim();
-          const rawScope = String(
-            row['الأجزاء أو السور المختارة'] || row['النطاق'] || row['الأجزاء'] || ''
-          ).trim();
-
-          let matchedLevel: CompetitionLevel | undefined;
-
-          if (rawLevelName) {
-            matchedLevel = updatedLevels.find(
-              l =>
-                l.name.trim() === rawLevelName ||
-                l.name.includes(rawLevelName) ||
-                rawLevelName.includes(l.name.trim())
-            );
-            // إذا كان المستوى المذكور في ملف الإكسل غير موجود بعد، ننشئه تلقائياً!
-            if (!matchedLevel) {
-              const newLvId =
-                updatedLevels.length > 0
-                  ? Math.max(...updatedLevels.map(l => l.id)) + 1
-                  : 1;
-              matchedLevel = {
-                id: newLvId,
-                name: rawLevelName,
-                juzsOrSurahs: rawScope || '5 أجزاء',
-                segmentsCount: 5,
-                linesPerSegment: 7,
-                maxScore: 100,
-                errorCategories: DEFAULT_ERROR_CATEGORIES.map(c => ({ ...c })),
-                errors: [
-                  { id: 1, name: 'التنبيه', deduction: 0.5, category: 'حفظ', color: 'rose' },
-                  { id: 2, name: 'الفتح', deduction: 1, category: 'حفظ', color: 'rose' },
-                  { id: 3, name: 'التشكيل', deduction: 1, category: 'حفظ', color: 'rose' },
-                  { id: 4, name: 'التجويد', deduction: 0.5, category: 'التجويد', color: 'teal' },
-                ],
-              };
-              updatedLevels.push(matchedLevel);
-            }
-          } else if (fallbackLevelId) {
-            matchedLevel =
-              updatedLevels.find(l => l.id === Number(fallbackLevelId)) ||
-              updatedLevels[0];
-          }
-
-          if (matchedLevel) {
-            newParticipants.push({
-              id: baseId + i,
-              name: pName,
-              levelId: matchedLevel.id,
-              juzsOrSurahs: rawScope || matchedLevel.juzsOrSurahs,
-            });
-          }
-        });
+        const { updatedLevels, newParticipants, addedLevelsCount } =
+          parseAndImportCompetitionExcel(ws, comp, levels, fallbackLevelId);
 
         if (newParticipants.length > 0) {
           setLevels(updatedLevels);
           onUpdate({
             ...comp,
+            isActive: true,
             levels: updatedLevels,
             participants: [...(comp.participants || []), ...newParticipants],
           });
           context?.showToast(
-            `تم استيراد ${newParticipants.length} متسابق وتوزيعهم على المستويات بنجاح!`,
+            addedLevelsCount > 0
+              ? `تم استيراد ${newParticipants.length} متسابق وتفعيل المستويات وإضافة (${addedLevelsCount}) مستويات جديدة من ملف الإكسل! يمكنك تعديل أجزائها الآن.`
+              : `تم استيراد ${newParticipants.length} متسابق وتوزيعهم على المستويات الموافقة في الاسم بنجاح!`,
             'success'
           );
         } else {
@@ -1578,14 +2661,14 @@ function LevelEditor({
         className="hidden"
       />
 
-      {/* شريط علوي لإعداد المستويات واستيراد إكسل الشامل (الاسم والمستوى) */}
+      {/* شريط علوي لإعداد المستويات واستيراد إكسل الشامل */}
       <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-3 bg-emerald-50/60 dark:bg-slate-800/60 p-3.5 sm:p-4 rounded-2xl border border-emerald-200/70 dark:border-slate-700">
         <div>
           <h3 className="text-base sm:text-lg font-black text-emerald-950 dark:text-emerald-300">
             إعداد المستويات وإدراج المتسابقين
           </h3>
           <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-            يمكنك لصق أسماء المتسابقين (كل سطر اسم) داخل كل مستوى مباشرة، أو استيراد ملف إكسل يحتوي على (اسم المتسابق والمستوى)
+            استورد ملف الإكسل المعتمد (رقم الطلب، الاسم الكامل، الرقم المدني، رقم الهاتف، الجنس، الولاية، مستوى المشاركة، وقت وتاريخ التسجيل) لتفعيل المستويات وإدراج المتسابقين تلقائياً
           </p>
         </div>
 
@@ -1594,10 +2677,10 @@ function LevelEditor({
             type="button"
             onClick={handleDownloadLevelExcelTemplate}
             className="min-h-[44px] px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center justify-center gap-1.5 hover:bg-slate-50 transition active:scale-95 cursor-pointer"
-            title="تحميل قالب إكسل جاهز (الاسم والمستوى)"
+            title="تحميل قالب إكسل المعتمد (من اليمين: رقم الطلب، الاسم الكامل، الرقم المدني، رقم الهاتف، الجنس، الولاية، مستوى المشاركة، وقت وتاريخ التسجيل)"
           >
             <Download size={16} className="shrink-0 text-emerald-700 dark:text-emerald-400" />
-            <span>قالب إكسل (الاسم والمستوى)</span>
+            <span>تحميل قالب الإكسل المعتمد</span>
           </button>
 
           <button
@@ -1609,7 +2692,7 @@ function LevelEditor({
             className="min-h-[44px] px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95 shadow-xs cursor-pointer"
           >
             <Upload size={16} className="shrink-0" />
-            <span>استيراد إكسل (الاسم والمستوى)</span>
+            <span>استيراد إكسل وتفعيل المستويات</span>
           </button>
 
           <button
@@ -3023,12 +4106,22 @@ function CompetitionEvaluators({
           >
             <option value="">-- اختر مقيماً من القائمة المنسدلة --</option>
             {globalEvaluators.map(ge => {
-              const inComp = (comp.evaluators || []).some(
+              const existingEv = (comp.evaluators || []).find(
                 e => e.name.trim().toLowerCase() === ge.name.trim().toLowerCase()
               );
+              const existingLevelsInfo = existingEv
+                ? getEvaluatorAssignedLevelsInfo(
+                    existingEv,
+                    comp.levels || [],
+                    comp.participants || []
+                  )
+                : null;
               return (
                 <option key={ge.id} value={ge.id}>
-                  {ge.name} (رمز الدخول: {ge.pin}){inComp ? ' - [مختار حالياً في المسابقة]' : ''}
+                  {ge.name} (رمز الدخول: {ge.pin})
+                  {existingLevelsInfo
+                    ? ` - [مشارك في: ${existingLevelsInfo.assignedLevelNames.join('، ') || 'كافة المستويات'}]`
+                    : ''}
                 </option>
               );
             })}
@@ -3075,7 +4168,7 @@ function CompetitionEvaluators({
 
         {/* 2. تحديد المستويات المسندة للمقيم المختار */}
         <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2.5">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <label className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-200">
               تحديد المستوى أو المستويات التي سيقوم بتحكيمها ({selectedLevels.length} محدد):
             </label>
@@ -3155,75 +4248,139 @@ function CompetitionEvaluators({
         </button>
       </div>
 
-      {/* عرض قائمة مقيمي المسابقة المسجلين حالياً */}
-      <div className="space-y-3">
-        <h4 className="font-black text-sm sm:text-base text-slate-800 dark:text-slate-200 flex items-center justify-between">
-          <span>مقائمو المسابقة الحاليون ({(comp.evaluators || []).length})</span>
-          <span className="text-xs font-normal text-slate-500">انقر على "تعديل المستويات" للتحكم بمستويات كل مقيم</span>
-        </h4>
+      {/* عرض قائمة مقيمي المسابقة المسجلين حالياً مع تقسيم المستويات وأزرار التصدير */}
+      <div className="space-y-3.5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-emerald-50/70 dark:bg-slate-800/80 p-3.5 rounded-2xl border border-emerald-200/80 dark:border-slate-700">
+          <div>
+            <h4 className="font-black text-sm sm:text-base text-emerald-950 dark:text-emerald-300 flex items-center gap-2">
+              <UserCheck size={18} className="text-emerald-700 dark:text-emerald-400 shrink-0" />
+              <span>بيانات مقيمي المسابقة وتوزيع مستوياتهم ({(comp.evaluators || []).length})</span>
+            </h4>
+            <p className="text-[11px] sm:text-xs font-bold text-slate-600 dark:text-slate-400 mt-0.5">
+              يظهر أمام كل مقيم المستويات المسندة إليه، ويمكنك الضغط على أي مستوى لتفعيله أو إلغائه مباشرة أو تصدير التقسيم.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 sm:flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => exportCompetitionSetupExcel(comp, context?.showToast)}
+              className="min-h-[40px] px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95 shadow-2xs cursor-pointer"
+            >
+              <FileSpreadsheet size={15} />
+              <span>تصدير الإعدادات Excel</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => exportCompetitionSetupPDF(comp, context?.showToast)}
+              className="min-h-[40px] px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95 shadow-2xs cursor-pointer"
+            >
+              <Printer size={15} />
+              <span>تصدير / طباعة PDF</span>
+            </button>
+          </div>
+        </div>
 
         {/* Mobile Cards for Evaluators */}
         <div className="md:hidden space-y-2.5">
-          {(comp.evaluators || []).map(ev => {
-            const assignedLvlNames = (ev.levelIds || [])
-              .map(id => (comp.levels || []).find(l => l.id === id)?.name)
-              .filter(Boolean);
+          {(comp.evaluators || []).map((ev, idx) => {
+            const info = getEvaluatorAssignedLevelsInfo(
+              ev,
+              comp.levels || [],
+              comp.participants || []
+            );
+
+            const handleQuickToggleLevel = (lvlId: number) => {
+              const allIds = (comp.levels || []).map(l => l.id);
+              const currentIds =
+                ev.levelIds && ev.levelIds.length > 0 ? ev.levelIds : allIds;
+              const isAssigned = currentIds.includes(lvlId);
+              const nextIds = isAssigned
+                ? currentIds.filter(id => id !== lvlId)
+                : [...currentIds, lvlId];
+
+              if (nextIds.length === 0) {
+                context?.showToast('يجب أن يكون للمقيم مستوى واحد على الأقل مسنداً إليه', 'error');
+                return;
+              }
+              const updated = (comp.evaluators || []).map(item =>
+                item.id === ev.id ? { ...item, levelIds: nextIds } : item
+              );
+              onUpdate({ ...comp, evaluators: updated });
+            };
 
             return (
               <div
                 key={ev.id}
-                className="p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 space-y-2.5 shadow-xs"
+                className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 space-y-3 shadow-xs"
               >
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <span className="font-black text-base text-slate-900 dark:text-white block">
-                      {ev.name}
-                    </span>
-                    <span className="inline-block mt-1 px-2.5 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-mono text-xs font-bold border border-emerald-200 dark:border-emerald-800">
-                      رمز الدخول: {ev.pin}
-                    </span>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="w-6 h-6 rounded-lg bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-xs font-black flex items-center justify-center shrink-0">
+                        {idx + 1}
+                      </span>
+                      <span className="font-black text-sm sm:text-base text-slate-900 dark:text-white truncate">
+                        {ev.name}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                      <span className="px-2.5 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-mono text-xs font-bold border border-emerald-200 dark:border-emerald-800">
+                        رمز الدخول: {ev.pin}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-lg bg-amber-50 dark:bg-amber-950/70 text-amber-900 dark:text-amber-300 text-[11px] font-black border border-amber-200 dark:border-amber-800">
+                        {info.assignedLevels.length} مستويات ({info.participantsCount} متسابق)
+                      </span>
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
                       onClick={() => setEditingEval(ev)}
-                      className="min-h-[42px] px-3 text-xs bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900/40 rounded-xl flex items-center justify-center gap-1 transition active:scale-95 font-bold cursor-pointer"
+                      className="min-h-[38px] px-2.5 text-xs bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900/40 rounded-xl flex items-center justify-center gap-1 transition active:scale-95 font-bold cursor-pointer"
                       title="تعديل المقيم والمستويات المسندة له"
                     >
-                      <Edit size={15} />
-                      <span>تعديل المستويات</span>
+                      <Edit size={14} />
+                      <span>تعديل</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => setDeleteConfirmEval(ev)}
-                      className="min-h-[42px] min-w-[42px] text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 border border-red-200 dark:border-red-900/40 rounded-xl flex items-center justify-center transition active:scale-95 cursor-pointer"
+                      className="min-h-[38px] min-w-[38px] text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 border border-red-200 dark:border-red-900/40 rounded-xl flex items-center justify-center transition active:scale-95 cursor-pointer"
                       title="حذف المقيم"
                     >
-                      <Trash2 size={18} />
+                      <Trash2 size={16} />
                     </button>
                   </div>
                 </div>
 
-                <div className="pt-2 border-t border-slate-100 dark:border-slate-700/80">
-                  <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block mb-1">
-                    المستويات التي يقيمها:
-                  </span>
-                  <div className="flex flex-wrap gap-1">
-                    {assignedLvlNames.length > 0 ? (
-                      assignedLvlNames.map((lname, i) => (
-                        <span
-                          key={i}
-                          className="px-2.5 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-900/60 text-emerald-950 dark:text-emerald-200 text-xs font-extrabold"
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-700/80 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-black text-emerald-900 dark:text-emerald-300">
+                      المستويات المسندة ({info.assignedLevelNames.join(' ، ') || 'لا يوجد'}):
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(comp.levels || []).map(lvl => {
+                      const isAssigned = info.assignedLevels.some(al => al.id === lvl.id);
+                      return (
+                        <button
+                          key={lvl.id}
+                          type="button"
+                          onClick={() => handleQuickToggleLevel(lvl.id)}
+                          className={`px-2.5 py-1 rounded-xl text-xs font-black flex items-center gap-1 transition active:scale-95 cursor-pointer border ${
+                            isAssigned
+                              ? 'bg-emerald-700 text-white border-emerald-700 shadow-2xs'
+                              : 'bg-slate-50 dark:bg-slate-900 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-700'
+                          }`}
+                          title="اضغط لتفعيل أو إلغاء هذا المستوى للمقيم"
                         >
-                          {lname}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="px-2.5 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-900/60 text-emerald-950 dark:text-emerald-200 text-xs font-extrabold">
-                        جميع المستويات
-                      </span>
-                    )}
+                          <Check size={13} className={isAssigned ? 'opacity-100' : 'opacity-25'} />
+                          <span>{lvl.name}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -3231,7 +4388,7 @@ function CompetitionEvaluators({
           })}
           {(comp.evaluators || []).length === 0 && (
             <div className="p-8 text-center text-slate-400 border border-dashed border-slate-200 dark:border-slate-700 rounded-2xl text-sm font-bold">
-              لا يوجد مقيمين مضافين لهذه المسابقة حالياً. اختر من القائمة المنسدلة بالعلى لإضافتهم.
+              لا يوجد مقيمون مضافون لهذه المسابقة حالياً. اختر من القائمة المنسدلة بالأعلى لإضافتهم.
             </div>
           )}
         </div>
@@ -3241,41 +4398,80 @@ function CompetitionEvaluators({
           <table className="w-full text-right">
             <thead className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-sm">
               <tr>
+                <th className="p-3.5 border-b dark:border-slate-700 w-12 text-center">#</th>
                 <th className="p-3.5 border-b dark:border-slate-700">اسم المقيم</th>
-                <th className="p-3.5 border-b dark:border-slate-700">كلمة المرور / الرمز</th>
-                <th className="p-3.5 border-b dark:border-slate-700">المستويات المسندة</th>
+                <th className="p-3.5 border-b dark:border-slate-700">رمز الدخول</th>
+                <th className="p-3.5 border-b dark:border-slate-700">المستويات المسندة للمقيم (اضغط للتبديل السريع)</th>
+                <th className="p-3.5 border-b dark:border-slate-700 text-center">المتسابقون</th>
                 <th className="p-3.5 border-b dark:border-slate-700 w-36 text-center">إجراءات</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {(comp.evaluators || []).map(ev => {
-                const assignedLvlNames = (ev.levelIds || [])
-                  .map(id => (comp.levels || []).find(l => l.id === id)?.name)
-                  .filter(Boolean);
+              {(comp.evaluators || []).map((ev, idx) => {
+                const info = getEvaluatorAssignedLevelsInfo(
+                  ev,
+                  comp.levels || [],
+                  comp.participants || []
+                );
+
+                const handleQuickToggleLevel = (lvlId: number) => {
+                  const allIds = (comp.levels || []).map(l => l.id);
+                  const currentIds =
+                    ev.levelIds && ev.levelIds.length > 0 ? ev.levelIds : allIds;
+                  const isAssigned = currentIds.includes(lvlId);
+                  const nextIds = isAssigned
+                    ? currentIds.filter(id => id !== lvlId)
+                    : [...currentIds, lvlId];
+
+                  if (nextIds.length === 0) {
+                    context?.showToast('يجب أن يكون للمقيم مستوى واحد على الأقل مسنداً إليه', 'error');
+                    return;
+                  }
+                  const updated = (comp.evaluators || []).map(item =>
+                    item.id === ev.id ? { ...item, levelIds: nextIds } : item
+                  );
+                  onUpdate({ ...comp, evaluators: updated });
+                };
 
                 return (
                   <tr key={ev.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                    <td className="p-3.5 font-bold">{ev.name}</td>
+                    <td className="p-3.5 text-center font-black text-slate-500">{idx + 1}</td>
+                    <td className="p-3.5">
+                      <span className="font-black text-slate-900 dark:text-white block">{ev.name}</span>
+                      <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
+                        {info.assignedLevelNames.join(' ، ') || 'غير محدد'}
+                      </span>
+                    </td>
                     <td className="p-3.5 font-mono text-emerald-800 dark:text-emerald-300 font-black">
                       {ev.pin}
                     </td>
                     <td className="p-3.5 text-sm text-slate-600 dark:text-slate-300">
-                      <div className="flex flex-wrap gap-1">
-                        {assignedLvlNames.length > 0 ? (
-                          assignedLvlNames.map((lname, i) => (
-                            <span
-                              key={i}
-                              className="px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-xs font-bold border border-emerald-200 dark:border-emerald-800"
+                      <div className="flex flex-wrap gap-1.5">
+                        {(comp.levels || []).map(lvl => {
+                          const isAssigned = info.assignedLevels.some(al => al.id === lvl.id);
+                          return (
+                            <button
+                              key={lvl.id}
+                              type="button"
+                              onClick={() => handleQuickToggleLevel(lvl.id)}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-black flex items-center gap-1 transition active:scale-95 cursor-pointer border ${
+                                isAssigned
+                                  ? 'bg-emerald-700 text-white border-emerald-700 shadow-2xs'
+                                  : 'bg-slate-50 dark:bg-slate-900 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-700 hover:border-emerald-300'
+                              }`}
+                              title="اضغط لتفعيل أو إلغاء هذا المستوى للمقيم"
                             >
-                              {lname}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-xs font-bold border border-emerald-200 dark:border-emerald-800">
-                            جميع المستويات
-                          </span>
-                        )}
+                              <Check size={12} className={isAssigned ? 'opacity-100' : 'opacity-25'} />
+                              <span>{lvl.name}</span>
+                            </button>
+                          );
+                        })}
                       </div>
+                    </td>
+                    <td className="p-3.5 text-center">
+                      <span className="px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/70 text-amber-900 dark:text-amber-300 text-xs font-black border border-amber-200 dark:border-amber-800">
+                        {info.participantsCount} متسابق
+                      </span>
                     </td>
                     <td className="p-3.5 text-center">
                       <div className="flex items-center justify-center gap-1.5">
@@ -3303,14 +4499,88 @@ function CompetitionEvaluators({
               })}
               {(comp.evaluators || []).length === 0 && (
                 <tr>
-                  <td colSpan={4} className="p-8 text-center text-slate-400 font-bold">
-                    لا يوجد مقيمين مضافين لهذه المسابقة حالياً. اختر من القائمة المنسدلة بالأعلى لإضافتهم وتحديد مستوياتهم.
+                  <td colSpan={6} className="p-8 text-center text-slate-400 font-bold">
+                    لا يوجد مقيمون مضافون لهذه المسابقة حالياً. اختر من القائمة المنسدلة بالأعلى لإضافتهم وتحديد مستوياتهم.
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
+
+        {/* قسم مراجعة تقسيم اللجان حسب المستويات للمشرف (مناسب للهاتف والكمبيوتر) */}
+        {(comp.levels || []).length > 0 && (
+          <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3 mt-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h5 className="font-black text-xs sm:text-sm text-emerald-950 dark:text-emerald-300 flex items-center gap-1.5">
+                <Award size={16} className="text-amber-600 shrink-0" />
+                <span>مراجعة تقسيم لجان المقيمين حسب المستويات ({(comp.levels || []).length} مستويات)</span>
+              </h5>
+              <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                يوضح للمشرف أعضاء لجنة التحكيم في كل مستوى
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+              {(comp.levels || []).map(lvl => {
+                const levelEvaluators = (comp.evaluators || []).filter(ev => {
+                  const info = getEvaluatorAssignedLevelsInfo(
+                    ev,
+                    comp.levels || [],
+                    comp.participants || []
+                  );
+                  return info.assignedLevels.some(al => al.id === lvl.id);
+                });
+                const levelParticipantsCount = (comp.participants || []).filter(
+                  p => p.levelId === lvl.id
+                ).length;
+
+                return (
+                  <div
+                    key={lvl.id}
+                    className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex flex-col justify-between gap-2 shadow-2xs"
+                  >
+                    <div className="flex items-start justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
+                      <div>
+                        <span className="font-black text-xs sm:text-sm text-slate-900 dark:text-white block">
+                          {lvl.name}
+                        </span>
+                        <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
+                          النطاق: {lvl.juzsOrSurahs}
+                        </span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-black shrink-0">
+                        {levelParticipantsCount} متسابق
+                      </span>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block mb-1">
+                        لجنة المقيمين في هذا المستوى ({levelEvaluators.length}):
+                      </span>
+                      {levelEvaluators.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {levelEvaluators.map(ev => (
+                            <span
+                              key={ev.id}
+                              className="px-2 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-950 text-emerald-900 dark:text-emerald-200 text-[11px] font-black border border-emerald-200 dark:border-emerald-800"
+                            >
+                              {ev.name}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400">
+                          ⚠️ لم يتم إسناد مقيم لهذا المستوى بعد
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* نافذة تعديل المستويات المسندة للمقيم في المسابقة فقط */}
@@ -3554,9 +4824,17 @@ function CompetitionParticipants({
 }) {
   const [namesText, setNamesText] = useState('');
   const [levelId, setLevelId] = useState<number>(comp.levels[0]?.id || 0);
-  const [juzsOrSurahs, setJuzsOrSurahs] = useState('');
   const [deleteConfirmParticipant, setDeleteConfirmParticipant] = useState<CompetitionParticipant | null>(null);
   const [editingParticipant, setEditingParticipant] = useState<CompetitionParticipant | null>(null);
+
+  // فلاتر التصفية المتعددة لحقول المشاركين
+  const [selectedLevelsFilter, setSelectedLevelsFilter] = useState<string[]>([]);
+  const [selectedWilayatsFilter, setSelectedWilayatsFilter] = useState<string[]>([]);
+  const [selectedGendersFilter, setSelectedGendersFilter] = useState<string[]>([]);
+  const [selectedNamesFilter, setSelectedNamesFilter] = useState<string[]>([]);
+  const [selectedReqNumsFilter, setSelectedReqNumsFilter] = useState<string[]>([]);
+  const [selectedCivilIdsFilter, setSelectedCivilIdsFilter] = useState<string[]>([]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const context = useContext(AppContext);
 
@@ -3576,6 +4854,12 @@ function CompetitionParticipants({
       name: editingParticipant.name.trim(),
       levelId: Number(editingParticipant.levelId),
       juzsOrSurahs: chosenLevel?.juzsOrSurahs || editingParticipant.juzsOrSurahs?.trim() || undefined,
+      requestNumber: editingParticipant.requestNumber?.trim() || undefined,
+      civilId: editingParticipant.civilId?.trim() || undefined,
+      phone: editingParticipant.phone?.trim() || undefined,
+      gender: editingParticipant.gender?.trim() || undefined,
+      wilayat: editingParticipant.wilayat?.trim() || undefined,
+      registrationDate: editingParticipant.registrationDate?.trim() || undefined,
     };
 
     const updatedParticipants = (comp.participants || []).map(p =>
@@ -3623,7 +4907,6 @@ function CompetitionParticipants({
       participants: [...(comp.participants || []), ...newParts],
     });
     setNamesText('');
-    setJuzsOrSurahs('');
     context?.showToast(
       `تمت إضافة ${newParts.length} متسابق بنجاح`,
       'success'
@@ -3631,24 +4914,7 @@ function CompetitionParticipants({
   };
 
   const handleExportTemplate = () => {
-    const rows =
-      (comp.levels || []).length > 0
-        ? comp.levels.map((l, idx) => ({
-            'اسم المتسابق': `متسابق تجريبي ${idx + 1}`,
-            المستوى: l.name,
-            'الأجزاء أو السور المختارة': formatJuzsOrSurahsDisplay(l.juzsOrSurahs) || 'الأجزاء: من 1 إلى 3',
-          }))
-        : [
-            {
-              'اسم المتسابق': 'أحمد محمد علي',
-              المستوى: 'المستوى الأول',
-              'الأجزاء أو السور المختارة': 'الأجزاء: من 1 إلى 3',
-            },
-          ];
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'المشاركين');
-    XLSX.writeFile(wb, 'قالب_المشاركين_والمستويات.xlsx');
+    downloadCompetitionExcelTemplate(comp);
   };
 
   const handleImportExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -3657,72 +4923,173 @@ function CompetitionParticipants({
 
     const reader = new FileReader();
     reader.onload = evt => {
-      const bstr = evt.target?.result;
-      const wb = XLSX.read(bstr, { type: 'binary' });
-      const wsname = wb.SheetNames[0];
-      const ws = wb.Sheets[wsname];
-      const data = XLSX.utils.sheet_to_json(ws, { defval: '' }) as any[];
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
 
-      const newParticipants: CompetitionParticipant[] = [];
-      data.forEach((row, i) => {
-        const keys = Object.keys(row);
-        const rawName =
-          row['اسم المتسابق'] ||
-          row['اسم المشارك'] ||
-          row['الاسم'] ||
-          row['المتسابق'] ||
-          (keys.length > 0 ? row[keys[0]] : '');
-        const pName = cleanParticipantLine(String(rawName || ''));
-        if (!pName || pName === 'اسم المتسابق' || pName === 'اسم المشارك' || pName === 'الاسم') {
-          return;
-        }
-        const lName = String(row['المستوى'] || row['اسم المستوى'] || '').trim();
-        const scope =
-          row['الأجزاء أو السور المختارة'] ||
-          row['النطاق'] ||
-          row['الأجزاء'] ||
-          '';
+        const { updatedLevels, newParticipants, addedLevelsCount } =
+          parseAndImportCompetitionExcel(ws, comp, comp.levels || []);
 
-        const matchedLevel =
-          (comp.levels || []).find(
-            l =>
-              l.name.trim() === lName ||
-              (lName && (l.name.includes(lName) || lName.includes(l.name.trim())))
-          ) ||
-          (comp.levels || []).find(l => l.id === Number(levelId)) ||
-          comp.levels[0];
-
-        if (matchedLevel) {
-          newParticipants.push({
-            id: Date.now() + i,
-            name: String(pName),
-            levelId: matchedLevel.id,
-            juzsOrSurahs: scope
-              ? String(scope)
-              : matchedLevel.juzsOrSurahs,
+        if (newParticipants.length > 0) {
+          onUpdate({
+            ...comp,
+            isActive: true,
+            levels: updatedLevels,
+            participants: [...(comp.participants || []), ...newParticipants],
           });
+          context?.showToast(
+            addedLevelsCount > 0
+              ? `تم استيراد ${newParticipants.length} متسابق وتفعيل المستويات وإضافة (${addedLevelsCount}) مستويات جديدة من ملف الإكسل!`
+              : `تم استيراد ${newParticipants.length} متسابق وتوزيعهم على المستويات الموافقة في الاسم بنجاح!`,
+            'success'
+          );
+        } else {
+          context?.showToast(
+            'لم يتم العثور على بيانات صحيحة في الملف.',
+            'error'
+          );
         }
-      });
-
-      if (newParticipants.length > 0) {
-        onUpdate({
-          ...comp,
-          participants: [...(comp.participants || []), ...newParticipants],
-        });
-        context?.showToast(
-          `تم استيراد ${newParticipants.length} متسابق بنجاح!`,
-          'success'
-        );
-      } else {
-        context?.showToast(
-          'لم يتم العثور على بيانات صحيحة في الملف.',
-          'error'
-        );
+      } catch {
+        context?.showToast('حدث خطأ أثناء قراءة ملف الإكسل', 'error');
       }
       if (fileInputRef.current) fileInputRef.current.value = '';
     };
     reader.readAsBinaryString(file);
   };
+
+  const allParticipants = comp.participants || [];
+
+  // خيارات الفلاتر المتعددة للمشاركين
+  const levelOptions = React.useMemo(
+    () =>
+      (comp.levels || []).map(l => ({
+        value: String(l.id),
+        label: l.name,
+        count: allParticipants.filter(p => Number(p.levelId) === Number(l.id)).length,
+      })),
+    [comp.levels, allParticipants]
+  );
+
+  const wilayatOptions = React.useMemo(() => {
+    const counts: Record<string, number> = {};
+    allParticipants.forEach(p => {
+      const w = (p.wilayat || '').trim();
+      if (w) counts[w] = (counts[w] || 0) + 1;
+    });
+    return Object.entries(counts).map(([val, cnt]) => ({
+      value: val,
+      label: val,
+      count: cnt,
+    }));
+  }, [allParticipants]);
+
+  const genderOptions = React.useMemo(() => {
+    const counts: Record<string, number> = {};
+    allParticipants.forEach(p => {
+      const g = (p.gender || '').trim();
+      if (g) counts[g] = (counts[g] || 0) + 1;
+    });
+    return Object.entries(counts).map(([val, cnt]) => ({
+      value: val,
+      label: val,
+      count: cnt,
+    }));
+  }, [allParticipants]);
+
+  const nameOptions = React.useMemo(
+    () =>
+      allParticipants.map(p => ({
+        value: p.name,
+        label: p.name,
+      })),
+    [allParticipants]
+  );
+
+  const reqNumOptions = React.useMemo(() => {
+    const counts: Record<string, number> = {};
+    allParticipants.forEach(p => {
+      const rn = (p.requestNumber || '').trim();
+      if (rn) counts[rn] = (counts[rn] || 0) + 1;
+    });
+    return Object.entries(counts).map(([val, cnt]) => ({
+      value: val,
+      label: val,
+      count: cnt,
+    }));
+  }, [allParticipants]);
+
+  const civilIdOptions = React.useMemo(() => {
+    const counts: Record<string, number> = {};
+    allParticipants.forEach(p => {
+      const cid = (p.civilId || '').trim();
+      if (cid) counts[cid] = (counts[cid] || 0) + 1;
+    });
+    return Object.entries(counts).map(([val, cnt]) => ({
+      value: val,
+      label: val,
+      count: cnt,
+    }));
+  }, [allParticipants]);
+
+  const filteredParticipantsList = React.useMemo(() => {
+    return allParticipants.filter(p => {
+      if (
+        selectedLevelsFilter.length > 0 &&
+        !selectedLevelsFilter.includes(String(p.levelId))
+      ) {
+        return false;
+      }
+      if (
+        selectedWilayatsFilter.length > 0 &&
+        !selectedWilayatsFilter.includes((p.wilayat || '').trim())
+      ) {
+        return false;
+      }
+      if (
+        selectedGendersFilter.length > 0 &&
+        !selectedGendersFilter.includes((p.gender || '').trim())
+      ) {
+        return false;
+      }
+      if (
+        selectedNamesFilter.length > 0 &&
+        !selectedNamesFilter.includes(p.name)
+      ) {
+        return false;
+      }
+      if (
+        selectedReqNumsFilter.length > 0 &&
+        !selectedReqNumsFilter.includes((p.requestNumber || '').trim())
+      ) {
+        return false;
+      }
+      if (
+        selectedCivilIdsFilter.length > 0 &&
+        !selectedCivilIdsFilter.includes((p.civilId || '').trim())
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [
+    allParticipants,
+    selectedLevelsFilter,
+    selectedWilayatsFilter,
+    selectedGendersFilter,
+    selectedNamesFilter,
+    selectedReqNumsFilter,
+    selectedCivilIdsFilter,
+  ]);
+
+  const hasActiveParticipantFilters =
+    selectedLevelsFilter.length > 0 ||
+    selectedWilayatsFilter.length > 0 ||
+    selectedGendersFilter.length > 0 ||
+    selectedNamesFilter.length > 0 ||
+    selectedReqNumsFilter.length > 0 ||
+    selectedCivilIdsFilter.length > 0;
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -3792,10 +5159,10 @@ function CompetitionParticipants({
               type="button"
               onClick={handleExportTemplate}
               className="min-h-[46px] bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 px-3.5 py-2.5 rounded-xl font-bold flex items-center justify-center gap-1.5 hover:bg-slate-50 text-xs sm:text-sm transition active:scale-95 cursor-pointer"
-              title="تحميل قالب إكسل فارغ لتعبئته"
+              title="تحميل قالب إكسل المعتمد بالحقول الـ 8 مرتبة من اليمين إلى اليسار"
             >
               <Download size={16} className="shrink-0" />
-              <span>قالب إكسل</span>
+              <span>تحميل قالب الإكسل المعتمد</span>
             </button>
             <button
               type="button"
@@ -3803,7 +5170,7 @@ function CompetitionParticipants({
               className="min-h-[46px] bg-amber-600 hover:bg-amber-700 text-white px-4 py-2.5 rounded-xl font-bold flex items-center justify-center gap-1.5 text-xs sm:text-sm transition active:scale-95 shadow-xs cursor-pointer"
             >
               <Upload size={16} className="shrink-0" />
-              <span>استيراد إكسل (الاسم والمستوى)</span>
+              <span>استيراد إكسل وتفعيل المستويات</span>
             </button>
             <input
               type="file"
@@ -3816,9 +5183,84 @@ function CompetitionParticipants({
         </div>
       </div>
 
+      {/* شريط التصفية المتعدد الحقول للمشاركين */}
+      {allParticipants.length > 0 && (
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-3 shadow-2xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Filter size={16} className="text-emerald-700 dark:text-emerald-400" />
+              <span className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-200">
+                أدوات التصفية المتعددة للمشاركين ({filteredParticipantsList.length} من {allParticipants.length})
+              </span>
+            </div>
+            {hasActiveParticipantFilters && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedLevelsFilter([]);
+                  setSelectedWilayatsFilter([]);
+                  setSelectedGendersFilter([]);
+                  setSelectedNamesFilter([]);
+                  setSelectedReqNumsFilter([]);
+                  setSelectedCivilIdsFilter([]);
+                }}
+                className="px-3 py-1 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-black cursor-pointer"
+              >
+                إلغاء جميع الفلاتر (عرض الكل)
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-2">
+            <MultiSelectFilterDropdown
+              label="مستوى المشاركة"
+              options={levelOptions}
+              selectedValues={selectedLevelsFilter}
+              onChange={setSelectedLevelsFilter}
+              placeholder="بحث في المستويات..."
+            />
+            <MultiSelectFilterDropdown
+              label="الاسم الكامل"
+              options={nameOptions}
+              selectedValues={selectedNamesFilter}
+              onChange={setSelectedNamesFilter}
+              placeholder="بحث باسم المشارك..."
+            />
+            <MultiSelectFilterDropdown
+              label="الولاية"
+              options={wilayatOptions}
+              selectedValues={selectedWilayatsFilter}
+              onChange={setSelectedWilayatsFilter}
+              placeholder="بحث في الولايات..."
+            />
+            <MultiSelectFilterDropdown
+              label="الجنس"
+              options={genderOptions}
+              selectedValues={selectedGendersFilter}
+              onChange={setSelectedGendersFilter}
+              placeholder="بحث في الجنس..."
+            />
+            <MultiSelectFilterDropdown
+              label="رقم الطلب"
+              options={reqNumOptions}
+              selectedValues={selectedReqNumsFilter}
+              onChange={setSelectedReqNumsFilter}
+              placeholder="بحث برقم الطلب..."
+            />
+            <MultiSelectFilterDropdown
+              label="الرقم المدني"
+              options={civilIdOptions}
+              selectedValues={selectedCivilIdsFilter}
+              onChange={setSelectedCivilIdsFilter}
+              placeholder="بحث بالرقم المدني..."
+            />
+          </div>
+        </div>
+      )}
+
       {/* Mobile Cards for Participants */}
       <div className="md:hidden space-y-2.5">
-        {(comp.participants || []).map(p => {
+        {filteredParticipantsList.map(p => {
           const levelObj = (comp.levels || []).find(l => l.id === p.levelId);
           const displayScope = formatJuzsOrSurahsDisplay(
             levelObj?.juzsOrSurahs || p.juzsOrSurahs
@@ -3828,9 +5270,16 @@ function CompetitionParticipants({
               key={p.id}
               className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 flex items-center justify-between gap-3 shadow-xs"
             >
-              <div className="space-y-1 min-w-0">
-                <div className="font-black text-base text-slate-900 dark:text-white">
-                  {p.name}
+              <div className="space-y-1.5 min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {p.requestNumber && (
+                    <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-[11px] font-black">
+                      طلب #{p.requestNumber}
+                    </span>
+                  )}
+                  <span className="font-black text-base text-slate-900 dark:text-white">
+                    {p.name}
+                  </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5 text-xs">
                   <span className="px-2.5 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-200/70 dark:border-emerald-800">
@@ -3839,6 +5288,21 @@ function CompetitionParticipants({
                   {displayScope && (
                     <span className="text-slate-500 dark:text-slate-400 font-semibold truncate">
                       ({displayScope})
+                    </span>
+                  )}
+                  {p.wilayat && (
+                    <span className="px-2 py-0.5 rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-bold">
+                      📍 {p.wilayat}
+                    </span>
+                  )}
+                  {p.gender && (
+                    <span className="px-2 py-0.5 rounded-lg bg-sky-50 dark:bg-sky-950/60 text-sky-800 dark:text-sky-300 font-bold">
+                      {p.gender}
+                    </span>
+                  )}
+                  {p.phone && (
+                    <span className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-mono text-[11px]">
+                      📞 {p.phone}
                     </span>
                   )}
                 </div>
@@ -3864,71 +5328,111 @@ function CompetitionParticipants({
             </div>
           );
         })}
-        {(comp.participants || []).length === 0 && (
+        {filteredParticipantsList.length === 0 && (
           <div className="p-8 text-center text-slate-400 border border-dashed border-slate-200 dark:border-slate-700 rounded-2xl text-sm font-bold">
-            لا يوجد مشاركين مضافين حالياً
+            لا يوجد مشاركون مطابقون حالياً
           </div>
         )}
       </div>
 
       {/* Desktop Table for Participants */}
       <div className="hidden md:block border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden">
-        <table className="w-full text-right">
-          <thead className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-sm">
-            <tr>
-              <th className="p-3.5 border-b dark:border-slate-700">اسم المشارك</th>
-              <th className="p-3.5 border-b dark:border-slate-700">المستوى</th>
-              <th className="p-3.5 border-b dark:border-slate-700">نطاق الحفظ والتقييم</th>
-              <th className="p-3.5 border-b dark:border-slate-700 w-32 text-center">إجراء</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {(comp.participants || []).map(p => {
-              const levelObj = (comp.levels || []).find(l => l.id === p.levelId);
-              return (
-                <tr key={p.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                  <td className="p-3.5 font-bold">{p.name}</td>
-                  <td className="p-3.5 text-sm text-emerald-700 dark:text-emerald-400 font-bold">
-                    {levelObj?.name}
-                  </td>
-                  <td className="p-3.5 text-sm text-slate-600 dark:text-slate-300 font-bold">
-                    {formatJuzsOrSurahsDisplay(levelObj?.juzsOrSurahs || p.juzsOrSurahs) || '-'}
-                  </td>
-                  <td className="p-3.5 text-center">
-                    <div className="inline-flex items-center justify-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setEditingParticipant({ ...p })}
-                        className="min-h-[38px] min-w-[38px] inline-flex items-center justify-center text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/50 border border-amber-200/80 dark:border-amber-800/60 rounded-xl transition cursor-pointer"
-                        title="تعديل بيانات المشارك"
-                      >
-                        <Edit size={17} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDeleteConfirmParticipant(p)}
-                        className="min-h-[38px] min-w-[38px] inline-flex items-center justify-center text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 border border-red-200/80 dark:border-red-900/40 rounded-xl transition cursor-pointer"
-                        title="حذف المشارك"
-                      >
-                        <Trash2 size={17} />
-                      </button>
-                    </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-right text-xs">
+            <thead className="bg-[#09152C] text-amber-300 font-black">
+              <tr>
+                <th className="p-3 border-b border-white/15">رقم الطلب</th>
+                <th className="p-3 border-b border-white/15">الاسم الكامل</th>
+                <th className="p-3 border-b border-white/15">الرقم المدني</th>
+                <th className="p-3 border-b border-white/15">رقم الهاتف</th>
+                <th className="p-3 border-b border-white/15">الجنس</th>
+                <th className="p-3 border-b border-white/15">الولاية</th>
+                <th className="p-3 border-b border-white/15">مستوى المشاركة</th>
+                <th className="p-3 border-b border-white/15">المقرر / الأجزاء</th>
+                <th className="p-3 border-b border-white/15">وقت وتاريخ التسجيل</th>
+                <th className="p-3 border-b border-white/15 w-28 text-center">إجراء</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-bold">
+              {filteredParticipantsList.map(p => {
+                const levelObj = (comp.levels || []).find(l => l.id === p.levelId);
+                return (
+                  <tr key={p.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+                    <td className="p-3 font-mono text-slate-600 dark:text-slate-300">
+                      {p.requestNumber || '-'}
+                    </td>
+                    <td className="p-3 font-black text-slate-900 dark:text-white text-sm">
+                      {p.name}
+                    </td>
+                    <td className="p-3 font-mono text-slate-600 dark:text-slate-300">
+                      {p.civilId || '-'}
+                    </td>
+                    <td className="p-3 font-mono text-slate-600 dark:text-slate-300">
+                      {p.phone || '-'}
+                    </td>
+                    <td className="p-3">
+                      {p.gender ? (
+                        <span className="px-2 py-0.5 rounded-lg bg-sky-50 dark:bg-sky-950/60 text-sky-800 dark:text-sky-300 text-xs font-black">
+                          {p.gender}
+                        </span>
+                      ) : (
+                        '-'
+                      )}
+                    </td>
+                    <td className="p-3">
+                      {p.wilayat ? (
+                        <span className="px-2 py-0.5 rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-900 dark:text-amber-300 text-xs font-black">
+                          {p.wilayat}
+                        </span>
+                      ) : (
+                        '-'
+                      )}
+                    </td>
+                    <td className="p-3 text-emerald-700 dark:text-emerald-400 font-black">
+                      {levelObj?.name}
+                    </td>
+                    <td className="p-3 text-slate-600 dark:text-slate-300">
+                      {formatJuzsOrSurahsDisplay(levelObj?.juzsOrSurahs || p.juzsOrSurahs) || '-'}
+                    </td>
+                    <td className="p-3 font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                      {p.registrationDate || '-'}
+                    </td>
+                    <td className="p-3 text-center">
+                      <div className="inline-flex items-center justify-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setEditingParticipant({ ...p })}
+                          className="min-h-[36px] min-w-[36px] inline-flex items-center justify-center text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/50 border border-amber-200/80 dark:border-amber-800/60 rounded-xl transition cursor-pointer"
+                          title="تعديل بيانات المشارك"
+                        >
+                          <Edit size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirmParticipant(p)}
+                          className="min-h-[36px] min-w-[36px] inline-flex items-center justify-center text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 border border-red-200/80 dark:border-red-900/40 rounded-xl transition cursor-pointer"
+                          title="حذف المشارك"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {filteredParticipantsList.length === 0 && (
+                <tr>
+                  <td colSpan={10} className="p-8 text-center text-slate-400 font-bold">
+                    لا يوجد مشاركون مطابقون حالياً
                   </td>
                 </tr>
-              );
-            })}
-            {(comp.participants || []).length === 0 && (
-              <tr>
-                <td colSpan={4} className="p-8 text-center text-slate-400 font-bold">
-                  لا يوجد مشاركين مضافين حالياً
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {/* نافذة تعديل بيانات المشارك (اختيار المستوى من قائمة المستويات المدرجة في المسابقة فقط دون تحديد أجزاء يدوياً) */}
+      {/* نافذة تعديل بيانات المشارك (تضم جميع حقول قالب الإكسل + اختيار المستوى من قائمة المستويات المدرجة في المسابقة) */}
       {editingParticipant && (
         <div
           className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6"
@@ -3937,7 +5441,7 @@ function CompetitionParticipants({
           <form
             onSubmit={handleSaveParticipantEdit}
             onClick={e => e.stopPropagation()}
-            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-lg w-full p-5 sm:p-6 space-y-4 shadow-2xl text-right max-h-[90vh] overflow-y-auto"
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-xl w-full p-5 sm:p-6 space-y-4 shadow-2xl text-right max-h-[90vh] overflow-y-auto"
           >
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2">
@@ -3949,7 +5453,7 @@ function CompetitionParticipants({
                     تعديل بيانات المشارك
                   </h4>
                   <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                    تعديل اسم المشارك وتحديد مستواه من قائمة المستويات المدرجة في هذه المسابقة
+                    تعديل البيانات الأساسية وتحديد المستوى من قائمة المستويات المدرجة في المسابقة
                   </p>
                 </div>
               </div>
@@ -3963,27 +5467,137 @@ function CompetitionParticipants({
             </div>
 
             <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1.5">
-                  اسم المشارك
-                </label>
-                <input
-                  type="text"
-                  value={editingParticipant.name}
-                  onChange={e =>
-                    setEditingParticipant({
-                      ...editingParticipant,
-                      name: e.target.value,
-                    })
-                  }
-                  className="w-full min-h-[46px] border border-slate-300 dark:border-slate-700 p-3 rounded-xl bg-white dark:bg-slate-800 font-bold text-sm focus:ring-2 focus:ring-emerald-600"
-                  placeholder="أدخل اسم المشارك..."
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1">
+                    الاسم الكامل
+                  </label>
+                  <input
+                    type="text"
+                    value={editingParticipant.name}
+                    onChange={e =>
+                      setEditingParticipant({
+                        ...editingParticipant,
+                        name: e.target.value,
+                      })
+                    }
+                    className="w-full min-h-[44px] border border-slate-300 dark:border-slate-700 p-2.5 rounded-xl bg-white dark:bg-slate-800 font-bold text-sm focus:ring-2 focus:ring-emerald-600"
+                    placeholder="أدخل الاسم الكامل..."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1">
+                    رقم الطلب
+                  </label>
+                  <input
+                    type="text"
+                    value={editingParticipant.requestNumber || ''}
+                    onChange={e =>
+                      setEditingParticipant({
+                        ...editingParticipant,
+                        requestNumber: e.target.value,
+                      })
+                    }
+                    className="w-full min-h-[42px] border border-slate-300 dark:border-slate-700 p-2.5 rounded-xl bg-white dark:bg-slate-800 font-bold text-xs"
+                    placeholder="رقم الطلب..."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1">
+                    الرقم المدني
+                  </label>
+                  <input
+                    type="text"
+                    value={editingParticipant.civilId || ''}
+                    onChange={e =>
+                      setEditingParticipant({
+                        ...editingParticipant,
+                        civilId: e.target.value,
+                      })
+                    }
+                    className="w-full min-h-[42px] border border-slate-300 dark:border-slate-700 p-2.5 rounded-xl bg-white dark:bg-slate-800 font-bold text-xs"
+                    placeholder="الرقم المدني..."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1">
+                    رقم الهاتف
+                  </label>
+                  <input
+                    type="text"
+                    value={editingParticipant.phone || ''}
+                    onChange={e =>
+                      setEditingParticipant({
+                        ...editingParticipant,
+                        phone: e.target.value,
+                      })
+                    }
+                    className="w-full min-h-[42px] border border-slate-300 dark:border-slate-700 p-2.5 rounded-xl bg-white dark:bg-slate-800 font-bold text-xs"
+                    placeholder="رقم الهاتف..."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1">
+                    الجنس
+                  </label>
+                  <input
+                    type="text"
+                    value={editingParticipant.gender || ''}
+                    onChange={e =>
+                      setEditingParticipant({
+                        ...editingParticipant,
+                        gender: e.target.value,
+                      })
+                    }
+                    className="w-full min-h-[42px] border border-slate-300 dark:border-slate-700 p-2.5 rounded-xl bg-white dark:bg-slate-800 font-bold text-xs"
+                    placeholder="ذكر / أنثى..."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1">
+                    الولاية
+                  </label>
+                  <input
+                    type="text"
+                    value={editingParticipant.wilayat || ''}
+                    onChange={e =>
+                      setEditingParticipant({
+                        ...editingParticipant,
+                        wilayat: e.target.value,
+                      })
+                    }
+                    className="w-full min-h-[42px] border border-slate-300 dark:border-slate-700 p-2.5 rounded-xl bg-white dark:bg-slate-800 font-bold text-xs"
+                    placeholder="الولاية..."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1">
+                    وقت وتاريخ التسجيل
+                  </label>
+                  <input
+                    type="text"
+                    value={editingParticipant.registrationDate || ''}
+                    onChange={e =>
+                      setEditingParticipant({
+                        ...editingParticipant,
+                        registrationDate: e.target.value,
+                      })
+                    }
+                    className="w-full min-h-[42px] border border-slate-300 dark:border-slate-700 p-2.5 rounded-xl bg-white dark:bg-slate-800 font-bold text-xs"
+                    placeholder="وقت وتاريخ التسجيل..."
+                  />
+                </div>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                 <label className="block text-xs font-black text-slate-700 dark:text-slate-300">
-                  تحديد المستوى المشارك فيه (من قائمة المستويات المدرجة في المسابقة)
+                  تحديد مستوى المشاركة (من قائمة المستويات المدرجة في المسابقة)
                 </label>
                 <select
                   value={editingParticipant.levelId}
@@ -4008,7 +5622,7 @@ function CompetitionParticipants({
                 </select>
 
                 {/* قائمة بطاقات المستويات المدرجة في المسابقة للاختيار السريع والواضح */}
-                <div className="space-y-2 max-h-56 overflow-y-auto pt-1">
+                <div className="space-y-2 max-h-48 overflow-y-auto pt-1">
                   {(comp.levels || []).map(lvl => {
                     const isSelected =
                       Number(editingParticipant.levelId) === Number(lvl.id);
@@ -4288,6 +5902,19 @@ function CompetitionReports({
   const [selectedEvaluatorId, setSelectedEvaluatorId] = useState<number | 'all'>(
     'all'
   );
+
+  // فلاتر التصفية متعددة الاختيارات مع البحث وتحديد/إلغاء الكل (إذا لم يتم تحديد شيء يعني الكل)
+  const [filterLevels, setFilterLevels] = useState<string[]>([]);
+  const [filterWilayats, setFilterWilayats] = useState<string[]>([]);
+  const [filterGenders, setFilterGenders] = useState<string[]>([]);
+  const [filterNames, setFilterNames] = useState<string[]>([]);
+  const [filterRequestNumbers, setFilterRequestNumbers] = useState<string[]>([]);
+  const [filterCivilIds, setFilterCivilIds] = useState<string[]>([]);
+  const [filterPhones, setFilterPhones] = useState<string[]>([]);
+  const [filterRegDates, setFilterRegDates] = useState<string[]>([]);
+  const [filterEvaluators, setFilterEvaluators] = useState<string[]>([]);
+  const [filterGrades, setFilterGrades] = useState<string[]>([]);
+
   // خيار إظهار النتائج المتوفرة فقط أو إظهار جميع المسجلين شاملاً بانتظار التقييم
   const [showOnlyAvailableInRankings, setShowOnlyAvailableInRankings] =
     useState<boolean>(true);
@@ -4303,7 +5930,7 @@ function CompetitionReports({
     | 'multi_evaluated'
   >('available');
   const [sortOrder, setSortOrder] = useState<
-    'score_desc' | 'score_asc' | 'name' | 'level'
+    'score_desc' | 'score_asc' | 'name' | 'level' | 'wilayat' | 'request_num'
   >('score_desc');
   const [searchQuery, setSearchQuery] = useState('');
   const [detailParticipantId, setDetailParticipantId] = useState<number | null>(
@@ -4533,57 +6160,101 @@ function CompetitionReports({
     return cloned;
   }, [rawResults]);
 
-  // إحصائيات عامة للنتائج المتوفرة
-  const totalStudentsCount = allResults.length;
-  const availableResultsList = allResults.filter(r => r.evaluationsCount > 0);
-  const evaluatedStudentsCount = availableResultsList.length;
-  const unmemorizedStudentsCount = allResults.filter(r => r.isUnmemorized).length;
-  const memorizedStudentsCount = allResults.filter(
-    r => r.evaluationsCount > 0 && !r.isUnmemorized
-  ).length;
-  const multiEvaluatedCount = allResults.filter(
-    r => r.evaluationsCount > 1
-  ).length;
+  // خيارات التصفية متعددة الاختيارات لكافة الحقول (مع عدد المتسابقين في كل خيار)
+  const filterOptionsMap = React.useMemo(() => {
+    const countMap = (extractor: (r: (typeof allResults)[0]) => string) => {
+      const m = new Map<string, number>();
+      allResults.forEach(r => {
+        const val = extractor(r).trim();
+        if (val) m.set(val, (m.get(val) || 0) + 1);
+      });
+      return Array.from(m.entries()).map(([value, count]) => ({
+        value,
+        label: value,
+        count,
+      }));
+    };
 
-  const overallAverage =
-    memorizedStudentsCount > 0
-      ? Number(
-          (
-            allResults
-              .filter(r => r.averageScore !== null && !r.isUnmemorized)
-              .reduce((sum, r) => sum + (r.averageScore || 0), 0) /
-            memorizedStudentsCount
-          ).toFixed(2)
-        )
-      : null;
+    const levelOptions = (comp.levels || []).map(lvl => ({
+      value: String(lvl.id),
+      label: lvl.name,
+      count: allResults.filter(
+        r => Number(r.effectiveLevelId) === Number(lvl.id)
+      ).length,
+    }));
 
-  const topScorerResult = React.useMemo(() => {
-    const valid = allResults
-      .filter(r => r.averageScore !== null && !r.isUnmemorized)
-      .sort(
-        (a, b) =>
-          (b.percentage || 0) - (a.percentage || 0) ||
-          (b.averageScore || 0) - (a.averageScore || 0)
-      );
-    return valid[0] || null;
-  }, [allResults]);
+    const evaluatorOptions = activeEvaluatorsList.map(ev => ({
+      value: String(ev.id),
+      label: ev.name,
+      count: allResults.filter(r =>
+        r.evaluations.some(e => Number(e.evaluatorId) === Number(ev.id))
+      ).length,
+    }));
 
-  // إذا لم يكن هناك أي نتائج مرصودة بعد، نعرض تلقائياً جميع المسجلين حتى لا يظهر الجدول فارغاً
-  const effectiveStatusFilter =
-    evalStatusFilter === 'available' && evaluatedStudentsCount === 0
-      ? 'all'
-      : evalStatusFilter;
+    return {
+      levels: levelOptions,
+      wilayats: countMap(r => r.participant.wilayat || 'غير محدد'),
+      genders: countMap(r => r.participant.gender || 'غير محدد'),
+      names: countMap(r => r.participant.name || ''),
+      requestNumbers: countMap(r => r.participant.requestNumber || ''),
+      civilIds: countMap(r => r.participant.civilId || ''),
+      phones: countMap(r => r.participant.phone || ''),
+      regDates: countMap(r =>
+        r.participant.registrationDate
+          ? r.participant.registrationDate.split(' ')[0]
+          : ''
+      ),
+      evaluators: evaluatorOptions,
+      grades: countMap(r => r.gradeInfo.label),
+    };
+  }, [allResults, comp.levels, activeEvaluatorsList]);
 
-  // فرز وتصفية النتائج
-  const filteredResults = allResults
-    .filter(r => {
+  const hasActiveMultiFilters =
+    filterLevels.length > 0 ||
+    filterWilayats.length > 0 ||
+    filterGenders.length > 0 ||
+    filterNames.length > 0 ||
+    filterRequestNumbers.length > 0 ||
+    filterCivilIds.length > 0 ||
+    filterPhones.length > 0 ||
+    filterRegDates.length > 0 ||
+    filterEvaluators.length > 0 ||
+    filterGrades.length > 0 ||
+    selectedLevelId !== 'all' ||
+    selectedEvaluatorId !== 'all' ||
+    searchQuery.trim() !== '';
+
+  const resetAllFilters = () => {
+    setFilterLevels([]);
+    setFilterWilayats([]);
+    setFilterGenders([]);
+    setFilterNames([]);
+    setFilterRequestNumbers([]);
+    setFilterCivilIds([]);
+    setFilterPhones([]);
+    setFilterRegDates([]);
+    setFilterEvaluators([]);
+    setFilterGrades([]);
+    setSelectedLevelId('all');
+    setSelectedEvaluatorId('all');
+    setSearchQuery('');
+  };
+
+  // النتائج المصفاة حسب الفلاتر متعددة الاختيارات (تطبق على جميع التبويبات والرسوم البيانية والتصدير)
+  const baseFilteredResults = React.useMemo(() => {
+    return allResults.filter(r => {
       if (
         selectedLevelId !== 'all' &&
         Number(r.effectiveLevelId) !== Number(selectedLevelId)
       ) {
         return false;
       }
-
+      if (
+        filterLevels.length > 0 &&
+        !filterLevels.includes(String(r.effectiveLevelId))
+      ) {
+        return false;
+      }
       if (
         selectedEvaluatorId !== 'all' &&
         !r.evaluations.some(
@@ -4592,7 +6263,134 @@ function CompetitionReports({
       ) {
         return false;
       }
+      if (
+        filterEvaluators.length > 0 &&
+        !r.evaluations.some(ev =>
+          filterEvaluators.includes(String(ev.evaluatorId))
+        )
+      ) {
+        return false;
+      }
+      if (filterWilayats.length > 0) {
+        const w = (r.participant.wilayat || 'غير محدد').trim();
+        if (!filterWilayats.includes(w)) return false;
+      }
+      if (filterGenders.length > 0) {
+        const g = (r.participant.gender || 'غير محدد').trim();
+        if (!filterGenders.includes(g)) return false;
+      }
+      if (filterNames.length > 0 && !filterNames.includes(r.participant.name.trim())) {
+        return false;
+      }
+      if (
+        filterRequestNumbers.length > 0 &&
+        !filterRequestNumbers.includes((r.participant.requestNumber || '').trim())
+      ) {
+        return false;
+      }
+      if (
+        filterCivilIds.length > 0 &&
+        !filterCivilIds.includes((r.participant.civilId || '').trim())
+      ) {
+        return false;
+      }
+      if (
+        filterPhones.length > 0 &&
+        !filterPhones.includes((r.participant.phone || '').trim())
+      ) {
+        return false;
+      }
+      if (filterRegDates.length > 0) {
+        const d = r.participant.registrationDate
+          ? r.participant.registrationDate.split(' ')[0].trim()
+          : '';
+        if (!filterRegDates.includes(d)) return false;
+      }
+      if (
+        filterGrades.length > 0 &&
+        !filterGrades.includes(r.gradeInfo.label)
+      ) {
+        return false;
+      }
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        const matchesAny =
+          r.participant.name.toLowerCase().includes(q) ||
+          (r.participant.requestNumber || '').toLowerCase().includes(q) ||
+          (r.participant.civilId || '').toLowerCase().includes(q) ||
+          (r.participant.phone || '').toLowerCase().includes(q) ||
+          (r.participant.wilayat || '').toLowerCase().includes(q) ||
+          (r.participant.gender || '').toLowerCase().includes(q) ||
+          (r.level?.name || '').toLowerCase().includes(q);
+        if (!matchesAny) return false;
+      }
+      return true;
+    });
+  }, [
+    allResults,
+    selectedLevelId,
+    filterLevels,
+    selectedEvaluatorId,
+    filterEvaluators,
+    filterWilayats,
+    filterGenders,
+    filterNames,
+    filterRequestNumbers,
+    filterCivilIds,
+    filterPhones,
+    filterRegDates,
+    filterGrades,
+    searchQuery,
+  ]);
 
+  // إحصائيات عامة للنتائج المتوفرة (حسب التصفية النشطة)
+  const totalStudentsCount = baseFilteredResults.length;
+  const availableResultsList = baseFilteredResults.filter(
+    r => r.evaluationsCount > 0
+  );
+  const evaluatedStudentsCount = availableResultsList.length;
+  const unmemorizedStudentsCount = baseFilteredResults.filter(
+    r => r.isUnmemorized
+  ).length;
+  const memorizedStudentsCount = baseFilteredResults.filter(
+    r => r.evaluationsCount > 0 && !r.isUnmemorized
+  ).length;
+  const multiEvaluatedCount = baseFilteredResults.filter(
+    r => r.evaluationsCount > 1
+  ).length;
+
+  const overallAverage =
+    memorizedStudentsCount > 0
+      ? Number(
+          (
+            baseFilteredResults
+              .filter(r => r.averageScore !== null && !r.isUnmemorized)
+              .reduce((sum, r) => sum + (r.averageScore || 0), 0) /
+            memorizedStudentsCount
+          ).toFixed(2)
+        )
+      : null;
+
+  const topScorerResult = React.useMemo(() => {
+    const valid = baseFilteredResults
+      .filter(r => r.averageScore !== null && !r.isUnmemorized)
+      .sort(
+        (a, b) =>
+          (b.percentage || 0) - (a.percentage || 0) ||
+          (b.averageScore || 0) - (a.averageScore || 0)
+      );
+    return valid[0] || null;
+  }, [baseFilteredResults]);
+
+  // إذا لم يكن هناك أي نتائج مرصودة بعد، نعرض تلقائياً جميع المسجلين حتى لا يظهر الجدول فارغاً
+  const effectiveStatusFilter =
+    evalStatusFilter === 'available' && evaluatedStudentsCount === 0
+      ? 'all'
+      : evalStatusFilter;
+
+  // فرز وتصفية النتائج
+  const filteredResults = baseFilteredResults
+    .filter(r => {
       if (effectiveStatusFilter === 'available' && r.evaluationsCount === 0) {
         return false;
       }
@@ -4611,16 +6409,6 @@ function CompetitionReports({
       if (effectiveStatusFilter === 'unmemorized' && !r.isUnmemorized) {
         return false;
       }
-
-      if (
-        searchQuery.trim() &&
-        !r.participant.name
-          .toLowerCase()
-          .includes(searchQuery.trim().toLowerCase())
-      ) {
-        return false;
-      }
-
       return true;
     })
     .sort((a, b) => {
@@ -4629,6 +6417,19 @@ function CompetitionReports({
       }
       if (sortOrder === 'level') {
         return (a.level?.name || '').localeCompare(b.level?.name || '', 'ar');
+      }
+      if (sortOrder === 'wilayat') {
+        return (a.participant.wilayat || '').localeCompare(
+          b.participant.wilayat || '',
+          'ar'
+        );
+      }
+      if (sortOrder === 'request_num') {
+        return (a.participant.requestNumber || '').localeCompare(
+          b.participant.requestNumber || '',
+          'ar',
+          { numeric: true }
+        );
       }
       if (sortOrder === 'score_asc') {
         if (a.isUnmemorized && !b.isUnmemorized) return -1;
@@ -4657,26 +6458,12 @@ function CompetitionReports({
         ? 'all'
         : evalAvgFilterMode;
 
-    return allResults
+    return baseFilteredResults
       .filter(r => {
-        if (
-          selectedLevelId !== 'all' &&
-          Number(r.effectiveLevelId) !== Number(selectedLevelId)
-        ) {
-          return false;
-        }
         if (effectiveMode === 'available' && r.evaluationsCount === 0) {
           return false;
         }
         if (effectiveMode === 'multi_only' && r.evaluationsCount < 2) {
-          return false;
-        }
-        if (
-          searchQuery.trim() &&
-          !r.participant.name
-            .toLowerCase()
-            .includes(searchQuery.trim().toLowerCase())
-        ) {
           return false;
         }
         return true;
@@ -4691,7 +6478,7 @@ function CompetitionReports({
           (b.averageScore || 0) - (a.averageScore || 0)
         );
       });
-  }, [allResults, selectedLevelId, evalAvgFilterMode, evaluatedStudentsCount, searchQuery]);
+  }, [baseFilteredResults, evalAvgFilterMode, evaluatedStudentsCount]);
 
   /**
    * تحويل الصور داخل عنصر التقرير إلى Data URL (Base64) لضمان ظهور الديباجة فوراً في ملف الـ PDF
@@ -4934,10 +6721,12 @@ function CompetitionReports({
     }
   };
 
-  // تصدير النتائج لملف إكسل (ورقة لكشف النتائج الشامل + ورقة لملخص متوسطات المقيمين)
+  // تصدير النتائج لملف إكسل احترافي متعدد الأوراق (RTL) يشمل كافة حقول القالب الرسمية والنتائج والإحصائيات
   const exportExcel = () => {
     const evaluatorsList = activeEvaluatorsList;
-    const data = filteredResults.map(r => {
+
+    // الورقة 1: كشف النتائج التفصيلي الشامل مع جميع حقول القالب الـ 8
+    const detailedData = filteredResults.map(r => {
       const row: Record<string, any> = {
         'المركز في المستوى':
           r.rankInLevel !== null
@@ -4951,8 +6740,14 @@ function CompetitionReports({
             : r.isUnmemorized
             ? 'غير حافظ'
             : '-',
-        'اسم المتسابق': r.participant.name,
-        المستوى: r.level?.name || '',
+        'رقم الطلب': r.participant.requestNumber || '-',
+        'الاسم الكامل': r.participant.name,
+        'الرقم المدني': r.participant.civilId || '-',
+        'رقم الهاتف': r.participant.phone || '-',
+        الجنس: r.participant.gender || '-',
+        الولاية: r.participant.wilayat || '-',
+        'مستوى المشاركة': r.level?.name || '',
+        'وقت وتاريخ التسجيل': r.participant.registrationDate || '-',
         'المقرر / الأجزاء':
           r.participant.juzsOrSurahs || r.level?.juzsOrSurahs || '',
         'حالة الحفظ': r.isUnmemorized
@@ -4993,10 +6788,157 @@ function CompetitionReports({
       return row;
     });
 
-    const ws = XLSX.utils.json_to_sheet(data);
+    // الورقة 2: إحصائيات تفصيلية مصنفة حسب المستوى والولاية والجنس والتقدير
+    const summaryRows: Record<string, any>[] = [];
+
+    (comp.levels || []).forEach(lvl => {
+      const lvlItems = baseFilteredResults.filter(
+        r => Number(r.effectiveLevelId) === Number(lvl.id)
+      );
+      const lvlEval = lvlItems.filter(
+        r => r.averageScore !== null && !r.isUnmemorized
+      );
+      const avg =
+        lvlEval.length > 0
+          ? Number(
+              (
+                lvlEval.reduce((s, x) => s + (x.averageScore || 0), 0) /
+                lvlEval.length
+              ).toFixed(2)
+            )
+          : '-';
+      summaryRows.push({
+        'التصنيف الإحصائي': 'حسب مستوى المشاركة',
+        الفئة: lvl.name,
+        'إجمالي المسجلين': lvlItems.length,
+        'تم تقييمهم (حافظون)': lvlEval.length,
+        'غير حافظين': lvlItems.filter(x => x.isUnmemorized).length,
+        'بانتظار التقييم': lvlItems.filter(x => x.evaluationsCount === 0).length,
+        'متوسط الدرجات': avg,
+      });
+    });
+
+    filterOptionsMap.wilayats.forEach(wOpt => {
+      const wItems = baseFilteredResults.filter(
+        r => (r.participant.wilayat || 'غير محدد').trim() === wOpt.value
+      );
+      const wEval = wItems.filter(
+        r => r.averageScore !== null && !r.isUnmemorized
+      );
+      const avg =
+        wEval.length > 0
+          ? Number(
+              (
+                wEval.reduce((s, x) => s + (x.averageScore || 0), 0) /
+                wEval.length
+              ).toFixed(2)
+            )
+          : '-';
+      summaryRows.push({
+        'التصنيف الإحصائي': 'حسب الولاية',
+        الفئة: wOpt.label,
+        'إجمالي المسجلين': wItems.length,
+        'تم تقييمهم (حافظون)': wEval.length,
+        'غير حافظين': wItems.filter(x => x.isUnmemorized).length,
+        'بانتظار التقييم': wItems.filter(x => x.evaluationsCount === 0).length,
+        'متوسط الدرجات': avg,
+      });
+    });
+
+    filterOptionsMap.genders.forEach(gOpt => {
+      const gItems = baseFilteredResults.filter(
+        r => (r.participant.gender || 'غير محدد').trim() === gOpt.value
+      );
+      const gEval = gItems.filter(
+        r => r.averageScore !== null && !r.isUnmemorized
+      );
+      const avg =
+        gEval.length > 0
+          ? Number(
+              (
+                gEval.reduce((s, x) => s + (x.averageScore || 0), 0) /
+                gEval.length
+              ).toFixed(2)
+            )
+          : '-';
+      summaryRows.push({
+        'التصنيف الإحصائي': 'حسب الجنس',
+        الفئة: gOpt.label,
+        'إجمالي المسجلين': gItems.length,
+        'تم تقييمهم (حافظون)': gEval.length,
+        'غير حافظين': gItems.filter(x => x.isUnmemorized).length,
+        'بانتظار التقييم': gItems.filter(x => x.evaluationsCount === 0).length,
+        'متوسط الدرجات': avg,
+      });
+    });
+
+    // الورقة 3: بيانات المشاركين مطابقة لترتيب القالب الرسمي (8 أعمدة)
+    const templateFormatRows = baseFilteredResults.map(r => ({
+      'رقم الطلب': r.participant.requestNumber || '',
+      'الاسم الكامل': r.participant.name || '',
+      'الرقم المدني': r.participant.civilId || '',
+      'رقم الهاتف': r.participant.phone || '',
+      الجنس: r.participant.gender || '',
+      الولاية: r.participant.wilayat || '',
+      'مستوى المشاركة': r.level?.name || '',
+      'وقت وتاريخ التسجيل': r.participant.registrationDate || '',
+    }));
+
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'النتائج ومتوسطات المقيمين');
-    XLSX.writeFile(wb, `تقرير_نتائج_ومتوسطات_${comp.name}.xlsx`);
+    wb.Workbook = { Views: [{ RTL: true }] };
+
+    const ws1 = XLSX.utils.json_to_sheet(detailedData);
+    (ws1 as any)['!views'] = [{ rightToLeft: true }];
+    ws1['!cols'] = [
+      { wch: 15 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 28 },
+      { wch: 16 },
+      { wch: 15 },
+      { wch: 10 },
+      { wch: 15 },
+      { wch: 24 },
+      { wch: 20 },
+      { wch: 22 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 12 },
+    ];
+    XLSX.utils.book_append_sheet(wb, ws1, 'كشف النتائج التفصيلي الشامل');
+
+    const ws2 = XLSX.utils.json_to_sheet(summaryRows);
+    (ws2 as any)['!views'] = [{ rightToLeft: true }];
+    ws2['!cols'] = [
+      { wch: 22 },
+      { wch: 26 },
+      { wch: 16 },
+      { wch: 18 },
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 16 },
+    ];
+    XLSX.utils.book_append_sheet(wb, ws2, 'إحصائيات المستويات والولايات');
+
+    const ws3 = XLSX.utils.json_to_sheet(templateFormatRows);
+    (ws3 as any)['!views'] = [{ rightToLeft: true }];
+    ws3['!cols'] = [
+      { wch: 15 },
+      { wch: 28 },
+      { wch: 16 },
+      { wch: 15 },
+      { wch: 12 },
+      { wch: 16 },
+      { wch: 24 },
+      { wch: 22 },
+    ];
+    XLSX.utils.book_append_sheet(wb, ws3, 'بيانات المشاركين حسب القالب');
+
+    XLSX.writeFile(wb, `تقرير_نتائج_وإحصائيات_${comp.name}.xlsx`);
+    context?.showToast(
+      'تم تصدير ملف الإكسل الاحترافي (3 أوراق عمل منسقة RTL) بنجاح!',
+      'success'
+    );
   };
 
   // حذف تقييم
@@ -5063,7 +7005,7 @@ function CompetitionReports({
       : null;
 
   const certCandidates =
-    availableResultsList.length > 0 ? availableResultsList : allResults;
+    availableResultsList.length > 0 ? availableResultsList : baseFilteredResults;
 
   const certParticipant =
     selectedParticipantForCert !== null
@@ -5166,7 +7108,7 @@ function CompetitionReports({
         </div>
       </div>
 
-      {/* شريط اختيار نوع التقرير المطلوب وأزرار التصدير */}
+      {/* شريط اختيار نوع التقرير المطلوب وأزرار التصدير الاحترافية */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-100 dark:bg-slate-800 p-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 no-print">
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 w-full xl:w-auto">
           <button
@@ -5235,15 +7177,15 @@ function CompetitionReports({
           </button>
         </div>
 
-        {/* أزرار التصدير والطباعة السريعة */}
+        {/* أزرار التصدير والطباعة السريعة (PDF + Excel + طباعة) */}
         <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto justify-end">
           <button
             type="button"
             onClick={exportExcel}
-            className="min-h-[42px] px-3.5 py-2 rounded-xl bg-emerald-800 hover:bg-emerald-900 text-white font-black text-xs flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+            className="min-h-[42px] px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs sm:text-sm flex items-center gap-1.5 transition cursor-pointer shadow-sm"
           >
             <FileSpreadsheet size={16} />
-            <span>تصدير Excel</span>
+            <span>تصدير Excel الشامل</span>
           </button>
 
           <button
@@ -5274,7 +7216,8 @@ function CompetitionReports({
               } else if (reportSubTab === 'analytics') {
                 exportToPdf(
                   'official-report-analytics-container',
-                  `تقرير_تحليلي_${comp.name}`
+                  `تقرير_تحليلي_${comp.name}`,
+                  true
                 );
               } else if (reportSubTab === 'certificate') {
                 exportToPdf(
@@ -5298,6 +7241,114 @@ function CompetitionReports({
                 : 'تصدير التقرير PDF بجودة عالية'}
             </span>
           </button>
+        </div>
+      </div>
+
+      {/* شريط أدوات التصفية المتقدمة متعددة الاختيارات (حسب حقول ملف الإكسل الـ 8 + المقيم + التقدير) */}
+      <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border-2 border-[#09152C]/15 dark:border-slate-800 shadow-sm space-y-3 no-print">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="w-7 h-7 rounded-lg bg-[#09152C] text-amber-300 flex items-center justify-center font-black text-xs">
+              🔍
+            </span>
+            <div>
+              <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white">
+                أدوات التصفية الشاملة حسب الحقول (اختيار متعدد مع بحث وتحديد/إلغاء الكل)
+              </h4>
+              <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                إذا لم يتم تحديد أي خيار في القائمة يعني ذلك «الكل» تلقائياً • تنعكس التصفية فوراً على جميع التقارير والرسوم البيانية والتصدير
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="px-3 py-1 rounded-xl bg-amber-50 dark:bg-slate-800 border border-amber-200 dark:border-slate-700 text-xs font-black text-[#09152C] dark:text-amber-300">
+              المطابق للتصفية: {baseFilteredResults.length} من {allResults.length}
+            </span>
+            {hasActiveMultiFilters && (
+              <button
+                type="button"
+                onClick={resetAllFilters}
+                className="px-3 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-black transition cursor-pointer"
+              >
+                إعادة تعيين كافة الفلاتر ✕
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* صف القوائم المنسدلة متعددة الاختيارات مع خانة البحث داخل كل زر تصفية */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
+          <MultiSelectFilterDropdown
+            label="مستوى المشاركة"
+            options={filterOptionsMap.levels}
+            selectedValues={filterLevels}
+            onChange={setFilterLevels}
+            placeholder="الكل (جميع المستويات)"
+          />
+          <MultiSelectFilterDropdown
+            label="الولاية"
+            options={filterOptionsMap.wilayats}
+            selectedValues={filterWilayats}
+            onChange={setFilterWilayats}
+            placeholder="الكل (جميع الولايات)"
+          />
+          <MultiSelectFilterDropdown
+            label="الجنس"
+            options={filterOptionsMap.genders}
+            selectedValues={filterGenders}
+            onChange={setFilterGenders}
+            placeholder="الكل (الذكور والإناث)"
+          />
+          <MultiSelectFilterDropdown
+            label="التقدير العام"
+            options={filterOptionsMap.grades}
+            selectedValues={filterGrades}
+            onChange={setFilterGrades}
+            placeholder="الكل (جميع التقديرات)"
+          />
+          <MultiSelectFilterDropdown
+            label="المقيم المعتمد"
+            options={filterOptionsMap.evaluators}
+            selectedValues={filterEvaluators}
+            onChange={setFilterEvaluators}
+            placeholder="الكل (جميع المقيمين)"
+          />
+          <MultiSelectFilterDropdown
+            label="رقم الطلب"
+            options={filterOptionsMap.requestNumbers}
+            selectedValues={filterRequestNumbers}
+            onChange={setFilterRequestNumbers}
+            placeholder="الكل (جميع أرقام الطلبات)"
+          />
+          <MultiSelectFilterDropdown
+            label="الاسم الكامل"
+            options={filterOptionsMap.names}
+            selectedValues={filterNames}
+            onChange={setFilterNames}
+            placeholder="الكل (جميع الأسماء)"
+          />
+          <MultiSelectFilterDropdown
+            label="الرقم المدني"
+            options={filterOptionsMap.civilIds}
+            selectedValues={filterCivilIds}
+            onChange={setFilterCivilIds}
+            placeholder="الكل (جميع الأرقام المدنية)"
+          />
+          <MultiSelectFilterDropdown
+            label="رقم الهاتف"
+            options={filterOptionsMap.phones}
+            selectedValues={filterPhones}
+            onChange={setFilterPhones}
+            placeholder="الكل (جميع الهواتف)"
+          />
+          <MultiSelectFilterDropdown
+            label="تاريخ التسجيل"
+            options={filterOptionsMap.regDates}
+            selectedValues={filterRegDates}
+            onChange={setFilterRegDates}
+            placeholder="الكل (جميع التواريخ)"
+          />
         </div>
       </div>
 
@@ -5353,40 +7404,54 @@ function CompetitionReports({
               </button>
             </div>
 
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-black text-slate-600 dark:text-slate-300 shrink-0">
-                تصفية المستوى:
-              </label>
-              <select
-                value={selectedLevelId}
-                onChange={e =>
-                  setSelectedLevelId(
-                    e.target.value === 'all' ? 'all' : Number(e.target.value)
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={exportExcel}
+                className="min-h-[38px] px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <FileSpreadsheet size={14} />
+                <span>تصدير Excel</span>
+              </button>
+              <button
+                type="button"
+                disabled={isExportingPdf}
+                onClick={() =>
+                  exportToPdf(
+                    'official-report-rankings-container',
+                    `تقرير_نتائج_وأوائل_${comp.name}`,
+                    true
                   )
                 }
-                className="min-h-[40px] px-3 py-1.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-xs font-black"
+                className="min-h-[38px] px-3 py-1.5 rounded-xl bg-[#09152C] hover:bg-[#163363] text-amber-300 font-black text-xs flex items-center gap-1.5 cursor-pointer"
               >
-                <option value="all">جميع المستويات</option>
-                {(comp.levels || []).map(lvl => (
-                  <option key={lvl.id} value={lvl.id}>
-                    {lvl.name}
-                  </option>
-                ))}
-              </select>
+                <Download size={14} />
+                <span>تصدير PDF</span>
+              </button>
             </div>
           </div>
 
           {/* أولاً: ملخص النتائج المتوفرة حسب كل مستوى (منصة التتويج + جدول المستوى ذي الحقول المتعددة) */}
           <div className="space-y-7">
             {(() => {
-              const targetLevels = (comp.levels || []).filter(
-                l =>
-                  selectedLevelId === 'all' ||
-                  Number(l.id) === Number(selectedLevelId)
-              );
+              const targetLevels = (comp.levels || []).filter(l => {
+                if (
+                  selectedLevelId !== 'all' &&
+                  Number(l.id) !== Number(selectedLevelId)
+                ) {
+                  return false;
+                }
+                if (
+                  filterLevels.length > 0 &&
+                  !filterLevels.includes(String(l.id))
+                ) {
+                  return false;
+                }
+                return true;
+              });
 
               const levelsWithEvaluations = targetLevels.filter(lvl =>
-                allResults.some(
+                baseFilteredResults.some(
                   r =>
                     Number(r.effectiveLevelId) === Number(lvl.id) &&
                     r.evaluationsCount > 0
@@ -5402,7 +7467,7 @@ function CompetitionReports({
                 return (
                   <div className="p-8 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 text-center space-y-2">
                     <p className="text-sm font-black text-slate-700 dark:text-slate-200">
-                      لا يوجد متسابقون مسجلون في هذا المستوى حالياً
+                      لا يوجد متسابقون مطابقون للتصفية الحالية في هذا المستوى
                     </p>
                   </div>
                 );
@@ -5413,7 +7478,7 @@ function CompetitionReports({
                   1,
                   Number(lvl.segmentsCount || 5)
                 );
-                const levelAllParticipants = allResults.filter(
+                const levelAllParticipants = baseFilteredResults.filter(
                   r => Number(r.effectiveLevelId) === Number(lvl.id)
                 );
                 const levelAvailableResults = levelAllParticipants
@@ -5557,7 +7622,24 @@ function CompetitionReports({
                                     <div className="font-black text-base sm:text-lg text-[#09152C]">
                                       {w.participant.name}
                                     </div>
-                                    <div className="text-xs font-bold text-slate-600 mt-0.5">
+                                    <div className="flex flex-wrap gap-1.5 mt-1 text-[11px] font-bold text-slate-600">
+                                      {w.participant.wilayat && (
+                                        <span className="px-2 py-0.5 rounded-md bg-white/80 border border-slate-200">
+                                          الولاية: {w.participant.wilayat}
+                                        </span>
+                                      )}
+                                      {w.participant.gender && (
+                                        <span className="px-2 py-0.5 rounded-md bg-white/80 border border-slate-200">
+                                          {w.participant.gender}
+                                        </span>
+                                      )}
+                                      {w.participant.requestNumber && (
+                                        <span className="px-2 py-0.5 rounded-md bg-white/80 border border-slate-200">
+                                          طلب #{w.participant.requestNumber}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-xs font-bold text-slate-600 mt-1">
                                       المقرر:{' '}
                                       {w.participant.juzsOrSurahs ||
                                         lvl.juzsOrSurahs}
@@ -5614,7 +7696,7 @@ function CompetitionReports({
                                     المركز
                                   </th>
                                   <th
-                                    colSpan={2}
+                                    colSpan={5}
                                     className="p-2 text-center border-l border-white/15"
                                   >
                                     بيانات المتسابق والمقرر القرآني
@@ -5634,10 +7716,19 @@ function CompetitionReports({
                                 </tr>
                                 {/* الصف الثاني من عناوين الحقول التفصيلية */}
                                 <tr className="bg-[#163363] text-white font-black border-b-2 border-amber-400 text-[11px]">
-                                  <th className="p-2.5 border-l border-white/15 min-w-[140px]">
-                                    اسم المتسابق
+                                  <th className="p-2 text-center border-l border-white/15 w-20">
+                                    رقم الطلب
                                   </th>
-                                  <th className="p-2.5 border-l border-white/15 min-w-[110px]">
+                                  <th className="p-2.5 border-l border-white/15 min-w-[140px]">
+                                    الاسم الكامل
+                                  </th>
+                                  <th className="p-2 text-center border-l border-white/15 w-20">
+                                    الولاية
+                                  </th>
+                                  <th className="p-2 text-center border-l border-white/15 w-16">
+                                    الجنس
+                                  </th>
+                                  <th className="p-2.5 border-l border-white/15 min-w-[100px]">
                                     المقرر / الأجزاء
                                   </th>
                                   {Array.from(
@@ -5716,8 +7807,27 @@ function CompetitionReports({
                                         )}
                                       </td>
 
+                                      <td className="p-2 text-center font-mono text-[11px] text-slate-600 dark:text-slate-300 border-l border-slate-200 dark:border-slate-800">
+                                        {w.participant.requestNumber || '-'}
+                                      </td>
+
                                       <td className="p-2.5 font-black text-slate-900 dark:text-white text-xs sm:text-sm border-l border-slate-200 dark:border-slate-800">
-                                        {w.participant.name}
+                                        <div>{w.participant.name}</div>
+                                        {(w.participant.civilId || w.participant.phone) && (
+                                          <div className="text-[10px] font-bold text-slate-500 mt-0.5">
+                                            {w.participant.civilId && `مدني: ${w.participant.civilId}`}
+                                            {w.participant.civilId && w.participant.phone && ' • '}
+                                            {w.participant.phone && `هاتف: ${w.participant.phone}`}
+                                          </div>
+                                        )}
+                                      </td>
+
+                                      <td className="p-2 text-center text-xs text-slate-700 dark:text-slate-300 border-l border-slate-200 dark:border-slate-800">
+                                        {w.participant.wilayat || '-'}
+                                      </td>
+
+                                      <td className="p-2 text-center text-xs text-slate-700 dark:text-slate-300 border-l border-slate-200 dark:border-slate-800">
+                                        {w.participant.gender || '-'}
                                       </td>
 
                                       <td className="p-2.5 text-xs text-slate-700 dark:text-slate-300 border-l border-slate-200 dark:border-slate-800">
@@ -5829,7 +7939,7 @@ function CompetitionReports({
                                 <tfoot>
                                   <tr className="bg-slate-100 dark:bg-slate-800/90 border-t-2 border-[#09152C]/30 font-black text-xs text-slate-900 dark:text-amber-200">
                                     <td
-                                      colSpan={3 + levelSegmentsCount + 1}
+                                      colSpan={6 + levelSegmentsCount + 1}
                                       className="p-2.5 text-left border-l border-slate-300 dark:border-slate-700"
                                     >
                                       خلاصة متوسط أداء الحافظين في {lvl.name} (
@@ -6004,7 +8114,7 @@ function CompetitionReports({
                   type="text"
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  placeholder="بحث باسم المتسابق..."
+                  placeholder="بحث باسم المتسابق أو الولاية..."
                   className="w-full min-h-[38px] pr-8 pl-3 border border-slate-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-900 text-xs font-bold"
                 />
                 <Search
@@ -6013,22 +8123,30 @@ function CompetitionReports({
                 />
               </div>
 
-              <select
-                value={selectedLevelId}
-                onChange={e =>
-                  setSelectedLevelId(
-                    e.target.value === 'all' ? 'all' : Number(e.target.value)
+              <button
+                type="button"
+                onClick={exportExcel}
+                className="min-h-[38px] px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <FileSpreadsheet size={14} />
+                <span>تصدير Excel</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isExportingPdf}
+                onClick={() =>
+                  exportToPdf(
+                    'official-report-evaluator-avg-container',
+                    `ملخص_متوسطات_المقيمين_${comp.name}`,
+                    true
                   )
                 }
-                className="min-h-[38px] px-3 py-1.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-xs font-black"
+                className="min-h-[38px] px-3 py-1.5 rounded-xl bg-[#09152C] hover:bg-[#163363] text-amber-300 font-black text-xs flex items-center gap-1.5 cursor-pointer"
               >
-                <option value="all">جميع المستويات</option>
-                {(comp.levels || []).map(lvl => (
-                  <option key={lvl.id} value={lvl.id}>
-                    {lvl.name}
-                  </option>
-                ))}
-              </select>
+                <Download size={14} />
+                <span>تصدير PDF</span>
+              </button>
             </div>
           </div>
 
@@ -6046,7 +8164,7 @@ function CompetitionReports({
                       المركز والترتيب
                     </th>
                     <th
-                      colSpan={3}
+                      colSpan={6}
                       className="p-2.5 text-center border-l border-white/15"
                     >
                       البيانات الأساسية للمتسابق والمستوى
@@ -6073,8 +8191,17 @@ function CompetitionReports({
                     <th className="p-2.5 text-center border-l border-white/15 w-14">
                       العام
                     </th>
+                    <th className="p-2 text-center border-l border-white/15 w-20">
+                      رقم الطلب
+                    </th>
                     <th className="p-2.5 border-l border-white/15 min-w-[150px]">
-                      اسم المتسابق
+                      الاسم الكامل
+                    </th>
+                    <th className="p-2 text-center border-l border-white/15 w-20">
+                      الولاية
+                    </th>
+                    <th className="p-2 text-center border-l border-white/15 w-16">
+                      الجنس
                     </th>
                     <th className="p-2.5 border-l border-white/15 min-w-[120px]">
                       المستوى والمقرر
@@ -6167,8 +8294,27 @@ function CompetitionReports({
                             : '-'}
                         </td>
 
+                        <td className="p-2 text-center font-mono text-[11px] text-slate-600 dark:text-slate-300 border-l border-slate-200 dark:border-slate-800">
+                          {r.participant.requestNumber || '-'}
+                        </td>
+
                         <td className="p-2.5 border-l border-slate-200 dark:border-slate-800 font-black text-slate-900 dark:text-white text-xs sm:text-sm">
-                          {r.participant.name}
+                          <div>{r.participant.name}</div>
+                          {(r.participant.civilId || r.participant.phone) && (
+                            <div className="text-[10px] font-bold text-slate-500 mt-0.5">
+                              {r.participant.civilId && `مدني: ${r.participant.civilId}`}
+                              {r.participant.civilId && r.participant.phone && ' • '}
+                              {r.participant.phone && `هاتف: ${r.participant.phone}`}
+                            </div>
+                          )}
+                        </td>
+
+                        <td className="p-2 text-center text-xs text-slate-700 dark:text-slate-300 border-l border-slate-200 dark:border-slate-800">
+                          {r.participant.wilayat || '-'}
+                        </td>
+
+                        <td className="p-2 text-center text-xs text-slate-700 dark:text-slate-300 border-l border-slate-200 dark:border-slate-800">
+                          {r.participant.gender || '-'}
                         </td>
 
                         <td className="p-2.5 border-l border-slate-200 dark:border-slate-800">
@@ -6326,7 +8472,7 @@ function CompetitionReports({
                   {evaluatorAverageRows.length === 0 && (
                     <tr>
                       <td
-                        colSpan={11 + Math.max(1, activeEvaluatorsList.length)}
+                        colSpan={14 + Math.max(1, activeEvaluatorsList.length)}
                         className="p-8 text-center text-slate-500 font-black text-sm"
                       >
                         لا توجد بيانات مطابقة لنطاق الفلترة المختار حالياً
@@ -6340,7 +8486,7 @@ function CompetitionReports({
                   <tfoot>
                     <tr className="bg-slate-100 dark:bg-slate-800 border-t-2 border-[#09152C]/40 font-black text-xs text-[#09152C] dark:text-amber-200">
                       <td
-                        colSpan={5}
+                        colSpan={8}
                         className="p-3 text-left border-l border-slate-300 dark:border-slate-700"
                       >
                         متوسط الدرجات الممنوحة من كل مقيم (ولجميع المتسابقين):
@@ -6486,17 +8632,17 @@ function CompetitionReports({
 
           {/* أدوات البحث والفلترة والفرز المتقدم */}
           <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3.5 no-print">
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
               <div>
                 <label className="block text-[11px] font-black text-slate-600 dark:text-slate-300 mb-1">
-                  بحث باسم المتسابق
+                  بحث سريع (بالاسم، الطلب، الرقم المدني، الهاتف، الولاية)
                 </label>
                 <div className="relative">
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
-                    placeholder="اكتب اسم المتسابق..."
+                    placeholder="اكتب للبحث السريع..."
                     className="w-full min-h-[40px] pr-8 pl-3 border border-slate-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-900 text-xs font-bold"
                   />
                   <Search
@@ -6504,52 +8650,6 @@ function CompetitionReports({
                     size={16}
                   />
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-black text-slate-600 dark:text-slate-300 mb-1">
-                  تصفية حسب المستوى
-                </label>
-                <select
-                  value={selectedLevelId}
-                  onChange={e =>
-                    setSelectedLevelId(
-                      e.target.value === 'all' ? 'all' : Number(e.target.value)
-                    )
-                  }
-                  className="w-full min-h-[40px] px-3 border border-slate-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-900 text-xs font-bold"
-                >
-                  <option value="all">
-                    جميع المستويات ({allResults.length})
-                  </option>
-                  {(comp.levels || []).map(lvl => (
-                    <option key={lvl.id} value={lvl.id}>
-                      {lvl.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-black text-slate-600 dark:text-slate-300 mb-1">
-                  تصفية حسب المقيم
-                </label>
-                <select
-                  value={selectedEvaluatorId}
-                  onChange={e =>
-                    setSelectedEvaluatorId(
-                      e.target.value === 'all' ? 'all' : Number(e.target.value)
-                    )
-                  }
-                  className="w-full min-h-[40px] px-3 border border-slate-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-900 text-xs font-bold"
-                >
-                  <option value="all">جميع المقيمين</option>
-                  {activeEvaluatorsList.map(ev => (
-                    <option key={ev.id} value={ev.id}>
-                      {ev.name}
-                    </option>
-                  ))}
-                </select>
               </div>
 
               <div>
@@ -6565,9 +8665,37 @@ function CompetitionReports({
                     الدرجة والترتيب (من الأعلى للأقل)
                   </option>
                   <option value="score_asc">الدرجة (من الأقل للأعلى)</option>
-                  <option value="name">اسم المتسابق (أبجدي)</option>
-                  <option value="level">اسم المستوى</option>
+                  <option value="name">الاسم الكامل (أبجدي)</option>
+                  <option value="level">مستوى المشاركة</option>
+                  <option value="wilayat">الولاية</option>
+                  <option value="request_num">رقم الطلب</option>
                 </select>
+              </div>
+
+              <div className="flex items-end gap-2">
+                <button
+                  type="button"
+                  onClick={exportExcel}
+                  className="flex-1 min-h-[40px] px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <FileSpreadsheet size={15} />
+                  <span>تصدير الكشف Excel</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={isExportingPdf}
+                  onClick={() =>
+                    exportToPdf(
+                      'official-report-table-container',
+                      `كشف_درجات_${comp.name}`,
+                      true
+                    )
+                  }
+                  className="flex-1 min-h-[40px] px-3 py-2 rounded-xl bg-[#09152C] hover:bg-[#163363] text-amber-300 font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Download size={15} />
+                  <span>تصدير الكشف PDF</span>
+                </button>
               </div>
             </div>
 
@@ -6578,7 +8706,10 @@ function CompetitionReports({
                   id: 'available',
                   label: `النتائج المتوفرة المرصودة (${evaluatedStudentsCount})`,
                 },
-                { id: 'all', label: `جميع المسجلين (${allResults.length})` },
+                {
+                  id: 'all',
+                  label: `جميع المسجلين (${baseFilteredResults.length})`,
+                },
                 {
                   id: 'memorized',
                   label: `الحافظون المتقنون (${memorizedStudentsCount})`,
@@ -6626,10 +8757,10 @@ function CompetitionReports({
                       المركز والترتيب
                     </th>
                     <th
-                      colSpan={3}
+                      colSpan={6}
                       className="p-2.5 text-center border-l border-white/15"
                     >
-                      بيانات المتسابق والمستوى القرآني
+                      بيانات المتسابق الكاملة والمستوى القرآني
                     </th>
                     <th
                       colSpan={3}
@@ -6659,11 +8790,20 @@ function CompetitionReports({
                     <th className="p-2 text-center border-l border-white/15 w-14">
                       العام
                     </th>
+                    <th className="p-2 text-center border-l border-white/15 w-20">
+                      رقم الطلب
+                    </th>
                     <th className="p-2.5 border-l border-white/15 min-w-[145px]">
-                      اسم المتسابق
+                      الاسم الكامل
+                    </th>
+                    <th className="p-2 text-center border-l border-white/15 w-20">
+                      الولاية
+                    </th>
+                    <th className="p-2 text-center border-l border-white/15 w-16">
+                      الجنس
                     </th>
                     <th className="p-2.5 border-l border-white/15 min-w-[110px]">
-                      المستوى
+                      مستوى المشاركة
                     </th>
                     <th className="p-2.5 border-l border-white/15 min-w-[115px]">
                       المقرر / الأجزاء
@@ -6697,7 +8837,9 @@ function CompetitionReports({
                 <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-bold">
                   {filteredResults.map((r, idx) => {
                     const displayRank =
-                      selectedLevelId !== 'all' ? r.rankInLevel : r.overallRank;
+                      selectedLevelId !== 'all' || filterLevels.length === 1
+                        ? r.rankInLevel
+                        : r.overallRank;
                     return (
                       <tr
                         key={r.participant.id}
@@ -6747,9 +8889,39 @@ function CompetitionReports({
                             : '-'}
                         </td>
 
-                        {/* اسم المتسابق */}
+                        {/* رقم الطلب */}
+                        <td className="p-2 text-center font-mono text-[11px] text-slate-600 dark:text-slate-300 border-l border-slate-200 dark:border-slate-800">
+                          {r.participant.requestNumber || '-'}
+                        </td>
+
+                        {/* الاسم الكامل + الرقم المدني والهاتف وتاريخ التسجيل */}
                         <td className="p-2.5 font-black text-slate-900 dark:text-white text-xs sm:text-sm border-l border-slate-200 dark:border-slate-800">
-                          {r.participant.name}
+                          <div>{r.participant.name}</div>
+                          {(r.participant.civilId ||
+                            r.participant.phone ||
+                            r.participant.registrationDate) && (
+                            <div className="text-[10px] font-bold text-slate-500 mt-0.5 flex flex-wrap gap-1.5">
+                              {r.participant.civilId && (
+                                <span>مدني: {r.participant.civilId}</span>
+                              )}
+                              {r.participant.phone && (
+                                <span>هاتف: {r.participant.phone}</span>
+                              )}
+                              {r.participant.registrationDate && (
+                                <span>تسجيل: {r.participant.registrationDate}</span>
+                              )}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* الولاية */}
+                        <td className="p-2 text-center text-xs text-slate-700 dark:text-slate-300 border-l border-slate-200 dark:border-slate-800">
+                          {r.participant.wilayat || '-'}
+                        </td>
+
+                        {/* الجنس */}
+                        <td className="p-2 text-center text-xs text-slate-700 dark:text-slate-300 border-l border-slate-200 dark:border-slate-800">
+                          {r.participant.gender || '-'}
                         </td>
 
                         {/* المستوى */}
@@ -6923,7 +9095,7 @@ function CompetitionReports({
                   {filteredResults.length === 0 && (
                     <tr>
                       <td
-                        colSpan={14}
+                        colSpan={17}
                         className="p-8 text-center text-slate-500 font-black text-sm"
                       >
                         لا توجد نتائج مطابقة للبحث أو التصفية الحالية
@@ -6974,10 +9146,42 @@ function CompetitionReports({
           <OfficialReportHeader
             seasonText={comp.seasonText}
             compName={comp.name}
-            reportTitle="التقرير الإحصائي والرسوم البيانية التحليلية"
-            reportSubtitle="تحليل فني وإحصائي لمستويات الأداء والتقديرات وإنجاز لجان التحكيم"
+            reportTitle="التقرير الإحصائي الشامل والرسوم البيانية التحليلية"
+            reportSubtitle="تحليل فني وإحصائي مفصل حسب المستويات والولايات والجنس والتقديرات وتاريخ التسجيل وإنجاز لجان التحكيم"
             metaStats={reportHeaderStats}
           />
+
+          {/* شريط أزرار التصدير السريع للتقرير التحليلي */}
+          <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 no-print">
+            <span className="text-xs font-black text-slate-700 dark:text-slate-200">
+              إحصائيات ورسوم بيانية تفاعلية مصنفة حسب تنوع حقول المتسابقين ({baseFilteredResults.length} متسابق ضمن نطاق التصفية)
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={exportExcel}
+                className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <FileSpreadsheet size={14} />
+                <span>تصدير الإحصائيات Excel</span>
+              </button>
+              <button
+                type="button"
+                disabled={isExportingPdf}
+                onClick={() =>
+                  exportToPdf(
+                    'official-report-analytics-container',
+                    `تقرير_تحليلي_${comp.name}`,
+                    true
+                  )
+                }
+                className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#09152C] hover:bg-[#163363] text-amber-300 font-black text-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <Download size={14} />
+                <span>تصدير التقرير التحليلي PDF</span>
+              </button>
+            </div>
+          </div>
 
           {/* البطاقات الإحصائية الرئيسية */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -7011,13 +9215,19 @@ function CompetitionReports({
 
             <div className="p-4 rounded-2xl bg-sky-50 dark:bg-slate-800 border-2 border-sky-200 dark:border-slate-700">
               <span className="text-xs font-bold text-sky-900 dark:text-sky-300 block">
-                تقييمات متعددة اللجان
+                عدد الولايات المشاركة
               </span>
               <span className="text-2xl font-black text-sky-950 dark:text-sky-300 mt-1 block">
-                {multiEvaluatedCount}
+                {
+                  new Set(
+                    baseFilteredResults
+                      .map(r => (r.participant.wilayat || '').trim())
+                      .filter(Boolean)
+                  ).size
+                }
               </span>
               <span className="text-[11px] font-bold text-slate-500 mt-0.5 block">
-                تم تقييمهم من أكثر من مقيم
+                ولاية مسجلة في البيانات
               </span>
             </div>
 
@@ -7034,104 +9244,306 @@ function CompetitionReports({
             </div>
           </div>
 
-          {/* الرسم البياني 1: توزيع التقديرات */}
+          {/* شبكة مزدوجة: 1. التوزيع حسب الجنس + 2. التوزيع حسب التقديرات */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* الرسم البياني: التوزيع والمقارنة حسب الجنس (الذكور والإناث) */}
+            <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-4">
+              <h4 className="font-black text-base text-slate-900 dark:text-white flex items-center gap-2">
+                <Users size={18} className="text-amber-500" />
+                <span>التحليل الإحصائي حسب الجنس (الذكور / الإناث)</span>
+              </h4>
+
+              {(() => {
+                const genderMap = new Map<
+                  string,
+                  {
+                    total: number;
+                    evaluated: number;
+                    memorized: number;
+                    scores: number[];
+                  }
+                >();
+                baseFilteredResults.forEach(r => {
+                  const g = (r.participant.gender || 'غير محدد').trim() || 'غير محدد';
+                  const entry = genderMap.get(g) || {
+                    total: 0,
+                    evaluated: 0,
+                    memorized: 0,
+                    scores: [],
+                  };
+                  entry.total += 1;
+                  if (r.evaluationsCount > 0) entry.evaluated += 1;
+                  if (r.averageScore !== null && !r.isUnmemorized) {
+                    entry.memorized += 1;
+                    entry.scores.push(r.averageScore);
+                  }
+                  genderMap.set(g, entry);
+                });
+
+                const genderEntries = Array.from(genderMap.entries());
+                const totalAll = baseFilteredResults.length || 1;
+
+                return (
+                  <div className="space-y-3.5">
+                    {genderEntries.map(([gLabel, stats], idx) => {
+                      const pctOfTotal = Math.round(
+                        (stats.total / totalAll) * 100
+                      );
+                      const avgScore =
+                        stats.scores.length > 0
+                          ? Number(
+                              (
+                                stats.scores.reduce((a, b) => a + b, 0) /
+                                stats.scores.length
+                              ).toFixed(2)
+                            )
+                          : null;
+                      const barColors = [
+                        'from-[#09152C] to-sky-600',
+                        'from-amber-600 to-amber-400',
+                        'from-emerald-700 to-emerald-500',
+                      ];
+                      return (
+                        <div
+                          key={gLabel}
+                          className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-black text-sm text-[#09152C] dark:text-amber-300">
+                              {gLabel}
+                            </span>
+                            <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-black">
+                              <span className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200">
+                                العدد: {stats.total} ({pctOfTotal}%)
+                              </span>
+                              <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                الحافظون: {stats.memorized}
+                              </span>
+                              {avgScore !== null && (
+                                <span className="px-2 py-0.5 rounded-lg bg-amber-100 text-amber-900 border border-amber-300">
+                                  المتوسط: {avgScore}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="w-full bg-slate-200 dark:bg-slate-700 h-4 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full bg-gradient-to-l ${
+                                barColors[idx % barColors.length]
+                              } transition-all duration-500`}
+                              style={{ width: `${pctOfTotal}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* الرسم البياني: توزيع التقديرات */}
+            <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-4">
+              <h4 className="font-black text-base text-slate-900 dark:text-white flex items-center gap-2">
+                <Sparkles size={18} className="text-amber-500" />
+                <span>توزيع النتائج المتوفرة للمتسابقين الحافظين حسب التقدير</span>
+              </h4>
+
+              {(() => {
+                const memorizedEvals = baseFilteredResults.filter(
+                  r => r.averageScore !== null && !r.isUnmemorized
+                );
+                const countHonors = memorizedEvals.filter(
+                  r => (r.percentage || 0) >= 97
+                ).length;
+                const countExcellence = memorizedEvals.filter(
+                  r => (r.percentage || 0) >= 90 && (r.percentage || 0) < 97
+                ).length;
+                const countVeryGood = memorizedEvals.filter(
+                  r => (r.percentage || 0) >= 80 && (r.percentage || 0) < 90
+                ).length;
+                const countGood = memorizedEvals.filter(
+                  r => (r.percentage || 0) >= 70 && (r.percentage || 0) < 80
+                ).length;
+                const countBelow70 = memorizedEvals.filter(
+                  r => (r.percentage || 0) < 70
+                ).length;
+
+                const totalMem = memorizedEvals.length || 1;
+
+                const brackets = [
+                  {
+                    label: 'ممتاز مع مرتبة الشرف (97% - 100%)',
+                    count: countHonors,
+                    color: 'bg-amber-500',
+                  },
+                  {
+                    label: 'ممتاز (90% - 96.9%)',
+                    count: countExcellence,
+                    color: 'bg-emerald-700',
+                  },
+                  {
+                    label: 'جيد جداً (80% - 89.9%)',
+                    count: countVeryGood,
+                    color: 'bg-sky-600',
+                  },
+                  {
+                    label: 'جيد (70% - 79.9%)',
+                    count: countGood,
+                    color: 'bg-indigo-600',
+                  },
+                  {
+                    label: 'مقبول (أقل من 70%)',
+                    count: countBelow70,
+                    color: 'bg-orange-500',
+                  },
+                ];
+
+                return (
+                  <div className="space-y-3">
+                    {brackets.map((b, i) => {
+                      const percent =
+                        memorizedEvals.length > 0
+                          ? Math.round((b.count / totalMem) * 100)
+                          : 0;
+                      return (
+                        <div key={i} className="space-y-1">
+                          <div className="flex justify-between text-xs font-black text-slate-700 dark:text-slate-300">
+                            <span>{b.label}</span>
+                            <span>
+                              {b.count} متسابق ({percent}%)
+                            </span>
+                          </div>
+                          <div className="w-full bg-slate-200 dark:bg-slate-700 h-4 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full ${b.color} transition-all duration-500`}
+                              style={{ width: `${percent}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* الرسم البياني والجدول التحليلي: التصنيف حسب الولاية */}
           <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-4">
             <h4 className="font-black text-base text-slate-900 dark:text-white flex items-center gap-2">
-              <Sparkles size={18} className="text-amber-500" />
-              <span>توزيع النتائج المتوفرة للمتسابقين الحافظين حسب التقدير</span>
+              <BarChart3 size={18} className="text-amber-500" />
+              <span>التوزيع الإحصائي ومتوسط الأداء حسب الولاية</span>
             </h4>
 
             {(() => {
-              const memorizedEvals = allResults.filter(
-                r => r.averageScore !== null && !r.isUnmemorized
+              const wilayatStats = filterOptionsMap.wilayats.map(wOpt => {
+                const items = baseFilteredResults.filter(
+                  r => (r.participant.wilayat || 'غير محدد').trim() === wOpt.value
+                );
+                const memorized = items.filter(
+                  r => r.averageScore !== null && !r.isUnmemorized
+                );
+                const avg =
+                  memorized.length > 0
+                    ? Number(
+                        (
+                          memorized.reduce(
+                            (s, x) => s + (x.averageScore || 0),
+                            0
+                          ) / memorized.length
+                        ).toFixed(2)
+                      )
+                    : null;
+                const maleCount = items.filter(x =>
+                  (x.participant.gender || '').includes('ذكر')
+                ).length;
+                const femaleCount = items.filter(x =>
+                  (x.participant.gender || '').includes('أنثى')
+                ).length;
+                return {
+                  wilayat: wOpt.label,
+                  total: items.length,
+                  evaluated: items.filter(x => x.evaluationsCount > 0).length,
+                  memorized: memorized.length,
+                  unmemorized: items.filter(x => x.isUnmemorized).length,
+                  maleCount,
+                  femaleCount,
+                  avg,
+                };
+              });
+
+              const maxWilayatTotal = Math.max(
+                1,
+                ...wilayatStats.map(w => w.total)
               );
-              const countHonors = memorizedEvals.filter(
-                r => (r.percentage || 0) >= 97
-              ).length;
-              const countExcellence = memorizedEvals.filter(
-                r => (r.percentage || 0) >= 90 && (r.percentage || 0) < 97
-              ).length;
-              const countVeryGood = memorizedEvals.filter(
-                r => (r.percentage || 0) >= 80 && (r.percentage || 0) < 90
-              ).length;
-              const countGood = memorizedEvals.filter(
-                r => (r.percentage || 0) >= 70 && (r.percentage || 0) < 80
-              ).length;
-              const countBelow70 = memorizedEvals.filter(
-                r => (r.percentage || 0) < 70
-              ).length;
-
-              const totalMem = memorizedEvals.length || 1;
-
-              const brackets = [
-                {
-                  label: 'ممتاز مع مرتبة الشرف (97% - 100%)',
-                  count: countHonors,
-                  color: 'bg-amber-500',
-                },
-                {
-                  label: 'ممتاز (90% - 96.9%)',
-                  count: countExcellence,
-                  color: 'bg-emerald-700',
-                },
-                {
-                  label: 'جيد جداً (80% - 89.9%)',
-                  count: countVeryGood,
-                  color: 'bg-sky-600',
-                },
-                {
-                  label: 'جيد (70% - 79.9%)',
-                  count: countGood,
-                  color: 'bg-indigo-600',
-                },
-                {
-                  label: 'مقبول (أقل من 70%)',
-                  count: countBelow70,
-                  color: 'bg-orange-500',
-                },
-              ];
 
               return (
-                <div className="space-y-3">
-                  {brackets.map((b, i) => {
-                    const percent =
-                      memorizedEvals.length > 0
-                        ? Math.round((b.count / totalMem) * 100)
-                        : 0;
-                    return (
-                      <div key={i} className="space-y-1">
-                        <div className="flex justify-between text-xs font-black text-slate-700 dark:text-slate-300">
-                          <span>{b.label}</span>
-                          <span>
-                            {b.count} متسابق ({percent}%)
-                          </span>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {wilayatStats.map(w => {
+                      const pct = Math.round((w.total / maxWilayatTotal) * 100);
+                      return (
+                        <div
+                          key={w.wilayat}
+                          className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2"
+                        >
+                          <div className="flex flex-wrap justify-between items-center gap-2 text-xs font-black">
+                            <span className="text-sm text-[#09152C] dark:text-amber-300">
+                              ولاية: {w.wilayat}
+                            </span>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200">
+                                المسجلون: {w.total}
+                              </span>
+                              <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                تم تقييمهم: {w.evaluated}
+                              </span>
+                              {w.avg !== null && (
+                                <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300">
+                                  المتوسط: {w.avg}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="w-full bg-slate-200 dark:bg-slate-700 h-3.5 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-l from-emerald-600 to-[#09152C] rounded-full transition-all duration-500"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                          <div className="flex flex-wrap gap-3 text-[11px] font-bold text-slate-500">
+                            <span>ذكور: {w.maleCount}</span>
+                            <span>إناث: {w.femaleCount}</span>
+                            <span>حافظون: {w.memorized}</span>
+                            {w.unmemorized > 0 && (
+                              <span className="text-red-600">
+                                غير حافظ: {w.unmemorized}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <div className="w-full bg-slate-200 dark:bg-slate-700 h-4 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full ${b.color} transition-all duration-500`}
-                            style={{ width: `${percent}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
               );
             })()}
           </div>
 
-          {/* الرسم البياني 2: مقارنة متوسطات المستويات */}
+          {/* الرسم البياني: مقارنة متوسطات المستويات وتفصيل الولايات والجنس داخل كل مستوى */}
           <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-4">
             <h4 className="font-black text-base text-slate-900 dark:text-white flex items-center gap-2">
               <Award size={18} className="text-amber-500" />
-              <span>مقارنة متوسط الأداء ونسب الإنجاز بين المستويات القرآنية</span>
+              <span>مقارنة الأداء التفصيلي ونسب الإنجاز حسب مستوى المشاركة</span>
             </h4>
 
             <div className="space-y-4">
               {(comp.levels || []).map(lvl => {
-                const lvlAll = allResults.filter(
+                const lvlAll = baseFilteredResults.filter(
                   r => Number(r.effectiveLevelId) === Number(lvl.id)
                 );
+                if (lvlAll.length === 0 && filterLevels.length > 0) return null;
                 const lvlResults = lvlAll.filter(
                   r => r.averageScore !== null && !r.isUnmemorized
                 );
@@ -7149,20 +9561,34 @@ function CompetitionReports({
                 const percentLvl = Math.round(
                   (avgLvlScore / (lvl.maxScore || 100)) * 100
                 );
+                const maleInLvl = lvlAll.filter(x =>
+                  (x.participant.gender || '').includes('ذكر')
+                ).length;
+                const femaleInLvl = lvlAll.filter(x =>
+                  (x.participant.gender || '').includes('أنثى')
+                ).length;
 
                 return (
-                  <div key={lvl.id} className="space-y-1.5">
+                  <div
+                    key={lvl.id}
+                    className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2"
+                  >
                     <div className="flex flex-wrap justify-between items-center text-xs font-black text-slate-800 dark:text-slate-200 gap-2">
-                      <span>
-                        {lvl.name} (النتائج المتوفرة: {lvlResults.length} من{' '}
-                        {lvlAll.length})
-                      </span>
+                      <div>
+                        <span className="text-sm text-[#09152C] dark:text-amber-300">
+                          {lvl.name}
+                        </span>
+                        <span className="text-[11px] font-bold text-slate-500 mr-2">
+                          (المسجلون: {lvlAll.length} • ذكور: {maleInLvl} • إناث:{' '}
+                          {femaleInLvl} • المقيمون: {lvlResults.length})
+                        </span>
+                      </div>
                       <span className="text-emerald-800 dark:text-amber-300">
                         متوسط المستوى: {avgLvlScore} من {lvl.maxScore} (
                         {percentLvl}%)
                       </span>
                     </div>
-                    <div className="w-full bg-slate-200 dark:bg-slate-700 h-5 rounded-xl overflow-hidden p-0.5">
+                    <div className="w-full bg-slate-200 dark:bg-slate-700 h-4 rounded-xl overflow-hidden p-0.5">
                       <div
                         className="h-full bg-gradient-to-l from-amber-500 to-[#09152C] rounded-lg transition-all duration-500"
                         style={{ width: `${percentLvl}%` }}
@@ -7174,51 +9600,113 @@ function CompetitionReports({
             </div>
           </div>
 
-          {/* الرسم البياني 3: نشاط وإنجاز المقيمين */}
-          <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-4">
-            <h4 className="font-black text-base text-slate-900 dark:text-white flex items-center gap-2">
-              <UserCheck size={18} className="text-amber-500" />
-              <span>إحصائية رصد وإنجاز المقيمين المعتمدين</span>
-            </h4>
+          {/* شبكة مزدوجة: إحصائيات التسجيل حسب التاريخ + نشاط المقيمين */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* توزيع التسجيلات حسب التاريخ */}
+            <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-4">
+              <h4 className="font-black text-base text-slate-900 dark:text-white flex items-center gap-2">
+                <FileText size={18} className="text-amber-500" />
+                <span>توزيع المشاركين حسب تاريخ التسجيل</span>
+              </h4>
+              {filterOptionsMap.regDates.length > 0 ? (
+                <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+                  {filterOptionsMap.regDates.map(dOpt => {
+                    const countInFiltered = baseFilteredResults.filter(r =>
+                      (r.participant.registrationDate || '').startsWith(
+                        dOpt.value
+                      )
+                    ).length;
+                    if (countInFiltered === 0) return null;
+                    const pct = Math.round(
+                      (countInFiltered / (baseFilteredResults.length || 1)) *
+                        100
+                    );
+                    return (
+                      <div
+                        key={dOpt.value}
+                        className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-3 text-xs font-black"
+                      >
+                        <span className="font-mono text-slate-800 dark:text-slate-200">
+                          📅 {dOpt.label}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-0.5 rounded-lg bg-amber-100 text-amber-900">
+                            {countInFiltered} مشارك ({pct}%)
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-xs font-bold text-slate-500">
+                  لا توجد تواريخ تسجيل محددة في بيانات المشاركين الحالية.
+                </p>
+              )}
+            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {(comp.evaluators || []).map(ev => {
-                const evCount = (comp.evaluations || []).filter(
-                  e => Number(e.evaluatorId) === Number(ev.id)
-                ).length;
+            {/* نشاط وإنجاز المقيمين */}
+            <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-4">
+              <h4 className="font-black text-base text-slate-900 dark:text-white flex items-center gap-2">
+                <UserCheck size={18} className="text-amber-500" />
+                <span>إحصائية رصد وإنجاز المقيمين المعتمدين</span>
+              </h4>
 
-                return (
-                  <div
-                    key={ev.id}
-                    className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex items-center justify-between"
-                  >
-                    <div>
-                      <span className="font-black text-sm text-slate-900 dark:text-white block">
-                        {ev.name}
-                      </span>
-                      <span className="text-xs text-slate-500 font-bold">
-                        مقيم معتمد بالمسابقة
+              <div className="grid grid-cols-1 gap-2.5">
+                {activeEvaluatorsList.map(ev => {
+                  const evEvals = baseFilteredResults.flatMap(r =>
+                    r.evaluations.filter(
+                      e => Number(e.evaluatorId) === Number(ev.id)
+                    )
+                  );
+                  const evAvg =
+                    evEvals.length > 0
+                      ? Number(
+                          (
+                            evEvals.reduce(
+                              (s, e) =>
+                                s + (e.isUnmemorized ? 0 : Number(e.totalScore || 0)),
+                              0
+                            ) / evEvals.length
+                          ).toFixed(2)
+                        )
+                      : null;
+
+                  return (
+                    <div
+                      key={ev.id}
+                      className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex items-center justify-between"
+                    >
+                      <div>
+                        <span className="font-black text-sm text-slate-900 dark:text-white block">
+                          {ev.name}
+                        </span>
+                        <span className="text-[11px] text-slate-500 font-bold">
+                          {evAvg !== null
+                            ? `متوسط الدرجات الممنوحة: ${evAvg}`
+                            : 'مقيم معتمد بالمسابقة'}
+                        </span>
+                      </div>
+                      <span className="px-3 py-1 bg-[#09152C] text-amber-300 font-black text-xs rounded-xl">
+                        {evEvals.length} تقييم مرصود
                       </span>
                     </div>
-                    <span className="px-3 py-1 bg-[#09152C] text-amber-300 font-black text-xs rounded-xl">
-                      {evCount} تقييم مرصود
-                    </span>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* ================ 4. تبويب بطاقات وشهادات التقييم الرسمية ================ */}
+      {/* ================ 5. تبويب بطاقات وشهادات التقييم الرسمية ================ */}
       {reportSubTab === 'certificate' && (
         <div className="space-y-6">
           {/* اختيار المتسابق no-print */}
           <div className="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 no-print">
             <div className="flex flex-wrap items-center gap-2 flex-1">
               <label className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-200">
-                اختر المتسابق لعرض بطاقة النتيجة الرسمية:
+                اختر المتسابق لعرض بطاقة النتيجة الرسمية ({baseFilteredResults.length} متسابق):
               </label>
               <select
                 value={
@@ -7229,9 +9717,11 @@ function CompetitionReports({
                 }
                 className="min-h-[42px] px-3 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 font-black text-xs sm:text-sm flex-1 max-w-md"
               >
-                {allResults.map(r => (
+                {baseFilteredResults.map(r => (
                   <option key={r.participant.id} value={r.participant.id}>
-                    {r.participant.name} — {r.level?.name}{' '}
+                    {r.participant.name}{' '}
+                    {r.participant.wilayat ? `(${r.participant.wilayat})` : ''} —{' '}
+                    {r.level?.name}{' '}
                     {r.averageScore !== null
                       ? `(${r.averageScore} / ${r.maxScore})`
                       : '(بانتظار التقييم)'}
@@ -7274,17 +9764,50 @@ function CompetitionReports({
                 reportSubtitle="وثيقة رسمية صادرة عن لجنة التحكيم والتقييم بالمسابقة"
               />
 
-              {/* بيانات المتسابق الأساسية */}
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 p-4 rounded-2xl bg-amber-50/60 border-2 border-amber-200 text-xs font-bold">
-                <div className="sm:col-span-2">
-                  <span className="text-slate-500 block">اسم المتسابق:</span>
+              {/* بيانات المتسابق الأساسية الشاملة (جميع حقول القالب) */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 rounded-2xl bg-amber-50/60 border-2 border-amber-200 text-xs font-bold">
+                <div className="col-span-2">
+                  <span className="text-slate-500 block">الاسم الكامل للمتسابق:</span>
                   <span className="text-base sm:text-lg font-black text-[#09152C] mt-0.5 block">
                     {certParticipant.participant.name}
                   </span>
                 </div>
 
                 <div>
-                  <span className="text-slate-500 block">المستوى المشارك:</span>
+                  <span className="text-slate-500 block">رقم الطلب:</span>
+                  <span className="text-sm font-black font-mono text-slate-900 mt-0.5 block">
+                    {certParticipant.participant.requestNumber || '-'}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-slate-500 block">الولاية / الجنس:</span>
+                  <span className="text-sm font-black text-slate-900 mt-0.5 block">
+                    {[
+                      certParticipant.participant.wilayat,
+                      certParticipant.participant.gender,
+                    ]
+                      .filter(Boolean)
+                      .join(' • ') || '-'}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-slate-500 block">الرقم المدني:</span>
+                  <span className="text-xs font-black font-mono text-slate-800 mt-0.5 block">
+                    {certParticipant.participant.civilId || '-'}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-slate-500 block">رقم الهاتف:</span>
+                  <span className="text-xs font-black font-mono text-slate-800 mt-0.5 block">
+                    {certParticipant.participant.phone || '-'}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-slate-500 block">مستوى المشاركة:</span>
                   <span className="text-sm font-black text-emerald-900 mt-0.5 block">
                     {certParticipant.level?.name}
                   </span>
@@ -7299,12 +9822,22 @@ function CompetitionReports({
                   </span>
                 </div>
 
-                <div className="sm:col-span-4 pt-2 border-t border-amber-200/70">
-                  <span className="text-slate-500">المقرر والأجزاء المختارة: </span>
-                  <span className="font-black text-slate-900">
-                    {certParticipant.participant.juzsOrSurahs ||
-                      certParticipant.level?.juzsOrSurahs}
-                  </span>
+                <div className="col-span-2 sm:col-span-4 pt-2 border-t border-amber-200/70 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="text-slate-500">المقرر والأجزاء المختارة: </span>
+                    <span className="font-black text-slate-900">
+                      {certParticipant.participant.juzsOrSurahs ||
+                        certParticipant.level?.juzsOrSurahs}
+                    </span>
+                  </div>
+                  {certParticipant.participant.registrationDate && (
+                    <div>
+                      <span className="text-slate-500">وقت وتاريخ التسجيل: </span>
+                      <span className="font-black font-mono text-slate-800">
+                        {certParticipant.participant.registrationDate}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 

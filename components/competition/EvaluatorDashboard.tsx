@@ -303,7 +303,7 @@ export default function EvaluatorDashboard({
                 <span>تحكيم مباشر بالمقاطع القرآنية المظللة</span>
               </div>
               <h2 className="text-base sm:text-xl font-black text-white">
-                مرحباً بك أ. {evaluator.name}
+                مرحبا بك {evaluator.name}
               </h2>
             </div>
 

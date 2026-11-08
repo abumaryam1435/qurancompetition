@@ -629,15 +629,58 @@ export const GlobalEvaluatorsManager: React.FC = () => {
                     </p>
                   )}
 
-                  <div className="flex flex-wrap items-center gap-1 text-[11px] font-bold text-slate-500">
-                    <Award size={12} className="text-emerald-600 shrink-0" />
-                    <span>مشارك في ({compsContainingEv.length}) مسابقة:</span>
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center gap-1 text-[11px] font-bold text-slate-500">
+                      <Award size={12} className="text-emerald-600 shrink-0" />
+                      <span>مشارك في ({compsContainingEv.length}) مسابقة:</span>
+                    </div>
                     {compsContainingEv.length > 0 ? (
-                      <span className="text-emerald-800 dark:text-emerald-300 font-black truncate max-w-[180px]">
-                        {compsContainingEv.map(c => c.name).join(' ، ')}
-                      </span>
+                      <div className="space-y-1">
+                        {compsContainingEv.map(c => {
+                          const evInComp = (c.evaluators || []).find(
+                            e => e.name.trim().toLowerCase() === ev.name.trim().toLowerCase()
+                          );
+                          const allCompLevels = c.levels || [];
+                          const assignedIds =
+                            evInComp?.levelIds && evInComp.levelIds.length > 0
+                              ? evInComp.levelIds
+                              : allCompLevels.map(l => l.id);
+                          const assignedLevelNames = allCompLevels
+                            .filter(l => assignedIds.includes(l.id))
+                            .map(l => l.name);
+
+                          return (
+                            <div
+                              key={c.id}
+                              className="p-2 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-200/70 dark:border-emerald-800/60 text-[11px] space-y-1"
+                            >
+                              <span className="font-black text-emerald-950 dark:text-emerald-200 block truncate">
+                                {c.name}
+                              </span>
+                              <div className="flex flex-wrap gap-1">
+                                {assignedLevelNames.length > 0 ? (
+                                  assignedLevelNames.map((lname, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="px-1.5 py-0.5 rounded-md bg-white dark:bg-slate-800 text-emerald-800 dark:text-emerald-300 text-[10px] font-extrabold border border-emerald-200 dark:border-emerald-700"
+                                    >
+                                      {lname}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className="text-[10px] text-slate-500 font-bold">
+                                    كافة المستويات
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     ) : (
-                      <span className="text-slate-400">غير مسند لمسابقات حالياً</span>
+                      <span className="text-[11px] text-slate-400 font-bold block">
+                        غير مسند لمسابقات حالياً
+                      </span>
                     )}
                   </div>
                 </div>

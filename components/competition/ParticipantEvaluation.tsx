@@ -216,8 +216,28 @@ export default function ParticipantEvaluation({
       Number(ev.evaluatorId) !== Number(evaluator.id)
   );
 
+  // قراءة النسخة الحية للمتسابق من المسابقة لضمان المزامنة الفورية بين جميع المقيمين في اللجنة
+  const liveParticipant = useMemo(
+    () =>
+      (comp.participants || []).find(p => Number(p.id) === Number(participant.id)) ||
+      participant,
+    [comp.participants, participant]
+  );
+
+  // ترتيب المتسابق الموحد داخل نفس المستوى (0 للمتسابق الأول، 1 للثاني، 2 للثالث...)
+  // لضمان ظهور نفس المقاطع تماماً لدى جميع المقيمين لنفس المتسابق، مع اختلافها من متسابق لآخر
+  const participantOrderIndex = useMemo(() => {
+    const sameLevelList = [...(comp.participants || [])]
+      .filter(p => Number(p.levelId) === Number(level.id))
+      .sort((a, b) => Number(a.id) - Number(b.id));
+    const idx = sameLevelList.findIndex(p => Number(p.id) === Number(participant.id));
+    return idx >= 0 ? idx : 0;
+  }, [comp.participants, level.id, participant.id]);
+
+  const currentPassageSeed = Number(liveParticipant.passageSeed || 0);
+
   const rawLevelScope = level.juzsOrSurahs || '';
-  const rawParticipantScope = participant.juzsOrSurahs || '';
+  const rawParticipantScope = liveParticipant.juzsOrSurahs || participant.juzsOrSurahs || '';
 
   // فحص هل المستوى محدد بعدد أجزاء دون تعيينها بدقة (مثل: 3 أجزاء، 5 أجزاء، 10 أجزاء)
   const isLevelUnspecified = isUnspecifiedJuzCount(rawLevelScope);
@@ -238,6 +258,46 @@ export default function ParticipantEvaluation({
   }, [rawParticipantScope, rawLevelScope]);
 
   const [selectedJuzs, setSelectedJuzs] = useState<number[]>(initialJuzs);
+
+  // مزامنة الأجزاء المحددة تلقائياً إذا قام أحد المقيمين في اللجنة بتحديدها للمتسابق
+  useEffect(() => {
+    if (rawParticipantScope.startsWith('الأجزاء:')) {
+      const parsed = parseJuzsToNumbers(rawParticipantScope.replace('الأجزاء:', ''));
+      if (parsed.length > 0 && parsed.join(',') !== selectedJuzs.join(',')) {
+        setSelectedJuzs(parsed);
+      }
+    }
+  }, [rawParticipantScope]);
+
+  // حفظ الأجزاء المعتمدة للمتسابق مباشرة ليظهر نفس النطاق ونفس المقاطع لبقية المقيمين في اللجنة
+  useEffect(() => {
+    if (isLevelUnspecified && requiredJuzCount > 0 && selectedJuzs.length === requiredJuzCount) {
+      const formattedScope = `الأجزاء: ${formatJuzsFromNumbers(selectedJuzs)}`;
+      if (liveParticipant.juzsOrSurahs !== formattedScope) {
+        const updatedParticipants = (comp.participants || []).map(p =>
+          Number(p.id) === Number(participant.id)
+            ? { ...p, juzsOrSurahs: formattedScope }
+            : p
+        );
+        context.updateCompetitions(
+          context.competitions.map(c =>
+            String(c.id) === String(comp.id)
+              ? { ...c, participants: updatedParticipants }
+              : c
+          )
+        );
+      }
+    }
+  }, [
+    isLevelUnspecified,
+    requiredJuzCount,
+    selectedJuzs,
+    liveParticipant.juzsOrSurahs,
+    comp.id,
+    comp.participants,
+    participant.id,
+    context,
+  ]);
 
   // هل اكتمل تحديد عدد الأجزاء المطلوب تماماً؟
   const hasExactJuzsSelected =
@@ -309,7 +369,7 @@ export default function ParticipantEvaluation({
   const activePassageMode = comp.passageMode || 'random';
   const activeManualPassages = comp.manualPassages || [];
 
-  // توليد المقاطع المقترحة المظللة موزعة حسب أجزاء أو صفحات مستوى المتسابق
+  // توليد المقاطع المقترحة المظللة الموحدة لجميع المقيمين في اللجنة لنفس المتسابق
   useEffect(() => {
     if (isLevelUnspecified && !hasExactJuzsSelected) {
       setSuggestedPassages([]);
@@ -326,6 +386,8 @@ export default function ParticipantEvaluation({
         scopeType: scopeDetails.scopeType,
         explicitJuzs: scopeDetails.juzs,
         allowedSurahIds: scopeDetails.surahIds,
+        participantOrderIndex,
+        participantSeed: currentPassageSeed,
       }
     );
     setSuggestedPassages(generated);
@@ -337,6 +399,8 @@ export default function ParticipantEvaluation({
     }
   }, [
     participant.id,
+    participantOrderIndex,
+    currentPassageSeed,
     allowedPages,
     scopeDetails,
     segmentsCount,
@@ -357,6 +421,7 @@ export default function ParticipantEvaluation({
       return;
     }
 
+    const nextSeed = currentPassageSeed + 1;
     const generated = generateSuggestedTestPassages(
       allowedPages,
       segmentsCount,
@@ -367,9 +432,26 @@ export default function ParticipantEvaluation({
         scopeType: scopeDetails.scopeType,
         explicitJuzs: scopeDetails.juzs,
         allowedSurahIds: scopeDetails.surahIds,
+        participantOrderIndex,
+        participantSeed: nextSeed,
       }
     );
     setSuggestedPassages(generated);
+
+    // مزامنة بذرة التوليد الجديدة للمتسابق حتى تظهر نفس المقاطع الجديدة لدى بقية المقيمين في اللجنة
+    const updatedParticipants = (comp.participants || []).map(p =>
+      Number(p.id) === Number(participant.id)
+        ? { ...p, passageSeed: nextSeed }
+        : p
+    );
+    context.updateCompetitions(
+      context.competitions.map(c =>
+        String(c.id) === String(comp.id)
+          ? { ...c, participants: updatedParticipants }
+          : c
+      )
+    );
+
     const passagePages = generated.flatMap(p => p.pages);
     if (passagePages.length > 0) {
       preloadMushafPages(passagePages);
@@ -382,7 +464,7 @@ export default function ParticipantEvaluation({
         ? 'بالتناوب من التحديد اليدوي للمشرف'
         : `${linesPerSegment} أسطر فعلية للمقطع`;
     context.showToast(
-      `تم اقتراح ${generated.length} مقاطع جديدة (${modeLabel})`,
+      `تم اقتراح ${generated.length} مقاطع جديدة ومزامنتها لجميع مقيمي اللجنة (${modeLabel})`,
       'info'
     );
   };
@@ -1093,51 +1175,67 @@ export default function ParticipantEvaluation({
 
                     {/* شبكة أزرار الخصم (يظهر للمقيم لون الزر فقط حسب الصنف المحدد من المشرف) */}
                     <div
-                      className={`grid gap-2 ${
-                        levelErrors.length >= 4
+                      className={`grid gap-2 w-full ${
+                        levelErrors.length === 1
+                          ? 'grid-cols-1'
+                          : levelErrors.length === 2
+                          ? 'grid-cols-2'
+                          : levelErrors.length === 3
+                          ? 'grid-cols-2 sm:grid-cols-3'
+                          : levelErrors.length === 4
                           ? 'grid-cols-2 sm:grid-cols-4'
-                          : 'grid-cols-2 sm:grid-cols-3'
+                          : levelErrors.length === 5
+                          ? 'grid-cols-3 sm:grid-cols-5'
+                          : levelErrors.length === 6
+                          ? 'grid-cols-3 sm:grid-cols-6'
+                          : levelErrors.length === 7
+                          ? 'grid-cols-4 sm:grid-cols-7'
+                          : 'grid-cols-4 sm:grid-cols-8'
                       }`}
                     >
-                      {levelErrors.map(err => {
+                      {levelErrors.map((err, errIdx) => {
                         const count = seg.errorsCount?.[err.id] || 0;
                         const isPlusDisabled = isSegUnmem || isSegCapReached;
                         const st = getErrorColorStyle(err, compErrorCategories);
+                        const spanClass =
+                          levelErrors.length === 3 && errIdx === 2
+                            ? 'col-span-2 sm:col-span-1'
+                            : '';
 
                         return (
                           <div
                             key={err.id}
                             onClick={e => e.stopPropagation()}
-                            className={`p-2.5 rounded-xl border-2 flex flex-col justify-between gap-2 transition ${
+                            className={`min-w-0 w-full p-2.5 rounded-xl border-2 flex flex-col justify-between gap-2 transition ${
                               isSegUnmem
                                 ? 'opacity-40 bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 pointer-events-none'
                                 : count > 0
                                 ? st.activeCard
                                 : st.card
-                            }`}
+                            } ${spanClass}`}
                           >
-                            <div className="flex items-center justify-between gap-1">
+                            <div className="flex items-center justify-between gap-1 min-w-0">
                               <span className={`font-black text-xs sm:text-sm truncate ${st.title}`}>
                                 {err.name}
                               </span>
-                              <span className={`text-[10px] font-extrabold shrink-0 ${st.sub}`}>
+                              <span className={`text-[10px] sm:text-xs font-extrabold shrink-0 ${st.sub}`}>
                                 (-{err.deduction})
                               </span>
                             </div>
 
-                            <div className="flex items-center justify-between gap-1.5">
+                            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-1.5 w-full">
                               <button
                                 type="button"
                                 disabled={isPlusDisabled}
                                 onClick={() => handleSegmentErrorIncrement(idx, err.id)}
-                                className={`flex-1 min-h-[40px] rounded-xl font-black text-lg flex items-center justify-center shadow-2xs active:scale-95 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${st.plusBtn}`}
+                                className={`w-full min-h-[40px] rounded-xl font-black text-lg flex items-center justify-center shadow-2xs active:scale-95 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${st.plusBtn}`}
                                 aria-label={`زيادة ${err.name} للمقطع ${idx + 1}`}
                               >
                                 +
                               </button>
 
                               <span
-                                className={`min-w-[34px] h-[40px] px-1.5 rounded-xl bg-white dark:bg-slate-900 border-2 font-black text-base flex items-center justify-center ${st.countBox}`}
+                                className={`min-w-[34px] h-[40px] px-1.5 rounded-xl bg-white dark:bg-slate-900 border-2 font-black text-base flex items-center justify-center shrink-0 ${st.countBox}`}
                               >
                                 {count}
                               </span>
@@ -1146,7 +1244,7 @@ export default function ParticipantEvaluation({
                                 type="button"
                                 disabled={count === 0 || isSegUnmem}
                                 onClick={() => handleSegmentErrorDecrement(idx, err.id)}
-                                className={`flex-1 min-h-[40px] rounded-xl font-black text-lg flex items-center justify-center transition ${
+                                className={`w-full min-h-[40px] rounded-xl font-black text-lg flex items-center justify-center shrink-0 transition ${
                                   count > 0 && !isSegUnmem
                                     ? 'bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-white hover:bg-slate-100 active:scale-95 cursor-pointer'
                                     : 'bg-slate-100/80 dark:bg-slate-800/40 text-slate-300 dark:text-slate-600 cursor-not-allowed border border-slate-200/60 dark:border-slate-800'
@@ -1233,6 +1331,7 @@ export default function ParticipantEvaluation({
           }}
           onClearActivePassage={() => setActivePassageForMushaf(null)}
           competitionErrors={levelErrors}
+          competitionErrorCategories={compErrorCategories}
           competitionErrorCounts={segments[activeSegmentIndex]?.errorsCount || {}}
           onCompetitionErrorChange={(errorId, newCount) =>
             handleSetErrorCount(errorId, newCount)

@@ -656,8 +656,44 @@ export function getInternationalPassagesForJuz(
   });
 }
 
-// عداد تناوب مستمر في الذاكرة لضمان تنوع المقاطع في كل مرة يتم فيها التقييم أو إعادة الاقتراح
+// عداد تناوب مستمر في الذاكرة لضمان تنوع المقاطع في حال عدم تمرير ترتيب المتسابق
 let evaluationRotationCounter = 0;
+
+/**
+ * دالة تجزئة حتمية (Deterministic Hash) ومولد أرقام عشوائية مبذر (Mulberry32)
+ * لضمان تطابق المقاطع المقترحة لنفس المتسابق لدى جميع المقيمين في اللجنة على مختلف أجهزتهم،
+ * مع اختلاف المقاطع تلقائياً من متسابق لآخر داخل نفس المستوى.
+ */
+function seededHash(str: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function createSeededRandom(seed: number): () => number {
+  let a = seed >>> 0;
+  return function () {
+    let t = (a += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function deterministicShuffle<T>(items: T[], seedKey: string): T[] {
+  const arr = [...items];
+  const rand = createSeededRandom(seededHash(seedKey));
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
+  return arr;
+}
 
 export interface GeneratePassagesOptions {
   mode?: PassageSelectionMode;
@@ -665,6 +701,13 @@ export interface GeneratePassagesOptions {
   scopeType?: 'juzs' | 'surahs';
   explicitJuzs?: number[];
   allowedSurahIds?: number[];
+  /**
+   * ترتيب المتسابق داخل نفس المستوى (0 للأول، 1 للثاني، 2 للثالث...)
+   * مع بذرة إعادة التوليد (participantSeed) لضمان ظهور نفس المقاطع لدى جميع المقيمين لنفس المتسابق
+   * واختلافها من متسابق لآخر
+   */
+  participantOrderIndex?: number;
+  participantSeed?: number;
 }
 
 interface CandidatePassage {
@@ -982,7 +1025,19 @@ export function generateSuggestedTestPassages(
   const activeJuzs = extractJuzsFromPages(sortedPages, options?.explicitJuzs);
   const bins = buildSegmentBins(sortedPages, activeJuzs, count, scopeType);
 
-  evaluationRotationCounter = (evaluationRotationCounter + 1) % 10000;
+  const hasDeterministicParticipant =
+    typeof options?.participantOrderIndex === 'number' ||
+    typeof options?.participantSeed === 'number';
+  const deterministicTurn = hasDeterministicParticipant
+    ? Math.max(0, Number(options?.participantOrderIndex || 0)) +
+      Math.max(0, Number(options?.participantSeed || 0)) * 53
+    : undefined;
+
+  if (!hasDeterministicParticipant) {
+    evaluationRotationCounter = (evaluationRotationCounter + 1) % 10000;
+  }
+  const activeTurn =
+    deterministicTurn !== undefined ? deterministicTurn : evaluationRotationCounter;
 
   // =========================================================================
   // 1) نمط المسابقات العالمية (التبويب الثاني):
@@ -1002,7 +1057,7 @@ export function generateSuggestedTestPassages(
       const recentBinPassageKeys = getBinRecentPassageKeys(binKey);
       const binPagesSet = new Set<number>(bin.pages);
       // تدوير فئة الصعوبة مع كل متسابق جديد حتى لو كانت الشريحة جزءاً واحداً فقط
-      const targetTier = tierOrder[(i + evaluationRotationCounter) % tierOrder.length];
+      const targetTier = tierOrder[(i + activeTurn) % tierOrder.length];
 
       // جمع المقاطع العالمية التي تقع ضمن شريحة هذا المقطع تحديداً
       let tierCandidates: SuggestedTestPassage[] = [];
@@ -1022,6 +1077,60 @@ export function generateSuggestedTestPassages(
         allTierCandidates.push(...anyTierCands);
       }
 
+      if (deterministicTurn !== undefined) {
+        const shuffledTier = deterministicShuffle(
+          tierCandidates.filter(c => !usedIds.has(c.id) && !c.pages.some(pg => usedPages.has(pg))),
+          `${binKey}:intl-tier:${i}:${targetTier}`
+        );
+        const shuffledAll = deterministicShuffle(
+          allTierCandidates.filter(c => !usedIds.has(c.id) && !c.pages.some(pg => usedPages.has(pg))),
+          `${binKey}:intl-all:${i}`
+        );
+        const detPool = shuffledTier.length > 0 ? shuffledTier : shuffledAll;
+        const tierCycleIdx = Math.floor(deterministicTurn / 3);
+
+        if (detPool.length > 0 && tierCycleIdx < detPool.length) {
+          const chosen = detPool[tierCycleIdx % detPool.length];
+          usedIds.add(chosen.id);
+          chosen.pages.forEach(pg => usedPages.add(pg));
+          result.push({
+            ...chosen,
+            id: `${chosen.id}-slot-${passageNumber}-${activeTurn}`,
+            passageNumber,
+            difficulty: chosen.difficulty || targetTier,
+            difficultyLabel: DIFFICULTY_LABELS[chosen.difficulty || targetTier],
+            allocatedRangeLabel: bin.rangeLabel,
+            sourceMode: 'international',
+          });
+          continue;
+        } else {
+          const generatedFromBin = generateRandomPassageForBin(
+            bin,
+            i,
+            targetLinesPerSegment,
+            usedPages,
+            allowedPagesSet,
+            deterministicTurn
+          );
+          const resolvedJuz = generatedFromBin.juzNumber || bin.juzs[0] || 1;
+          result.push({
+            ...generatedFromBin,
+            id: `intl-bin-${passageNumber}-${generatedFromBin.startPage}-${activeTurn}`,
+            passageNumber,
+            difficulty: targetTier,
+            difficultyLabel: DIFFICULTY_LABELS[targetTier],
+            categoryNote: getInternationalNoteForJuz(
+              resolvedJuz,
+              targetTier,
+              (i + activeTurn) % 3
+            ),
+            allocatedRangeLabel: bin.rangeLabel,
+            sourceMode: 'international',
+          });
+          continue;
+        }
+      }
+
       const filterFresh = (list: SuggestedTestPassage[]) =>
         list.filter(
           c =>
@@ -1036,14 +1145,14 @@ export function generateSuggestedTestPassages(
       }
 
       if (pool.length > 0) {
-        const pickIdx = (evaluationRotationCounter + i) % pool.length;
+        const pickIdx = (activeTurn + i) % pool.length;
         const chosen = pool[pickIdx];
         usedIds.add(chosen.id);
         chosen.pages.forEach(pg => usedPages.add(pg));
         recentBinPassageKeys.add(getPassageUniqueKey(chosen));
         result.push({
           ...chosen,
-          id: `${chosen.id}-slot-${passageNumber}-${evaluationRotationCounter}`,
+          id: `${chosen.id}-slot-${passageNumber}-${activeTurn}`,
           passageNumber,
           difficulty: chosen.difficulty || targetTier,
           difficultyLabel: DIFFICULTY_LABELS[chosen.difficulty || targetTier],
@@ -1061,16 +1170,17 @@ export function generateSuggestedTestPassages(
           i,
           targetLinesPerSegment,
           usedPages,
-          allowedPagesSet
+          allowedPagesSet,
+          deterministicTurn
         );
         const resolvedJuz = generatedFromBin.juzNumber || bin.juzs[0] || 1;
         result.push({
           ...generatedFromBin,
-          id: `intl-bin-${passageNumber}-${generatedFromBin.startPage}-${evaluationRotationCounter}`,
+          id: `intl-bin-${passageNumber}-${generatedFromBin.startPage}-${activeTurn}`,
           passageNumber,
           difficulty: targetTier,
           difficultyLabel: DIFFICULTY_LABELS[targetTier],
-          categoryNote: getInternationalNoteForJuz(resolvedJuz, targetTier, (i + evaluationRotationCounter) % 3),
+          categoryNote: getInternationalNoteForJuz(resolvedJuz, targetTier, (i + activeTurn) % 3),
           allocatedRangeLabel: bin.rangeLabel,
           sourceMode: 'international',
         });
@@ -1107,6 +1217,39 @@ export function generateSuggestedTestPassages(
       });
 
       const unusedInCurrent = binManualRanges.filter(r => !usedRangeIds.has(r.id));
+
+      if (deterministicTurn !== undefined) {
+        const detPool = deterministicShuffle(
+          unusedInCurrent.length > 0 ? unusedInCurrent : binManualRanges,
+          `${binKey}:manual:${i}`
+        );
+        if (detPool.length > 0) {
+          const pickedRange = detPool[deterministicTurn % detPool.length];
+          usedRangeIds.add(pickedRange.id);
+          const manualPassage = buildPassageFromManualRange(pickedRange, passageNumber);
+          manualPassage.pages.forEach(pg => usedPages.add(pg));
+          result.push({
+            ...manualPassage,
+            allocatedRangeLabel: bin.rangeLabel,
+          });
+        } else {
+          const fallbackPassage = generateRandomPassageForBin(
+            bin,
+            i,
+            targetLinesPerSegment,
+            usedPages,
+            allowedPagesSet,
+            deterministicTurn
+          );
+          result.push({
+            ...fallbackPassage,
+            passageNumber,
+            allocatedRangeLabel: bin.rangeLabel,
+          });
+        }
+        continue;
+      }
+
       const freshAcrossParticipants = unusedInCurrent.filter(
         r => !recentBinPassageKeys.has(r.id)
       );
@@ -1123,7 +1266,7 @@ export function generateSuggestedTestPassages(
           : binManualRanges;
 
       if (pool.length > 0) {
-        const pickIdx = (evaluationRotationCounter + i) % pool.length;
+        const pickIdx = (activeTurn + i) % pool.length;
         const pickedRange = pool[pickIdx];
         usedRangeIds.add(pickedRange.id);
         recentBinPassageKeys.add(pickedRange.id);
@@ -1140,7 +1283,8 @@ export function generateSuggestedTestPassages(
           i,
           targetLinesPerSegment,
           usedPages,
-          allowedPagesSet
+          allowedPagesSet,
+          deterministicTurn
         );
         result.push({
           ...fallbackPassage,
@@ -1157,7 +1301,12 @@ export function generateSuggestedTestPassages(
   // 3) النمط العشوائي المتوازن (التبويب الأول - الافتراضي):
   // توزيع المقاطع بالتساوي والتتابع على شرائح الأجزاء أو الصفحات مع ضمان عدم تكرار المقاطع للمتسابق التالي
   // =========================================================================
-  return generateRandomPassagesFromBins(bins, targetLinesPerSegment, allowedPagesSet);
+  return generateRandomPassagesFromBins(
+    bins,
+    targetLinesPerSegment,
+    allowedPagesSet,
+    deterministicTurn
+  );
 }
 
 // سجل الجلسة للصفحات والمقاطع المقترحة سابقاً لكل شريحة لضمان ظهور مقاطع مختلفة للمتسابق الثاني والثالث...
@@ -1202,7 +1351,8 @@ function generateRandomPassageForBin(
   slotIdx: number,
   targetLinesPerSegment: number | undefined,
   usedPages: Set<number>,
-  allowedPagesSet: Set<number>
+  allowedPagesSet: Set<number>,
+  deterministicTurn?: number
 ): SuggestedTestPassage {
   const passageNumber = slotIdx + 1;
   const binKey = getBinHistoryKey(bin, 'random');
@@ -1230,17 +1380,28 @@ function generateRandomPassageForBin(
   const unusedPages = binPages.filter(p => !usedPages.has(p));
   const basePagesPool = unusedPages.length > 0 ? unusedPages : binPages;
 
-  // استبعاد الصفحات التي ظهرت للمتسابقين السابقين في هذه الشريحة حتى تمر على جميع صفحات الشريحة أولاً
-  let freshPagesPool = basePagesPool.filter(p => !recentBinPages.has(p));
-  if (freshPagesPool.length === 0) {
-    recentBinPages.clear();
-    freshPagesPool = basePagesPool;
+  let selectedPage: number;
+  if (deterministicTurn !== undefined) {
+    // ترتيب صفحات الشريحة بخلط حتمي موحد لجميع أجهزة المقيمين، ثم اختيار صفحة مختلفة لكل متسابق بحسب ترتيبه
+    const pageCycle = Math.floor(deterministicTurn / Math.max(1, basePagesPool.length));
+    const shuffledPages = deterministicShuffle(
+      basePagesPool,
+      `${binKey}:pages:slot-${slotIdx}:cycle-${pageCycle}`
+    );
+    selectedPage = shuffledPages[deterministicTurn % shuffledPages.length] || binPages[0];
+    usedPages.add(selectedPage);
+  } else {
+    // استبعاد الصفحات التي ظهرت للمتسابقين السابقين في هذه الشريحة حتى تمر على جميع صفحات الشريحة أولاً
+    let freshPagesPool = basePagesPool.filter(p => !recentBinPages.has(p));
+    if (freshPagesPool.length === 0) {
+      recentBinPages.clear();
+      freshPagesPool = basePagesPool;
+    }
+    selectedPage =
+      freshPagesPool[Math.floor(Math.random() * freshPagesPool.length)] || binPages[0];
+    usedPages.add(selectedPage);
+    recentBinPages.add(selectedPage);
   }
-
-  const selectedPage =
-    freshPagesPool[Math.floor(Math.random() * freshPagesPool.length)] || binPages[0];
-  usedPages.add(selectedPage);
-  recentBinPages.add(selectedPage);
 
   const canCrossPage = allowedPagesSet.has(selectedPage + 1) && selectedPage < 604;
   const allCandidates = getCandidatePassagesForPage(
@@ -1257,7 +1418,10 @@ function generateRandomPassageForBin(
     };
   }
 
-  const slotPreferences = preferredPositionsBySlot[(slotIdx + evaluationRotationCounter) % preferredPositionsBySlot.length];
+  const activeTurn =
+    deterministicTurn !== undefined ? deterministicTurn : evaluationRotationCounter;
+  const slotPreferences =
+    preferredPositionsBySlot[(slotIdx + activeTurn) % preferredPositionsBySlot.length];
   let matchingCandidates: CandidatePassage[] = [];
 
   for (const pref of slotPreferences) {
@@ -1272,41 +1436,66 @@ function generateRandomPassageForBin(
     matchingCandidates = allCandidates;
   }
 
-  // استبعاد الآيات التي اختيرت للمتسابقين السابقين حتى لو كانت الشريحة صفحة واحدة فقط
-  const unvisitedCandidates = matchingCandidates.filter(
-    c => !recentBinPassageKeys.has(getPassageUniqueKey(c))
-  );
-  if (unvisitedCandidates.length > 0) {
-    matchingCandidates = unvisitedCandidates;
+  let chosen: CandidatePassage;
+  if (deterministicTurn !== undefined) {
+    const sortedCandidates = [...matchingCandidates].sort((a, b) => {
+      const diffA = Math.abs(a.linesCount - targetLines);
+      const diffB = Math.abs(b.linesCount - targetLines);
+      return diffA - diffB;
+    });
+    const poolSize =
+      basePagesPool.length <= 2
+        ? sortedCandidates.length
+        : Math.min(hasCustomTarget ? 4 : 5, sortedCandidates.length);
+    const topPool = sortedCandidates.slice(0, Math.max(1, poolSize));
+    const shuffledTop = deterministicShuffle(
+      topPool,
+      `${binKey}:cand:page-${selectedPage}:slot-${slotIdx}`
+    );
+    const candIdx =
+      basePagesPool.length <= 1
+        ? deterministicTurn % shuffledTop.length
+        : Math.floor(deterministicTurn / Math.max(1, basePagesPool.length)) %
+          shuffledTop.length;
+    chosen = shuffledTop[candIdx] || sortedCandidates[0];
   } else {
-    const unvisitedAll = allCandidates.filter(
+    // استبعاد الآيات التي اختيرت للمتسابقين السابقين حتى لو كانت الشريحة صفحة واحدة فقط
+    const unvisitedCandidates = matchingCandidates.filter(
       c => !recentBinPassageKeys.has(getPassageUniqueKey(c))
     );
-    if (unvisitedAll.length > 0) {
-      matchingCandidates = unvisitedAll;
+    if (unvisitedCandidates.length > 0) {
+      matchingCandidates = unvisitedCandidates;
     } else {
-      recentBinPassageKeys.clear();
+      const unvisitedAll = allCandidates.filter(
+        c => !recentBinPassageKeys.has(getPassageUniqueKey(c))
+      );
+      if (unvisitedAll.length > 0) {
+        matchingCandidates = unvisitedAll;
+      } else {
+        recentBinPassageKeys.clear();
+      }
     }
+
+    matchingCandidates.sort((a, b) => {
+      const diffA = Math.abs(a.linesCount - targetLines);
+      const diffB = Math.abs(b.linesCount - targetLines);
+      return diffA - diffB;
+    });
+
+    const topCandidates = matchingCandidates.slice(
+      0,
+      Math.min(hasCustomTarget ? 3 : 4, matchingCandidates.length)
+    );
+    chosen =
+      topCandidates[Math.floor(Math.random() * topCandidates.length)] || matchingCandidates[0];
+    recentBinPassageKeys.add(getPassageUniqueKey(chosen));
   }
-
-  matchingCandidates.sort((a, b) => {
-    const diffA = Math.abs(a.linesCount - targetLines);
-    const diffB = Math.abs(b.linesCount - targetLines);
-    return diffA - diffB;
-  });
-
-  const topCandidates = matchingCandidates.slice(
-    0,
-    Math.min(hasCustomTarget ? 3 : 4, matchingCandidates.length)
-  );
-  const chosen =
-    topCandidates[Math.floor(Math.random() * topCandidates.length)] || matchingCandidates[0];
-
-  recentBinPassageKeys.add(getPassageUniqueKey(chosen));
 
   if (chosen.endPage > chosen.startPage) {
     usedPages.add(chosen.endPage);
-    recentBinPages.add(chosen.endPage);
+    if (deterministicTurn === undefined) {
+      recentBinPages.add(chosen.endPage);
+    }
   }
 
   const pagesList =
@@ -1390,7 +1579,8 @@ function generateRandomPassageForBin(
 function generateRandomPassagesFromBins(
   bins: SegmentBin[],
   targetLinesPerSegment: number | undefined,
-  allowedPagesSet: Set<number>
+  allowedPagesSet: Set<number>,
+  deterministicTurn?: number
 ): SuggestedTestPassage[] {
   const passages: SuggestedTestPassage[] = [];
   const usedPages = new Set<number>();
@@ -1402,7 +1592,8 @@ function generateRandomPassagesFromBins(
         i,
         targetLinesPerSegment,
         usedPages,
-        allowedPagesSet
+        allowedPagesSet,
+        deterministicTurn
       )
     );
   }

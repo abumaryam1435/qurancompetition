@@ -67,6 +67,13 @@ export interface CompetitionParticipant {
   levelId: number;
   juzsOrSurahs?: string;
   isUnmemorized?: boolean;
+  passageSeed?: number;
+  requestNumber?: string;
+  civilId?: string;
+  phone?: string;
+  gender?: string;
+  wilayat?: string;
+  registrationDate?: string;
 }
 
 export interface CompetitionSegmentEvaluation {
