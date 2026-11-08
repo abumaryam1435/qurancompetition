@@ -369,6 +369,8 @@ export default function ParticipantEvaluation({
   const activePassageMode = comp.passageMode || 'random';
   const activeManualPassages = comp.manualPassages || [];
 
+  const prevSyncedSeedRef = useRef<number>(currentPassageSeed);
+
   // توليد المقاطع المقترحة المظللة الموحدة لجميع المقيمين في اللجنة لنفس المتسابق
   useEffect(() => {
     if (isLevelUnspecified && !hasExactJuzsSelected) {
@@ -392,6 +394,21 @@ export default function ParticipantEvaluation({
     );
     setSuggestedPassages(generated);
 
+    // تحديث المقطع المفتوح داخل المصحف تلقائياً وفورياً إذا كان المقيم الثاني فاتحاً لصفحة المصحف
+    setActivePassageForMushaf(prev => {
+      if (!prev) return null;
+      return (
+        generated.find(p => p.passageNumber === prev.passageNumber) ||
+        generated[activeSegmentIndex] ||
+        generated[0] ||
+        null
+      );
+    });
+
+    if (prevSyncedSeedRef.current !== currentPassageSeed) {
+      prevSyncedSeedRef.current = currentPassageSeed;
+    }
+
     const passagePages = generated.flatMap(p => p.pages);
     if (passagePages.length > 0) {
       preloadMushafPages(passagePages);
@@ -409,6 +426,7 @@ export default function ParticipantEvaluation({
     activeManualPassages,
     isLevelUnspecified,
     hasExactJuzsSelected,
+    activeSegmentIndex,
   ]);
 
   const handleRegeneratePassages = () => {
@@ -422,6 +440,7 @@ export default function ParticipantEvaluation({
     }
 
     const nextSeed = currentPassageSeed + 1;
+    prevSyncedSeedRef.current = nextSeed;
     const generated = generateSuggestedTestPassages(
       allowedPages,
       segmentsCount,
@@ -437,6 +456,15 @@ export default function ParticipantEvaluation({
       }
     );
     setSuggestedPassages(generated);
+    setActivePassageForMushaf(prev => {
+      if (!prev) return null;
+      return (
+        generated.find(p => p.passageNumber === prev.passageNumber) ||
+        generated[activeSegmentIndex] ||
+        generated[0] ||
+        null
+      );
+    });
 
     // مزامنة بذرة التوليد الجديدة للمتسابق حتى تظهر نفس المقاطع الجديدة لدى بقية المقيمين في اللجنة
     const updatedParticipants = (comp.participants || []).map(p =>
