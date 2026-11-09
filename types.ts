@@ -39,6 +39,9 @@ export interface CompetitionLevel {
   id: number;
   name: string;
   juzsOrSurahs: string;
+  juzCount?: number;
+  isConsecutiveJuzs?: boolean;
+  isUnspecifiedJuzs?: boolean;
   segmentsCount: number;
   linesPerSegment: number;
   errors: CompetitionErrorType[];

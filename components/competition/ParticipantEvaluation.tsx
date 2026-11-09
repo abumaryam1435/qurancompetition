@@ -1,6 +1,6 @@
 import React, { useState, useContext, useMemo, useEffect, useRef } from 'react';
 import { AppContext } from '../../App';
-import { getDb } from '../../utils/firebase';
+import { commitParticipantEvaluationToCloud } from '../../utils/firebase';
 import {
   Competition,
   CompetitionEvaluator,
@@ -55,6 +55,16 @@ interface ResolvedScopeDetails {
   juzs: number[];
   pages: number[];
   surahIds: number[];
+}
+
+interface LocalEvaluationDraft {
+  selectedJuzs: number[];
+  segments: CompetitionSegmentEvaluation[];
+  completedPassages: number[];
+  activeSegmentIndex: number;
+  evaluationNotes: string;
+  localPassageSeed?: number;
+  updatedAt: number;
 }
 
 /**
@@ -206,21 +216,7 @@ export default function ParticipantEvaluation({
   const segmentsCount = Math.max(1, Number(level.segmentsCount) || 5);
   const linesPerSegment = Math.max(1, Number(level.linesPerSegment) || 7);
 
-  // التقييم الحالي الخاص بهذا المقيم تحديداً لهذا المتسابق
-  const existingEval = (comp.evaluations || []).find(
-    ev =>
-      Number(ev.participantId) === Number(participant.id) &&
-      Number(ev.evaluatorId) === Number(evaluator.id)
-  );
-
-  // التقييمات المرصودة لهذا المتسابق من مقيمين آخرين في نفس المسابقة
-  const otherEvaluations = (comp.evaluations || []).filter(
-    ev =>
-      Number(ev.participantId) === Number(participant.id) &&
-      Number(ev.evaluatorId) !== Number(evaluator.id)
-  );
-
-  // قراءة النسخة الحية للمسابقة والمتسابق من السياق مباشرة لضمان المزامنة الفورية بين جميع المقيمين في اللجنة
+  // قراءة النسخة الحية للمسابقة والمتسابق من السياق
   const currentComp = useMemo(
     () =>
       (context?.competitions || []).find(c => String(c.id) === String(comp.id)) ||
@@ -233,6 +229,20 @@ export default function ParticipantEvaluation({
       (currentComp.participants || []).find(p => Number(p.id) === Number(participant.id)) ||
       participant,
     [currentComp.participants, participant]
+  );
+
+  // التقييم الحالي الخاص بهذا المقيم تحديداً لهذا المتسابق
+  const existingEval = (currentComp.evaluations || []).find(
+    ev =>
+      Number(ev.participantId) === Number(participant.id) &&
+      Number(ev.evaluatorId) === Number(evaluator.id)
+  );
+
+  // التقييمات المرصودة لهذا المتسابق من مقيمين آخرين في نفس المسابقة
+  const otherEvaluations = (currentComp.evaluations || []).filter(
+    ev =>
+      Number(ev.participantId) === Number(participant.id) &&
+      Number(ev.evaluatorId) !== Number(evaluator.id)
   );
 
   // قراءة بيانات المقيم الحالية من المسابقة للتحقق من أحدث صلاحيات التعديل المسندة من المشرف
@@ -253,6 +263,22 @@ export default function ParticipantEvaluation({
 
   const isReadOnly = Boolean(existingEval && !isEditAllowed);
 
+  // مفتاح المسودة المحلية الخاصة بهذا المقيم وهذا المتسابق (حفظ محلي 100% أثناء التقييم لمنع أي تعارض بين المقيمين)
+  const draftStorageKey = `quran_eval_draft_${comp.id}_${evaluator.id}_${participant.id}`;
+
+  const savedDraft = useMemo<LocalEvaluationDraft | null>(() => {
+    if (isReadOnly) return null;
+    try {
+      const raw = localStorage.getItem(draftStorageKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed as LocalEvaluationDraft;
+    } catch {
+      // ignore localStorage read errors
+    }
+    return null;
+  }, [draftStorageKey, isReadOnly]);
+
   // ترتيب المتسابق الموحد داخل نفس المستوى (0 للمتسابق الأول، 1 للثاني، 2 للثالث...)
   // لضمان ظهور نفس المقاطع تماماً لدى جميع المقيمين لنفس المتسابق، مع اختلافها من متسابق لآخر
   const participantOrderIndex = useMemo(() => {
@@ -263,122 +289,95 @@ export default function ParticipantEvaluation({
     return idx >= 0 ? idx : 0;
   }, [currentComp.participants, level.id, participant.id]);
 
-  const currentPassageSeed = Number(liveParticipant.passageSeed || 0);
+  const [localPassageSeed, setLocalPassageSeed] = useState<number>(() => {
+    if (savedDraft?.localPassageSeed !== undefined) {
+      return Number(savedDraft.localPassageSeed);
+    }
+    return Number(liveParticipant.passageSeed || 0);
+  });
 
-  // اشتراك حي ومباشر لالتقاط أي إعادة اقتراح مقاطع أو تحديد نطاق من عضو آخر في اللجنة فوراً بدون إجهاد قناة Firestore
-  useEffect(() => {
-    const db = getDb();
-    if (!db) return;
-    const ref = db.ref('data/competitions');
-    const handler = (snap: { val: () => any; exists: () => boolean }) => {
-      if (!snap || !snap.exists()) return;
-      const comps = snap.val();
-      if (Array.isArray(comps)) {
-        const remoteComp = comps.find((c: any) => String(c.id) === String(comp.id));
-        const remotePart = (remoteComp?.participants || []).find(
-          (p: any) => Number(p.id) === Number(participant.id)
-        );
-        if (remotePart) {
-          const remoteSeed = Number(remotePart.passageSeed || 0);
-          const remoteScope = remotePart.juzsOrSurahs || '';
-          const mySeed = Number(liveParticipant.passageSeed || 0);
-          const myScope = liveParticipant.juzsOrSurahs || '';
-          if (remoteSeed !== mySeed || remoteScope !== myScope) {
-            context?.updateCompetitions(comps);
-          }
-        }
-      }
-    };
-    ref.on('value', handler);
-    return () => {
-      ref.off('value', handler);
-    };
-  }, [comp.id, participant.id, liveParticipant.passageSeed, liveParticipant.juzsOrSurahs, context]);
+  const currentPassageSeed = localPassageSeed;
 
   const rawLevelScope = level.juzsOrSurahs || '';
   const rawParticipantScope = liveParticipant.juzsOrSurahs || participant.juzsOrSurahs || '';
 
-  // فحص هل المستوى محدد بعدد أجزاء دون تعيينها بدقة (مثل: 3 أجزاء، 5 أجزاء، 10 أجزاء)
-  const isLevelUnspecified = isUnspecifiedJuzCount(rawLevelScope);
+  // فحص هل المستوى محدد بعدد أجزاء دون تعيينها بدقة (مثل: 3 أجزاء، 5 أجزاء متتالية، 10 أجزاء)
+  const isLevelUnspecified =
+    Boolean(level.isUnspecifiedJuzs) || isUnspecifiedJuzCount(rawLevelScope);
   const requiredJuzCount =
-    extractJuzCount(rawParticipantScope) ||
+    level.juzCount ||
     extractJuzCount(rawLevelScope) ||
-    (isLevelUnspecified ? 3 : 0);
+    extractJuzCount(level.name) ||
+    extractJuzCount(rawParticipantScope) ||
+    (isLevelUnspecified ? 5 : 0);
+  const isConsecutiveLevel =
+    level.isConsecutiveJuzs !== false && !rawLevelScope.includes('متفرقة');
 
-  // استخراج الأجزاء المحددة مسبقاً للمتسابق إن وجدت، أو اعتماد الأجزاء المناسبة تلقائياً
-  // لضمان توليد المقاطع وظهور بطاقة المقطع الأول دائماً وفوراً للمقيم بمجرد اختيار المتسابق
+  // استخراج الأجزاء المحددة مسبقاً للمتسابق أو من المسودة المحلية
   const initialJuzs = useMemo(() => {
+    if (
+      savedDraft &&
+      Array.isArray(savedDraft.selectedJuzs) &&
+      savedDraft.selectedJuzs.length > 0 &&
+      (!isLevelUnspecified || savedDraft.selectedJuzs.length === requiredJuzCount)
+    ) {
+      return savedDraft.selectedJuzs;
+    }
     if (rawParticipantScope.startsWith('الأجزاء:')) {
       const parsed = parseJuzsToNumbers(rawParticipantScope.replace('الأجزاء:', ''));
-      if (parsed.length > 0) return parsed;
+      if (parsed.length > 0 && (!isLevelUnspecified || parsed.length === requiredJuzCount)) {
+        return parsed;
+      }
     }
-    if (rawLevelScope.startsWith('الأجزاء:')) {
+    if (!isLevelUnspecified && rawLevelScope.startsWith('الأجزاء:')) {
       const parsed = parseJuzsToNumbers(rawLevelScope.replace('الأجزاء:', ''));
       if (parsed.length > 0) return parsed;
     }
     if (isLevelUnspecified && requiredJuzCount > 0) {
-      // افتراضياً: آخر الأجزاء بعدد المطلوب (مثلاً آخر 3 أجزاء: 28، 29، 30)
-      return Array.from(
-        { length: requiredJuzCount },
-        (_, idx) => 30 - requiredJuzCount + 1 + idx
-      );
+      // افتراضياً: أول الأجزاء المتتالية بعدد المطلوب (مثلاً 1 إلى 5) حتى ينقر المقيم على الجزء المطلوب
+      return Array.from({ length: requiredJuzCount }, (_, idx) => idx + 1);
     }
     return [];
-  }, [rawParticipantScope, rawLevelScope, isLevelUnspecified, requiredJuzCount]);
+  }, [savedDraft, rawParticipantScope, rawLevelScope, isLevelUnspecified, requiredJuzCount]);
 
   const [selectedJuzs, setSelectedJuzs] = useState<number[]>(initialJuzs);
 
-  // مزامنة الأجزاء المحددة تلقائياً إذا قام أحد المقيمين في اللجنة بتحديدها للمتسابق
-  useEffect(() => {
-    if (rawParticipantScope.startsWith('الأجزاء:')) {
-      const parsed = parseJuzsToNumbers(rawParticipantScope.replace('الأجزاء:', ''));
-      if (parsed.length > 0 && parsed.join(',') !== selectedJuzs.join(',')) {
-        setSelectedJuzs(parsed);
-      }
-    }
-  }, [rawParticipantScope]);
-
-  // حفظ الأجزاء المعتمدة للمتسابق مباشرة ليظهر نفس النطاق ونفس المقاطع لبقية المقيمين في اللجنة
-  useEffect(() => {
-    if (isLevelUnspecified && requiredJuzCount > 0 && selectedJuzs.length === requiredJuzCount) {
-      const formattedScope = `الأجزاء: ${formatJuzsFromNumbers(selectedJuzs)}`;
-      if (liveParticipant.juzsOrSurahs !== formattedScope) {
-        const updatedParticipants = (comp.participants || []).map(p =>
-          Number(p.id) === Number(participant.id)
-            ? { ...p, juzsOrSurahs: formattedScope }
-            : p
-        );
-        context.updateCompetitions(
-          context.competitions.map(c =>
-            String(c.id) === String(comp.id)
-              ? { ...c, participants: updatedParticipants }
-              : c
-          )
-        );
-      }
-    }
-  }, [
-    isLevelUnspecified,
-    requiredJuzCount,
-    selectedJuzs,
-    liveParticipant.juzsOrSurahs,
-    comp.id,
-    comp.participants,
-    participant.id,
-    context,
-  ]);
+  // دالة حفظ الأجزاء التي يختارها المقيم محلياً أثناء التقييم (يتم اعتمادها سحابياً عند الحفظ النهائي فقط)
+  const applyEvaluatorJuzSelection = (nextJuzs: number[]) => {
+    const sorted = [...new Set(nextJuzs)]
+      .filter(n => n >= 1 && n <= 30)
+      .sort((a, b) => a - b);
+    setSelectedJuzs(sorted);
+  };
 
   // هل اكتمل تحديد عدد الأجزاء المطلوب تماماً؟
   const hasExactJuzsSelected =
     !isLevelUnspecified || (requiredJuzCount > 0 && selectedJuzs.length === requiredJuzCount);
 
-  // لا نفتح محدد الأجزاء تلقائياً حتى لا يحجب بطاقة المقطع الأول عن المقيم (يمكن فتحه بزر "تعديل نطاق المتسابق")
-  const [showScopeSelector, setShowScopeSelector] = useState<boolean>(false);
+  // إذا كان المستوى غير محدد الأجزاء مسبقاً (مثلاً 5 أجزاء متتالية يحددها المقيم)، نعرض شبكة الأجزاء مباشرة لسهولة النقر على الجزء الأول
+  const [showScopeSelector, setShowScopeSelector] = useState<boolean>(isLevelUnspecified);
 
   // خانة ملاحظات المقيم
-  const [evaluationNotes, setEvaluationNotes] = useState<string>(existingEval?.notes || '');
+  const [evaluationNotes, setEvaluationNotes] = useState<string>(
+    savedDraft?.evaluationNotes !== undefined
+      ? savedDraft.evaluationNotes
+      : existingEval?.notes || ''
+  );
 
   const [segments, setSegments] = useState<CompetitionSegmentEvaluation[]>(() => {
+    if (
+      savedDraft &&
+      Array.isArray(savedDraft.segments) &&
+      savedDraft.segments.length === segmentsCount
+    ) {
+      return savedDraft.segments.map((found, i) => ({
+        segmentNumber: i + 1,
+        errorsCount: found?.errorsCount ? { ...found.errorsCount } : {},
+        score: found?.score || 0,
+        isUnmemorized: Boolean(found?.isUnmemorized),
+        passageDescription: found?.passageDescription,
+      }));
+    }
     if (existingEval && Array.isArray(existingEval.segments) && existingEval.segments.length > 0) {
       return Array.from({ length: segmentsCount }).map((_, i) => {
         const found = existingEval.segments[i];
@@ -399,11 +398,70 @@ export default function ParticipantEvaluation({
     }));
   });
 
-  const [activeSegmentIndex, setActiveSegmentIndex] = useState(0);
+  const [completedPassages, setCompletedPassages] = useState<number[]>(() => {
+    if (savedDraft && Array.isArray(savedDraft.completedPassages)) {
+      return savedDraft.completedPassages.filter(n => n >= 1 && n <= segmentsCount);
+    }
+    return existingEval ? Array.from({ length: segmentsCount }, (_, i) => i + 1) : [];
+  });
 
-  // التأكد دائماً عند اختيار أي متسابق من بدء شاشة التقييم على المقطع الأول والتمرير لأعلى الصفحة
+  const [activeSegmentIndex, setActiveSegmentIndex] = useState<number>(() => {
+    if (
+      savedDraft &&
+      typeof savedDraft.activeSegmentIndex === 'number' &&
+      savedDraft.activeSegmentIndex >= 0 &&
+      savedDraft.activeSegmentIndex < segmentsCount
+    ) {
+      return savedDraft.activeSegmentIndex;
+    }
+    return 0;
+  });
+
+  // نافذة تأكيد الخروج وحفظ النتيجة النهائية
+  const [showExitConfirmModal, setShowExitConfirmModal] = useState<boolean>(false);
+  const [isSavingFinal, setIsSavingFinal] = useState<boolean>(false);
+
+  // حفظ المسودة محلياً (localStorage) تلقائياً عند أي تعديل في الدرجات أو المقاطع دون إرسال أي طلبات سحابية أثناء التقييم
   useEffect(() => {
-    setActiveSegmentIndex(0);
+    if (isReadOnly) return;
+    try {
+      const draftPayload: LocalEvaluationDraft = {
+        selectedJuzs,
+        segments,
+        completedPassages,
+        activeSegmentIndex,
+        evaluationNotes,
+        localPassageSeed,
+        updatedAt: Date.now(),
+      };
+      localStorage.setItem(draftStorageKey, JSON.stringify(draftPayload));
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [
+    isReadOnly,
+    draftStorageKey,
+    selectedJuzs,
+    segments,
+    completedPassages,
+    activeSegmentIndex,
+    evaluationNotes,
+    localPassageSeed,
+  ]);
+
+  // تنبيه المتصفح إذا حاول المقيم إغلاق التبويب قبل حفظ النتيجة النهائية
+  useEffect(() => {
+    if (isReadOnly) return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isReadOnly]);
+
+  // التأكد عند فتح صفحة المتسابق من التمرير لأعلى الصفحة
+  useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'instant' });
     const timer = setTimeout(() => {
       window.scrollTo({ top: 0, behavior: 'instant' });
@@ -411,9 +469,6 @@ export default function ParticipantEvaluation({
     return () => clearTimeout(timer);
   }, [participant.id]);
 
-  const [completedPassages, setCompletedPassages] = useState<number[]>(() =>
-    existingEval ? Array.from({ length: segmentsCount }, (_, i) => i + 1) : []
-  );
   const [isMushafOpen, setIsMushafOpen] = useState(false);
   const [activePassageForMushaf, setActivePassageForMushaf] =
     useState<SuggestedTestPassage | null>(null);
@@ -474,7 +529,6 @@ export default function ParticipantEvaluation({
     );
     setSuggestedPassages(generated);
 
-    // تحديث المقطع المفتوح داخل المصحف تلقائياً وفورياً إذا كان المقيم الثاني فاتحاً لصفحة المصحف
     setActivePassageForMushaf(prev => {
       if (!prev) return null;
       return (
@@ -521,6 +575,8 @@ export default function ParticipantEvaluation({
 
     const nextSeed = currentPassageSeed + 1;
     prevSyncedSeedRef.current = nextSeed;
+    setLocalPassageSeed(nextSeed);
+
     const generated = generateSuggestedTestPassages(
       allowedPages,
       segmentsCount,
@@ -536,28 +592,9 @@ export default function ParticipantEvaluation({
       }
     );
     setSuggestedPassages(generated);
-    setActivePassageForMushaf(prev => {
-      if (!prev) return null;
-      return (
-        generated.find(p => p.passageNumber === prev.passageNumber) ||
-        generated[activeSegmentIndex] ||
-        generated[0] ||
-        null
-      );
-    });
-
-    // مزامنة بذرة التوليد الجديدة للمتسابق حتى تظهر نفس المقاطع الجديدة لدى بقية المقيمين في اللجنة
-    const updatedParticipants = (currentComp.participants || []).map(p =>
-      Number(p.id) === Number(participant.id)
-        ? { ...p, passageSeed: nextSeed }
-        : p
-    );
-    const updatedCompetitions = (context.competitions || []).map(c =>
-      String(c.id) === String(comp.id)
-        ? { ...c, participants: updatedParticipants }
-        : c
-    );
-    context.updateCompetitions(updatedCompetitions);
+    setActiveSegmentIndex(0);
+    setCompletedPassages([]);
+    setActivePassageForMushaf(generated[0] || null);
 
     const passagePages = generated.flatMap(p => p.pages);
     if (passagePages.length > 0) {
@@ -571,22 +608,33 @@ export default function ParticipantEvaluation({
         ? 'بالتناوب من التحديد اليدوي للمشرف'
         : `${linesPerSegment} أسطر فعلية للمقطع`;
     context.showToast(
-      `تم اقتراح ${generated.length} مقاطع جديدة ومزامنتها لجميع مقيمي اللجنة (${modeLabel})`,
+      `تم اقتراح مقاطع جديدة (${modeLabel}) — ابدأ بتقييم المقطع الأول`,
       'info'
     );
   };
 
-  const togglePassageCompleted = (num: number) => {
-    setCompletedPassages(prev =>
-      prev.includes(num) ? prev.filter(p => p !== num) : [...prev, num]
-    );
+  // التحقق هل المقطع رقم idx (0-indexed) مفتوح للتقييم أم مقفل بانتظار المقطع السابق
+  const isSegmentUnlocked = (idx: number): boolean => {
+    if (idx === 0 || isReadOnly) return true;
+    for (let prev = 1; prev <= idx; prev++) {
+      if (!completedPassages.includes(prev)) return false;
+    }
+    return true;
   };
 
-  const handleOpenPassageInMushaf = (passage: SuggestedTestPassage, idx: number) => {
-    setActiveSegmentIndex(idx);
-    setActivePassageForMushaf(passage);
-    setIsMushafOpen(true);
-  };
+  const allSegmentsCompleted = useMemo(() => {
+    for (let p = 1; p <= segmentsCount; p++) {
+      if (!completedPassages.includes(p)) return false;
+    }
+    return true;
+  }, [completedPassages, segmentsCount]);
+
+  const firstIncompleteSegmentNumber = useMemo(() => {
+    for (let p = 1; p <= segmentsCount; p++) {
+      if (!completedPassages.includes(p)) return p;
+    }
+    return segmentsCount;
+  }, [completedPassages, segmentsCount]);
 
   const compErrorCategories = useMemo(
     () => resolveCompetitionErrorCategories(comp),
@@ -596,6 +644,122 @@ export default function ParticipantEvaluation({
   const levelErrors = useMemo(() => {
     return resolveCompetitionErrors(comp);
   }, [comp]);
+
+  const segmentMaxScore = Number((level.maxScore / segmentsCount).toFixed(2));
+
+  const calculateSegmentDeduction = (seg: CompetitionSegmentEvaluation) => {
+    if (seg?.isUnmemorized) {
+      return segmentMaxScore;
+    }
+    let deduction = 0;
+    Object.entries(seg?.errorsCount || {}).forEach(([errIdStr, count]) => {
+      const err = levelErrors.find(e => Number(e.id) === Number(errIdStr));
+      if (err) {
+        deduction += Number(count) * Number(err.deduction);
+      }
+    });
+    return Math.min(segmentMaxScore, Number(deduction.toFixed(2)));
+  };
+
+  /**
+   * إتمام تقييم المقطع الحالي (حفظ درجته محلياً وفتح المقطع التالي تلقائياً)
+   * سواء من بطاقة المقطع أو من داخل نافذة المصحف الشريف
+   */
+  const handleCompleteSegment = (segIdx: number, fromMushaf = false) => {
+    if (isReadOnly) return;
+    if (!isSegmentUnlocked(segIdx)) {
+      context.showToast(
+        `يرجى الضغط على «تم التقييم» للمقطع ${toArabicDigits(segIdx)} أولاً قبل الانتقال للمقطع ${toArabicDigits(segIdx + 1)}`,
+        'info'
+      );
+      return;
+    }
+
+    const passageNum = segIdx + 1;
+    const currentSeg = segments[segIdx] || {
+      segmentNumber: passageNum,
+      errorsCount: {},
+      score: segmentMaxScore,
+      isUnmemorized: false,
+    };
+    const isUnmem = Boolean(currentSeg.isUnmemorized);
+    const segDed = isUnmem ? segmentMaxScore : calculateSegmentDeduction(currentSeg);
+    const segScore = isUnmem ? 0 : Math.max(0, Number((segmentMaxScore - segDed).toFixed(2)));
+    const passage = suggestedPassages[segIdx];
+
+    // حفظ درجة المقطع محلياً في مصفوفة المقاطع
+    setSegments(prev => {
+      const next = [...prev];
+      next[segIdx] = {
+        ...currentSeg,
+        segmentNumber: passageNum,
+        score: segScore,
+        passageDescription: passage?.description || currentSeg.passageDescription,
+      };
+      return next;
+    });
+
+    const nextCompleted = completedPassages.includes(passageNum)
+      ? completedPassages
+      : [...completedPassages, passageNum].sort((a, b) => a - b);
+    setCompletedPassages(nextCompleted);
+
+    // إذا كان هناك مقطع تالٍ: يفتح المقطع التالي وينتقل إليه تلقائياً
+    if (segIdx + 1 < segmentsCount) {
+      const nextIdx = segIdx + 1;
+      setActiveSegmentIndex(nextIdx);
+      const nextPassage = suggestedPassages[nextIdx] || null;
+      if (fromMushaf || isMushafOpen) {
+        if (nextPassage) {
+          setActivePassageForMushaf(nextPassage);
+        }
+      } else {
+        setTimeout(() => {
+          const el = document.getElementById(`segment-card-${nextIdx}`);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        }, 50);
+      }
+      context.showToast(
+        `تم حفظ درجة المقطع ${toArabicDigits(passageNum)} (${segScore} / ${segmentMaxScore}) محلياً وفتح المقطع ${toArabicDigits(nextIdx + 1)} تلقائياً`,
+        'success'
+      );
+    } else {
+      // المقطع الأخير: اكتمل تقييم كافة المقاطع
+      if (fromMushaf || isMushafOpen) {
+        handleCloseMushafAndScrollToSave();
+      } else {
+        setTimeout(() => {
+          if (saveButtonRef.current) {
+            saveButtonRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 80);
+      }
+      context.showToast(
+        `اكتمل تقييم جميع المقاطع (${toArabicDigits(segmentsCount)}/${toArabicDigits(segmentsCount)}) — يرجى الضغط على «حفظ واعتماد تقييم المقيم» بالأسفل`,
+        'success'
+      );
+    }
+  };
+
+  const togglePassageCompleted = (num: number) => {
+    const segIdx = Math.max(0, num - 1);
+    handleCompleteSegment(segIdx, false);
+  };
+
+  const handleOpenPassageInMushaf = (passage: SuggestedTestPassage, idx: number) => {
+    if (!isSegmentUnlocked(idx)) {
+      context.showToast(
+        `لا يمكن فتح المقطع ${toArabicDigits(idx + 1)} قبل الضغط على «تم التقييم» للمقطع ${toArabicDigits(idx)}`,
+        'info'
+      );
+      return;
+    }
+    setActiveSegmentIndex(idx);
+    setActivePassageForMushaf(passage);
+    setIsMushafOpen(true);
+  };
 
   const handleSetSegmentErrorCount = (segIdx: number, errorId: number, newCount: number) => {
     const safeCount = Math.max(0, newCount);
@@ -616,22 +780,6 @@ export default function ParticipantEvaluation({
 
   const handleSetErrorCount = (errorId: number, newCount: number) => {
     handleSetSegmentErrorCount(activeSegmentIndex, errorId, newCount);
-  };
-
-  const segmentMaxScore = Number((level.maxScore / segmentsCount).toFixed(2));
-
-  const calculateSegmentDeduction = (seg: CompetitionSegmentEvaluation) => {
-    if (seg?.isUnmemorized) {
-      return segmentMaxScore;
-    }
-    let deduction = 0;
-    Object.entries(seg?.errorsCount || {}).forEach(([errIdStr, count]) => {
-      const err = levelErrors.find(e => Number(e.id) === Number(errIdStr));
-      if (err) {
-        deduction += Number(count) * Number(err.deduction);
-      }
-    });
-    return Math.min(segmentMaxScore, Number(deduction.toFixed(2)));
   };
 
   const handleToggleSegmentUnmemorized = (segIdx: number, unmem: boolean) => {
@@ -704,94 +852,110 @@ export default function ParticipantEvaluation({
     return Math.max(0, Number(total.toFixed(2)));
   };
 
-  const handleSave = () => {
-    // التحقق من اكتمال تحديد الأجزاء إذا كان المستوى محدد بعدد أجزاء
+  // محاولة الخروج من صفحة الطالب: إذا لم يكن التقييم محفوظاً ومعتمداً، تظهر رسالة تأكيد الحفظ ولا يخرج إلا بعد حفظ النتيجة النهائية
+  const handleAttemptExit = () => {
+    if (isReadOnly) {
+      onBack();
+      return;
+    }
+    setShowExitConfirmModal(true);
+  };
+
+  const handleSave = async () => {
+    if (isSavingFinal) return;
+
+    // 1. التحقق من اكتمال تحديد الأجزاء إذا كان المستوى محدد بعدد أجزاء
     if (isLevelUnspecified && requiredJuzCount > 0 && selectedJuzs.length !== requiredJuzCount) {
       context.showToast(
         `يجب تحديد ${requiredJuzCount} أجزاء تماماً للمتسابق "${participant.name}" قبل حفظ التقييم (تم تحديد ${selectedJuzs.length} من ${requiredJuzCount})`,
         'error'
       );
       setShowScopeSelector(true);
+      setShowExitConfirmModal(false);
       return;
     }
 
-    const allSegmentsUnmemorized = segments.length > 0 && segments.every(s => s.isUnmemorized);
-    const finalScore = calculateTotalScore();
-    const segmentMaxScore = level.maxScore / segmentsCount;
+    // 2. التحقق من الضغط على «تم التقييم» لكل مقطع من مقاطع الاختبار بالترتيب
+    if (!allSegmentsCompleted) {
+      const targetIdx = Math.max(0, firstIncompleteSegmentNumber - 1);
+      setActiveSegmentIndex(targetIdx);
+      setShowExitConfirmModal(false);
+      context.showToast(
+        `لا يمكن حفظ النتيجة المعتمدة إلا بعد الضغط على «تم التقييم» لكل مقطع (المقطع المتبقي حالياً: المقطع ${toArabicDigits(firstIncompleteSegmentNumber)} من ${toArabicDigits(segmentsCount)})`,
+        'error'
+      );
+      setTimeout(() => {
+        const el = document.getElementById(`segment-card-${targetIdx}`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 60);
+      return;
+    }
 
-    const enrichedSegments: CompetitionSegmentEvaluation[] = segments.map((seg, i) => {
-      const isUnmem = Boolean(seg.isUnmemorized);
-      const segDed = isUnmem ? segmentMaxScore : calculateSegmentDeduction(seg);
-      const passage = suggestedPassages[i];
-      return {
-        ...seg,
-        segmentNumber: i + 1,
-        isUnmemorized: isUnmem,
-        score: isUnmem ? 0 : Math.max(0, Number((segmentMaxScore - segDed).toFixed(2))),
-        passageDescription: passage?.description || seg.passageDescription,
+    setIsSavingFinal(true);
+
+    try {
+      const allSegmentsUnmemorized = segments.length > 0 && segments.every(s => s.isUnmemorized);
+      const finalScore = calculateTotalScore();
+
+      const enrichedSegments: CompetitionSegmentEvaluation[] = segments.map((seg, i) => {
+        const isUnmem = Boolean(seg.isUnmemorized);
+        const segDed = isUnmem ? segmentMaxScore : calculateSegmentDeduction(seg);
+        const passage = suggestedPassages[i];
+        return {
+          ...seg,
+          segmentNumber: i + 1,
+          isUnmemorized: isUnmem,
+          score: isUnmem ? 0 : Math.max(0, Number((segmentMaxScore - segDed).toFixed(2))),
+          passageDescription: passage?.description || seg.passageDescription,
+        };
+      });
+
+      const finalScope =
+        selectedJuzs.length > 0
+          ? `الأجزاء: ${formatJuzsFromNumbers(selectedJuzs)}`
+          : formatJuzsOrSurahsDisplay(participant.juzsOrSurahs || level.juzsOrSurahs);
+
+      const newEval: CompetitionEvaluation = {
+        id: existingEval ? existingEval.id : Date.now() + Math.floor(Math.random() * 1000),
+        participantId: participant.id,
+        evaluatorId: evaluator.id,
+        evaluatorName: evaluator.name,
+        levelId: level.id,
+        segments: enrichedSegments,
+        totalScore: finalScore,
+        timestamp: Date.now(),
+        notes: evaluationNotes.trim() || undefined,
+        isUnmemorized: allSegmentsUnmemorized,
       };
-    });
 
-    const finalScope =
-      selectedJuzs.length > 0
-        ? `الأجزاء: ${formatJuzsFromNumbers(selectedJuzs)}`
-        : formatJuzsOrSurahsDisplay(participant.juzsOrSurahs || level.juzsOrSurahs);
+      // الحفظ الذرّي النهائي في السحابة مع دمج تقييم هذا المقيم فقط دون التأثير على المقيمين الآخرين في نفس اللحظة
+      const updatedComps = await commitParticipantEvaluationToCloud(comp.id, newEval, {
+        participantId: participant.id,
+        juzsOrSurahs: finalScope || participant.juzsOrSurahs,
+        isUnmemorized: allSegmentsUnmemorized,
+        passageSeed: currentPassageSeed,
+      });
 
-    const newEval: CompetitionEvaluation = {
-      id: existingEval ? existingEval.id : Date.now() + Math.floor(Math.random() * 1000),
-      participantId: participant.id,
-      evaluatorId: evaluator.id,
-      evaluatorName: evaluator.name,
-      levelId: level.id,
-      segments: enrichedSegments,
-      totalScore: finalScore,
-      timestamp: Date.now(),
-      notes: evaluationNotes.trim() || undefined,
-      isUnmemorized: allSegmentsUnmemorized,
-    };
+      context.updateCompetitions(updatedComps);
 
-    const currentEvals = comp.evaluations || [];
-    const hasExistingForThisEvaluator = currentEvals.some(
-      ev =>
-        Number(ev.participantId) === Number(participant.id) &&
-        Number(ev.evaluatorId) === Number(evaluator.id)
-    );
+      // مسح المسودة المحلية بعد نجاح الحفظ النهائي
+      try {
+        localStorage.removeItem(draftStorageKey);
+      } catch {}
 
-    const updatedEvals = hasExistingForThisEvaluator
-      ? currentEvals.map(ev =>
-          Number(ev.participantId) === Number(participant.id) &&
-          Number(ev.evaluatorId) === Number(evaluator.id)
-            ? newEval
-            : ev
-        )
-      : [...currentEvals, newEval];
-
-    // حفظ النطاق المحدث وحالة غير الحافظ للمتسابق
-    const updatedParticipants = (comp.participants || []).map(p =>
-      Number(p.id) === Number(participant.id)
-        ? {
-            ...p,
-            juzsOrSurahs: finalScope || p.juzsOrSurahs,
-            isUnmemorized: allSegmentsUnmemorized,
-          }
-        : p
-    );
-
-    context.updateCompetitions(
-      context.competitions.map(c =>
-        String(c.id) === String(comp.id)
-          ? { ...c, evaluations: updatedEvals, participants: updatedParticipants }
-          : c
-      )
-    );
-
-    context.showToast(
-      allSegmentsUnmemorized
-        ? `تم حفظ التقييم للمتسابق "${participant.name}" وتصنيفه كـ «غير حافظ» (${finalScore} / ${level.maxScore})`
-        : `تم حفظ تقييمك (${finalScore} / ${level.maxScore}) للمتسابق "${participant.name}" بنجاح!`,
-      'success'
-    );
-    onBack();
+      setShowExitConfirmModal(false);
+      context.showToast(
+        allSegmentsUnmemorized
+          ? `تم حفظ واعتماد التقييم للمتسابق "${participant.name}" كـ «غير حافظ» (${finalScore} / ${level.maxScore})`
+          : `تم حفظ واعتماد تقييمك النهائي (${finalScore} / ${level.maxScore}) للمتسابق "${participant.name}" بنجاح!`,
+        'success'
+      );
+      onBack();
+    } catch {
+      context.showToast('حدث خطأ أثناء حفظ التقييم، يرجى المحاولة مرة أخرى', 'error');
+    } finally {
+      setIsSavingFinal(false);
+    }
   };
 
   const totalScore = calculateTotalScore();
@@ -809,7 +973,7 @@ export default function ParticipantEvaluation({
         <div className="hidden sm:flex items-center justify-between gap-3 w-full">
           <div className="flex items-center gap-2.5 min-w-0 flex-1">
             <button
-              onClick={onBack}
+              onClick={handleAttemptExit}
               className="min-h-[40px] min-w-[40px] p-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-xl transition active:scale-95 flex items-center justify-center shrink-0 cursor-pointer"
               title="رجوع لقائمة المتسابقين"
             >
@@ -878,7 +1042,7 @@ export default function ParticipantEvaluation({
           <div className="flex items-center justify-between gap-1.5 w-full">
             <div className="flex items-center gap-1.5 shrink-0">
               <button
-                onClick={onBack}
+                onClick={handleAttemptExit}
                 className="min-h-[36px] min-w-[36px] p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-xl transition active:scale-95 flex items-center justify-center shrink-0 cursor-pointer"
                 title="رجوع لقائمة المتسابقين"
               >
@@ -998,6 +1162,11 @@ export default function ParticipantEvaluation({
                     مطلوب {requiredJuzCount} أجزاء بالضبط
                   </span>
                 )}
+                {!isReadOnly && (
+                  <span className="text-[10px] sm:text-[11px] text-teal-800 dark:text-teal-200 font-black bg-teal-50 dark:bg-teal-950/60 px-2 py-0.5 rounded-md border border-teal-200 dark:border-teal-800">
+                    حفظ محلي تلقائي أثناء التقييم ({toArabicDigits(completedPassages.length)}/{toArabicDigits(segmentsCount)} مقاطع مكتملة)
+                  </span>
+                )}
               </div>
             </div>
 
@@ -1037,14 +1206,28 @@ export default function ParticipantEvaluation({
                   </div>
                   <div>
                     <h3 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white">
-                      تحديد أجزاء الاختبار للطالب قبل التقييم
+                      تحديد أجزاء الاختبار للمتسابق ({requiredJuzCount} أجزاء{' '}
+                      {isConsecutiveLevel ? 'متتالية' : 'متفرقة'})
                     </h3>
                     <p className="text-[11px] sm:text-xs text-slate-600 dark:text-slate-300 font-bold mt-0.5">
-                      مستوى الطالب محدد بـ{' '}
-                      <span className="text-emerald-700 dark:text-emerald-400 font-black">
-                        «{requiredJuzCount} أجزاء»
-                      </span>
-                      ؛ يجب تحديد الأجزاء المسجلة للطالب بالضبط.
+                      {isConsecutiveLevel ? (
+                        <>
+                          انقر على <span className="text-emerald-700 dark:text-emerald-400 font-black">رقم الجزء الأول</span>{' '}
+                          وسيتحدد معه تلقائياً باقي الـ{' '}
+                          <span className="text-emerald-700 dark:text-emerald-400 font-black">
+                            {requiredJuzCount} أجزاء متتالية
+                          </span>{' '}
+                          (مثلاً انقر 6 لتحديد من 6 إلى {Math.min(30, 6 + requiredJuzCount - 1)}).
+                        </>
+                      ) : (
+                        <>
+                          انقر لتحديد{' '}
+                          <span className="text-emerald-700 dark:text-emerald-400 font-black">
+                            {requiredJuzCount} أجزاء
+                          </span>{' '}
+                          الخاصة بالمتسابق.
+                        </>
+                      )}
                     </p>
                   </div>
                 </div>
@@ -1064,7 +1247,7 @@ export default function ParticipantEvaluation({
                     onClick={() => setShowScopeSelector(prev => !prev)}
                     className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-bold hover:bg-slate-50 transition cursor-pointer"
                   >
-                    {showScopeSelector ? 'طي التحديد' : 'تعديل الأجزاء'}
+                    {showScopeSelector ? 'طي التحديد' : 'تغيير الأجزاء'}
                   </button>
                 </div>
               </div>
@@ -1083,7 +1266,7 @@ export default function ParticipantEvaluation({
                   <div className="flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
                     <span>
-                      تم اعتماد الأجزاء بنجاح:{' '}
+                      الأجزاء المحددة حالياً:{' '}
                       <strong className="font-black">({formatJuzsFromNumbers(selectedJuzs)})</strong>
                     </span>
                   </div>
@@ -1095,42 +1278,47 @@ export default function ParticipantEvaluation({
                 <div className="space-y-3 pt-2 border-t border-slate-200/80 dark:border-slate-800">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <span className="text-xs font-extrabold text-slate-700 dark:text-slate-300">
-                      اختر الأجزاء الـ {requiredJuzCount} المطلوبة:
+                      {isConsecutiveLevel
+                        ? `انقر على رقم بداية الأجزاء (سيتم تحديد ${requiredJuzCount} أجزاء متتالية تلقائياً):`
+                        : `اختر الأجزاء الـ ${requiredJuzCount} المطلوبة:`}
                     </span>
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {requiredJuzCount > 0 && requiredJuzCount <= 30 && (
                         <>
                           <button
                             type="button"
-                            onClick={() => {
-                              const lastJuzs = Array.from(
-                                { length: requiredJuzCount },
-                                (_, idx) => 30 - requiredJuzCount + 1 + idx
-                              );
-                              setSelectedJuzs(lastJuzs);
-                            }}
-                            className="px-2.5 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 dark:bg-slate-800 text-emerald-800 dark:text-emerald-300 text-[11px] font-bold transition active:scale-95 cursor-pointer"
-                          >
-                            آخر {requiredJuzCount} أجزاء ({31 - requiredJuzCount} إلى 30)
-                          </button>
-                          <button
-                            type="button"
+                            disabled={isReadOnly}
                             onClick={() => {
                               const firstJuzs = Array.from(
                                 { length: requiredJuzCount },
                                 (_, idx) => idx + 1
                               );
-                              setSelectedJuzs(firstJuzs);
+                              applyEvaluatorJuzSelection(firstJuzs);
                             }}
-                            className="px-2.5 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 dark:bg-slate-800 text-emerald-800 dark:text-emerald-300 text-[11px] font-bold transition active:scale-95 cursor-pointer"
+                            className="px-2.5 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 disabled:opacity-50 dark:bg-slate-800 text-emerald-800 dark:text-emerald-300 text-[11px] font-bold transition active:scale-95 cursor-pointer"
                           >
                             أول {requiredJuzCount} أجزاء (1 إلى {requiredJuzCount})
                           </button>
+                          <button
+                            type="button"
+                            disabled={isReadOnly}
+                            onClick={() => {
+                              const lastJuzs = Array.from(
+                                { length: requiredJuzCount },
+                                (_, idx) => 30 - requiredJuzCount + 1 + idx
+                              );
+                              applyEvaluatorJuzSelection(lastJuzs);
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 disabled:opacity-50 dark:bg-slate-800 text-emerald-800 dark:text-emerald-300 text-[11px] font-bold transition active:scale-95 cursor-pointer"
+                          >
+                            آخر {requiredJuzCount} أجزاء ({31 - requiredJuzCount} إلى 30)
+                          </button>
                         </>
                       )}
-                      {selectedJuzs.length > 0 && (
+                      {!isConsecutiveLevel && selectedJuzs.length > 0 && (
                         <button
                           type="button"
+                          disabled={isReadOnly}
                           onClick={() => setSelectedJuzs([])}
                           className="px-2 py-1 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[11px] font-bold transition active:scale-95 cursor-pointer"
                         >
@@ -1143,11 +1331,27 @@ export default function ParticipantEvaluation({
                   <div className="grid grid-cols-6 sm:grid-cols-10 gap-1.5">
                     {Array.from({ length: 30 }, (_, i) => i + 1).map(juz => {
                       const isSelected = selectedJuzs.includes(juz);
+                      const isFirstSelected = isConsecutiveLevel && selectedJuzs[0] === juz;
                       return (
                         <button
                           key={juz}
                           type="button"
+                          disabled={isReadOnly}
                           onClick={() => {
+                            if (isReadOnly) return;
+                            if (isConsecutiveLevel && requiredJuzCount > 0) {
+                              const start = Math.min(
+                                juz,
+                                Math.max(1, 30 - requiredJuzCount + 1)
+                              );
+                              const consecutiveJuzs = Array.from(
+                                { length: requiredJuzCount },
+                                (_, idx) => start + idx
+                              );
+                              applyEvaluatorJuzSelection(consecutiveJuzs);
+                              return;
+                            }
+
                             if (isSelected) {
                               setSelectedJuzs(prev => prev.filter(j => j !== juz));
                             } else {
@@ -1158,18 +1362,25 @@ export default function ParticipantEvaluation({
                                 );
                                 return;
                               }
-                              setSelectedJuzs(prev => [...prev, juz].sort((a, b) => a - b));
+                              const next = [...selectedJuzs, juz].sort((a, b) => a - b);
+                              applyEvaluatorJuzSelection(next);
                             }
                           }}
-                          className={`min-h-[42px] p-1 text-xs rounded-xl font-black transition active:scale-95 cursor-pointer flex flex-col items-center justify-center ${
+                          className={`min-h-[42px] p-1 text-xs rounded-xl font-black transition active:scale-95 cursor-pointer flex flex-col items-center justify-center disabled:opacity-60 ${
                             isSelected
-                              ? 'bg-emerald-700 text-white shadow-sm ring-2 ring-emerald-500'
-                              : selectedJuzs.length >= requiredJuzCount
+                              ? isFirstSelected
+                                ? 'bg-emerald-800 text-white shadow-sm ring-2 ring-amber-400'
+                                : 'bg-emerald-700 text-white shadow-sm ring-2 ring-emerald-500'
+                              : !isConsecutiveLevel && selectedJuzs.length >= requiredJuzCount
                               ? 'bg-slate-100 dark:bg-slate-800/40 text-slate-400 border border-slate-200/60 dark:border-slate-800'
-                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
+                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-emerald-50 dark:hover:bg-slate-700'
                           }`}
                         >
-                          <span className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
+                          <span
+                            className={`text-[10px] font-normal ${
+                              isSelected ? 'text-emerald-100' : 'text-slate-400 dark:text-slate-500'
+                            }`}
+                          >
                             جزء
                           </span>
                           <span>{juz}</span>
@@ -1244,7 +1455,7 @@ export default function ParticipantEvaluation({
           </div>
         </div>
 
-        {/* ==================== بطاقات المقاطع المقترحة المستقلة (لكل مقطع أزرار الخصم الخاصة به) ==================== */}
+        {/* ==================== بطاقة المقطع المقترح المتسلسل (يظهر المقطع الأول فقط، وعند الضغط على «تم التقييم» يفتح المقطع التالي) ==================== */}
         {isLevelUnspecified && !hasExactJuzsSelected ? (
           <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-2xl border-2 border-dashed border-amber-300 dark:border-slate-700 space-y-3">
             <SlidersHorizontal className="w-10 h-10 text-amber-500 mx-auto animate-bounce" />
@@ -1257,46 +1468,94 @@ export default function ParticipantEvaluation({
           </div>
         ) : (
           <div className="space-y-3.5 sm:space-y-4">
-            {/* شريط اختيار والتنقل بين المقاطع يبرز المقطع الأول دائماً عند فتح التقييم */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-              <span className="text-xs font-black text-slate-500 dark:text-slate-400 shrink-0 ml-1">
-                المقاطع:
-              </span>
-              {Array.from({ length: segmentsCount }, (_, idx) => {
-                const pNum = idx + 1;
-                const isDone = completedPassages.includes(pNum);
-                const isSelected = activeSegmentIndex === idx;
-                const segItem = segments[idx];
-                const isSegUnmem = Boolean(segItem?.isUnmemorized);
-                return (
-                  <button
-                    key={pNum}
-                    type="button"
-                    onClick={() => {
-                      setActiveSegmentIndex(idx);
-                      const el = document.getElementById(`segment-card-${idx}`);
-                      if (el) {
-                        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            {/* شريط المقاطع المتسلسل: يوضح المقطع الحالي والمقاطع المكتملة والمقاطع المقفلة */}
+            <div className="bg-white dark:bg-slate-900 p-2.5 sm:p-3 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs space-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-xs font-black text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
+                  <Target className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>
+                    تسلسل مقاطع التقييم ({toArabicDigits(completedPassages.length)} من{' '}
+                    {toArabicDigits(segmentsCount)} مكتمل):
+                  </span>
+                </span>
+                {!isReadOnly && !allSegmentsCompleted && (
+                  <span className="text-[11px] font-bold text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 px-2.5 py-0.5 rounded-lg border border-amber-200 dark:border-amber-800">
+                    اضغط «تم التقييم» لحفظ درجة المقطع {toArabicDigits(activeSegmentIndex + 1)} وفتح المقطع التالي
+                  </span>
+                )}
+                {!isReadOnly && allSegmentsCompleted && (
+                  <span className="text-[11px] font-black text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2.5 py-0.5 rounded-lg border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>اكتمل تقييم جميع المقاطع — جاهز للحفظ النهائي</span>
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                {Array.from({ length: segmentsCount }, (_, idx) => {
+                  const pNum = idx + 1;
+                  const isDone = completedPassages.includes(pNum);
+                  const isUnlocked = isSegmentUnlocked(idx);
+                  const isSelected = activeSegmentIndex === idx;
+                  const segItem = segments[idx];
+                  const isSegUnmem = Boolean(segItem?.isUnmemorized);
+                  const segDed = segItem ? calculateSegmentDeduction(segItem) : 0;
+                  const segScore = isSegUnmem
+                    ? 0
+                    : Math.max(0, Number((segmentMaxScore - segDed).toFixed(2)));
+
+                  return (
+                    <button
+                      key={pNum}
+                      type="button"
+                      disabled={!isUnlocked}
+                      onClick={() => {
+                        if (!isUnlocked) {
+                          context.showToast(
+                            `لا يمكن فتح المقطع ${toArabicDigits(pNum)} قبل الضغط على «تم التقييم» للمقطع ${toArabicDigits(idx)}`,
+                            'info'
+                          );
+                          return;
+                        }
+                        setActiveSegmentIndex(idx);
+                      }}
+                      title={
+                        !isUnlocked
+                          ? `مقفل — يجب الضغط على «تم التقييم» للمقطع ${toArabicDigits(idx)} أولاً`
+                          : `المقطع ${toArabicDigits(pNum)}`
                       }
-                    }}
-                    className={`min-h-[34px] px-3 py-1 rounded-xl text-xs font-black transition-all active:scale-95 flex items-center gap-1.5 shrink-0 cursor-pointer border ${
-                      isSelected
-                        ? 'bg-[#0F2347] text-[#F5D77F] border-[#D4AF37] shadow-sm ring-2 ring-[#D4AF37]/50'
-                        : isSegUnmem
-                        ? 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950 dark:text-rose-200'
-                        : isDone
-                        ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
-                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span>المقطع {toArabicDigits(pNum)}</span>
-                    {isDone && <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />}
-                  </button>
-                );
-              })}
+                      className={`min-h-[36px] px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shrink-0 border ${
+                        !isUnlocked
+                          ? 'bg-slate-100 dark:bg-slate-800/50 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-800 opacity-65 cursor-not-allowed'
+                          : isSelected
+                          ? 'bg-[#0F2347] text-[#F5D77F] border-[#D4AF37] shadow-sm ring-2 ring-[#D4AF37]/50 cursor-pointer active:scale-95'
+                          : isSegUnmem
+                          ? 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950 dark:text-rose-200 cursor-pointer active:scale-95'
+                          : isDone
+                          ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800 cursor-pointer active:scale-95'
+                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-50 cursor-pointer active:scale-95'
+                      }`}
+                    >
+                      <span>المقطع {toArabicDigits(pNum)}</span>
+                      {!isUnlocked ? (
+                        <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      ) : isDone ? (
+                        <span className="px-1.5 py-0.2 rounded-md bg-emerald-600 text-white text-[10px] font-black flex items-center gap-0.5">
+                          <Check className="w-3 h-3 shrink-0" />
+                          <span>{segScore}</span>
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
+            {/* عرض بطاقة المقطع المفتوح حالياً فقط (أو المقطع المختار من المقاطع المفتوحة) */}
             {Array.from({ length: segmentsCount }, (_, idx) => {
+              // يظهر فقط المقطع النشط حالياً حتى يتم تقييمه والانتقال للمقطع التالي
+              if (idx !== activeSegmentIndex) return null;
+
               const passage = suggestedPassages[idx];
               const seg = segments[idx] || {
                 segmentNumber: idx + 1,
@@ -1330,8 +1589,7 @@ export default function ParticipantEvaluation({
                 <div
                   key={passage?.id || `seg-${idx}`}
                   id={`segment-card-${idx}`}
-                  onClick={() => setActiveSegmentIndex(idx)}
-                  className={`p-3 sm:p-4 rounded-2xl border-2 transition-all space-y-3 ${
+                  className={`p-3.5 sm:p-5 rounded-2xl border-2 transition-all space-y-3.5 ${
                     isSegUnmem
                       ? 'border-rose-400 bg-rose-50/30 dark:bg-rose-950/20 dark:border-rose-800 shadow-sm'
                       : isCurrentSegment
@@ -1343,7 +1601,7 @@ export default function ParticipantEvaluation({
                   <div className="flex items-center justify-between gap-2 flex-wrap border-b border-slate-100 dark:border-slate-800 pb-2.5">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="px-2.5 py-1 rounded-xl bg-[#0F2347] text-[#F5D77F] font-black text-xs sm:text-sm shadow-2xs">
-                        المقطع {toArabicDigits(idx + 1)}
+                        المقطع {toArabicDigits(idx + 1)} من {toArabicDigits(segmentsCount)}
                       </span>
 
                       {passage?.allocatedRangeLabel && (
@@ -1370,6 +1628,13 @@ export default function ParticipantEvaluation({
                         </div>
                       )}
                     </div>
+
+                    {isDone && (
+                      <span className="px-2.5 py-1 rounded-xl bg-emerald-600 text-white text-xs font-black flex items-center gap-1 shadow-2xs">
+                        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                        <span>تم تقييم المقطع {toArabicDigits(idx + 1)}</span>
+                      </span>
+                    )}
                   </div>
 
                   {/* 2. بيانات المقطع المقترح وزر فتحه مظللاً في المصحف */}
@@ -1400,7 +1665,7 @@ export default function ParticipantEvaluation({
                     )}
                   </div>
 
-                  {/* 3. أزرار الخصم المستقلة الخاصة بهذا المقطع فقط (يظهر للمقيم لون الزر فقط حسب الصنف) */}
+                  {/* 3. أزرار الخصم المستقلة الخاصة بهذا المقطع فقط */}
                   <div className="space-y-2.5 pt-1">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <span className="text-xs font-black text-slate-700 dark:text-slate-300 flex items-center gap-1.5 shrink-0">
@@ -1408,7 +1673,7 @@ export default function ParticipantEvaluation({
                         <span>بنود الخصم الخاصة بالمقطع {toArabicDigits(idx + 1)}:</span>
                       </span>
 
-                      {/* زر تحديد كمسموع بجانب زر غير حافظ المستقل في شاشة الهاتف والكمبيوتر */}
+                      {/* زر تم التقييم بجانب زر غير حافظ المستقل في شاشة الهاتف والكمبيوتر */}
                       <div className="grid grid-cols-2 sm:flex sm:items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
                         <button
                           type="button"
@@ -1416,29 +1681,28 @@ export default function ParticipantEvaluation({
                           onClick={e => {
                             e.stopPropagation();
                             if (isReadOnly) return;
-                            togglePassageCompleted(passageNum);
+                            handleCompleteSegment(idx, false);
                           }}
-                          className={`min-h-[36px] px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-black transition-all flex items-center justify-center gap-1.5 border ${
+                          className={`min-h-[38px] px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-black transition-all flex items-center justify-center gap-1.5 border ${
                             isReadOnly
                               ? isDone
                                 ? 'bg-emerald-600 text-white border-emerald-700 opacity-90 cursor-default'
                                 : 'bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-800 dark:text-slate-500 cursor-default'
                               : isDone
-                              ? 'bg-emerald-600 text-white border-emerald-700 shadow-2xs cursor-pointer active:scale-95'
-                              : 'bg-amber-100/90 hover:bg-amber-200/80 text-amber-950 border-amber-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 cursor-pointer active:scale-95'
+                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 shadow-2xs cursor-pointer active:scale-95'
+                              : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white border-emerald-700 shadow-xs ring-2 ring-emerald-400/50 cursor-pointer active:scale-95'
                           }`}
                         >
-                          {isDone ? (
-                            <>
-                              <Check className="w-3.5 h-3.5 shrink-0" />
-                              <span>تم التسميع</span>
-                            </>
-                          ) : (
-                            <>
-                              <Circle className="w-3 h-3 shrink-0" />
-                              <span>تحديد كمسموع</span>
-                            </>
-                          )}
+                          <Check className="w-4 h-4 shrink-0" />
+                          <span>
+                            {isDone
+                              ? idx + 1 < segmentsCount
+                                ? `تم التقييم (فتح م${toArabicDigits(idx + 2)})`
+                                : 'تم التقييم'
+                              : idx + 1 < segmentsCount
+                              ? `تم التقييم (فتح م${toArabicDigits(idx + 2)})`
+                              : 'تم التقييم (الأخير)'}
+                          </span>
                         </button>
 
                         {/* زر غير حافظ المستقل الخاص بهذا المقطع */}
@@ -1450,7 +1714,7 @@ export default function ParticipantEvaluation({
                             if (isReadOnly) return;
                             handleToggleSegmentUnmemorized(idx, !isSegUnmem);
                           }}
-                          className={`min-h-[36px] px-2.5 sm:px-3 py-1.5 rounded-xl font-black text-[11px] sm:text-xs transition flex items-center justify-center gap-1.5 border ${
+                          className={`min-h-[38px] px-2.5 sm:px-3 py-1.5 rounded-xl font-black text-[11px] sm:text-xs transition flex items-center justify-center gap-1.5 border ${
                             isReadOnly
                               ? isSegUnmem
                                 ? 'bg-rose-600 text-white border-rose-700 opacity-90 cursor-default'
@@ -1470,7 +1734,7 @@ export default function ParticipantEvaluation({
                       </div>
                     </div>
 
-                    {/* شبكة أزرار الخصم (يظهر للمقيم لون الزر فقط حسب الصنف المحدد من المشرف) */}
+                    {/* شبكة أزرار الخصم */}
                     <div
                       className={`grid gap-2 w-full ${
                         levelErrors.length === 1
@@ -1565,6 +1829,24 @@ export default function ParticipantEvaluation({
                         وصل المقطع {toArabicDigits(idx + 1)} إلى الحد الأقصى للخصم (-{segmentMaxScore} درجة)
                       </div>
                     )}
+
+                    {/* زر إتمام تقييم المقطع الحالي وحفظ درجته محلياً والانتقال للمقطع التالي */}
+                    {!isReadOnly && (
+                      <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleCompleteSegment(idx, false)}
+                          className="w-full min-h-[46px] px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-700 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-xs sm:text-sm shadow-md flex items-center justify-center gap-2 transition active:scale-95 cursor-pointer"
+                        >
+                          <CheckCircle2 className="w-4 h-4 shrink-0" />
+                          <span>
+                            {idx + 1 < segmentsCount
+                              ? `تم التقييم — حفظ درجة المقطع ${toArabicDigits(idx + 1)} (${segRemainingScore} / ${segmentMaxScore}) وفتح المقطع ${toArabicDigits(idx + 2)}`
+                              : `تم التقييم — حفظ درجة المقطع الأخير ${toArabicDigits(idx + 1)} (${segRemainingScore} / ${segmentMaxScore})`}
+                          </span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -1598,7 +1880,7 @@ export default function ParticipantEvaluation({
           />
         </div>
 
-        {/* أزرار الحفظ والاعتماد (مقفل إذا لم يسمح المشرف بالتعديل بعد الحفظ) */}
+        {/* أزرار الحفظ والاعتماد (لا يمكن حفظ النتيجة المعتمدة إلا بعد الضغط على تم التقييم لكل مقطع) */}
         <div className="space-y-2.5">
           {isReadOnly ? (
             <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-amber-500/15 dark:from-amber-950/60 dark:via-orange-950/40 dark:to-amber-950/60 border-2 border-amber-400 dark:border-amber-600 text-center shadow-xs">
@@ -1610,24 +1892,144 @@ export default function ParticipantEvaluation({
               </div>
             </div>
           ) : (
-            <button
-              ref={saveButtonRef}
-              type="button"
-              onClick={handleSave}
-              className="w-full min-h-[54px] py-4 bg-emerald-700 hover:bg-emerald-800 text-white text-base sm:text-lg font-black rounded-2xl shadow-lg shadow-emerald-700/25 active:scale-95 transition-all flex justify-center items-center gap-2 cursor-pointer"
-            >
-              <Save size={22} />
-              <span>
-                {existingEval
-                  ? `حفظ وتحديث التقييم المعدل (${totalScore} / ${level.maxScore})`
-                  : isOverallUnmemorized
-                  ? `حفظ واعتماد التقييم كـ «غير حافظ» (0 / ${level.maxScore})`
-                  : `حفظ واعتماد تقييم المقيم (${totalScore} / ${level.maxScore})`}
-              </span>
-            </button>
+            <div className="space-y-2">
+              {!allSegmentsCompleted && (
+                <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700 text-amber-950 dark:text-amber-200 text-xs font-extrabold flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>
+                      لتفعيل حفظ النتيجة النهائية: يجب الضغط على «تم التقييم» لكل مقطع بالترتيب (اكتمل{' '}
+                      {toArabicDigits(completedPassages.length)} من {toArabicDigits(segmentsCount)} مقاطع).
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleCompleteSegment(activeSegmentIndex, false)}
+                    className="px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black transition active:scale-95 cursor-pointer shrink-0"
+                  >
+                    تم التقييم للمقطع {toArabicDigits(activeSegmentIndex + 1)}
+                  </button>
+                </div>
+              )}
+
+              <button
+                ref={saveButtonRef}
+                type="button"
+                disabled={isSavingFinal}
+                onClick={handleSave}
+                className={`w-full min-h-[54px] py-4 text-base sm:text-lg font-black rounded-2xl shadow-lg transition-all flex justify-center items-center gap-2 ${
+                  allSegmentsCompleted
+                    ? 'bg-emerald-700 hover:bg-emerald-800 text-white shadow-emerald-700/25 active:scale-95 cursor-pointer'
+                    : 'bg-slate-300 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-2 border-dashed border-slate-400 dark:border-slate-700 cursor-pointer'
+                }`}
+              >
+                <Save size={22} />
+                <span>
+                  {isSavingFinal
+                    ? 'جاري حفظ واعتماد النتيجة النهائية...'
+                    : !allSegmentsCompleted
+                    ? `أكمل تقييم المقاطع (${toArabicDigits(completedPassages.length)}/${toArabicDigits(segmentsCount)}) لتفعيل الحفظ النهائي`
+                    : existingEval
+                    ? `حفظ وتحديث التقييم المعدل (${totalScore} / ${level.maxScore})`
+                    : isOverallUnmemorized
+                    ? `حفظ واعتماد التقييم كـ «غير حافظ» (0 / ${level.maxScore})`
+                    : `حفظ واعتماد تقييم المقيم (${totalScore} / ${level.maxScore})`}
+                </span>
+              </button>
+            </div>
           )}
         </div>
       </main>
+
+      {/* نافذة تأكيد الخروج وحفظ النتيجة النهائية (لا يمكن الخروج من صفحة الطالب إلا بعد إتمام التقييم وحفظ النتيجة النهائية) */}
+      {showExitConfirmModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/65 backdrop-blur-xs animate-fadeIn"
+          dir="rtl"
+          onClick={() => setShowExitConfirmModal(false)}
+        >
+          <div
+            className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl border-2 border-amber-500/80 dark:border-amber-500/60 shadow-2xl overflow-hidden p-5 sm:p-6 space-y-4 text-right"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-amber-100 dark:bg-amber-950/80 border border-amber-300 dark:border-amber-700 flex items-center justify-center text-amber-600 shrink-0">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
+                  {allSegmentsCompleted
+                    ? 'هل تريد حفظ واعتماد النتيجة النهائية قبل الخروج؟'
+                    : 'لم يكتمل تقييم وحفظ النتيجة النهائية للمتسابق'}
+                </h3>
+                <p className="text-xs sm:text-sm font-bold text-slate-600 dark:text-slate-300 leading-relaxed">
+                  {allSegmentsCompleted ? (
+                    <>
+                      لقد أتممت تقييم جميع المقاطع للمتسابق{' '}
+                      <strong className="text-slate-900 dark:text-white">«{participant.name}»</strong> بدرجة{' '}
+                      <strong className="text-emerald-700 dark:text-emerald-400">
+                        ({totalScore} / {level.maxScore})
+                      </strong>
+                      ، ولكن لم يتم حفظها واعتمادها نهائياً بعد. لا يمكن الخروج من صفحة المتسابق إلا بعد حفظ النتيجة النهائية.
+                    </>
+                  ) : (
+                    <>
+                      تم تقييم{' '}
+                      <strong className="text-amber-700 dark:text-amber-400">
+                        {toArabicDigits(completedPassages.length)} من {toArabicDigits(segmentsCount)} مقاطع
+                      </strong>{' '}
+                      للمتسابق <strong className="text-slate-900 dark:text-white">«{participant.name}»</strong>.
+                      يجب الضغط على <strong>«تم التقييم»</strong> لكل مقطع بالترتيب ثم حفظ النتيجة النهائية قبل الخروج من صفحة المتسابق.
+                    </>
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 pt-2">
+              {allSegmentsCompleted ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={isSavingFinal}
+                    onClick={handleSave}
+                    className="w-full min-h-[46px] py-2.5 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs sm:text-sm shadow-md flex items-center justify-center gap-2 transition active:scale-95 cursor-pointer"
+                  >
+                    <Save className="w-4 h-4 shrink-0" />
+                    <span>
+                      {isSavingFinal
+                        ? 'جاري الحفظ...'
+                        : `نعم، حفظ واعتماد النتيجة النهائية (${totalScore} / ${level.maxScore}) والخروج`}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowExitConfirmModal(false)}
+                    className="w-full min-h-[42px] py-2 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-black text-xs sm:text-sm transition active:scale-95 cursor-pointer"
+                  >
+                    البقاء في صفحة التقييم للمراجعة
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextIdx = Math.max(0, firstIncompleteSegmentNumber - 1);
+                    setActiveSegmentIndex(nextIdx);
+                    setShowExitConfirmModal(false);
+                  }}
+                  className="w-full min-h-[46px] py-2.5 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs sm:text-sm shadow-md flex items-center justify-center gap-2 transition active:scale-95 cursor-pointer"
+                >
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>
+                    متابعة التقييم (الانتقال للمقطع {toArabicDigits(firstIncompleteSegmentNumber)})
+                  </span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* نافذة المصحف الشريف مع تظليل المقطع المقترح ورصد الأخطاء المباشر لكل مقطع باستقلالية */}
       {isMushafOpen && (
@@ -1642,6 +2044,9 @@ export default function ParticipantEvaluation({
           testPassagesCount={segmentsCount}
           completedPassages={completedPassages}
           onTogglePassage={isReadOnly ? undefined : togglePassageCompleted}
+          onCompleteSegmentInMushaf={
+            isReadOnly ? undefined : segNum => handleCompleteSegment(segNum - 1, true)
+          }
           activePassage={
             activePassageForMushaf ||
             suggestedPassages[activeSegmentIndex] ||
@@ -1650,8 +2055,15 @@ export default function ParticipantEvaluation({
           }
           allPassages={suggestedPassages}
           onSelectPassage={passage => {
-            setActivePassageForMushaf(passage);
             const idx = Math.max(0, (passage.passageNumber || 1) - 1);
+            if (!isSegmentUnlocked(idx)) {
+              context.showToast(
+                `لا يمكن الانتقال للمقطع ${toArabicDigits(idx + 1)} قبل الضغط على «تم التقييم» للمقطع ${toArabicDigits(idx)}`,
+                'info'
+              );
+              return;
+            }
+            setActivePassageForMushaf(passage);
             if (idx < segments.length) {
               setActiveSegmentIndex(idx);
             }
@@ -1666,6 +2078,13 @@ export default function ParticipantEvaluation({
           competitionSegments={segments}
           activeSegmentIndex={activeSegmentIndex}
           onSelectSegmentIndex={idx => {
+            if (!isSegmentUnlocked(idx)) {
+              context.showToast(
+                `لا يمكن الانتقال للمقطع ${toArabicDigits(idx + 1)} قبل الضغط على «تم التقييم» للمقطع ${toArabicDigits(idx)}`,
+                'info'
+              );
+              return;
+            }
             setActiveSegmentIndex(idx);
             if (suggestedPassages[idx]) {
               setActivePassageForMushaf(suggestedPassages[idx]);

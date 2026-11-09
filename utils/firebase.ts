@@ -689,10 +689,116 @@ class FirestoreRealtimeDbAdapter {
       },
     };
   }
+
+  /**
+   * حفظ ذرّي لتقييم متسابق واحد فقط عند الضغط على الحفظ النهائي،
+   * يدمج تقييم هذا المقيم مع أحدث نسخة في السحابة حتى لا تتعارض تقييمات عدة مقيمين في نفس اللحظة.
+   */
+  public async commitSingleEvaluation(
+    compId: number | string,
+    newEval: any,
+    participantPatch?: {
+      participantId: number | string;
+      juzsOrSurahs?: string;
+      isUnmemorized?: boolean;
+      passageSeed?: number;
+    }
+  ): Promise<any[]> {
+    const cleanEval = sanitizeForFirebase(newEval);
+
+    let freshComps: any[] = normalizeToArray(this.memoryCache['data/competitions']);
+    try {
+      const snap = await getDoc(doc(rawFirestore, 'appData', 'competitions'));
+      if (snap.exists()) {
+        const remoteData = snap.data();
+        const remoteList = normalizeToArray(remoteData?.list ?? remoteData);
+        if (remoteList.length > 0) {
+          freshComps = remoteList;
+        }
+      }
+    } catch {
+      // في حال ضعف الاتصال نعتمد على أحدث نسخة في الذاكرة المحلية
+    }
+
+    const updatedComps = freshComps.map((c: any) => {
+      if (String(c?.id) !== String(compId)) return c;
+      const currentEvals = Array.isArray(c.evaluations) ? [...c.evaluations] : [];
+      const existingIdx = currentEvals.findIndex(
+        (ev: any) =>
+          Number(ev?.participantId) === Number(cleanEval.participantId) &&
+          Number(ev?.evaluatorId) === Number(cleanEval.evaluatorId)
+      );
+      if (existingIdx >= 0) {
+        currentEvals[existingIdx] = cleanEval;
+      } else {
+        currentEvals.push(cleanEval);
+      }
+
+      let updatedParticipants = Array.isArray(c.participants) ? [...c.participants] : [];
+      if (participantPatch) {
+        updatedParticipants = updatedParticipants.map((p: any) => {
+          if (Number(p?.id) !== Number(participantPatch.participantId)) return p;
+          return sanitizeForFirebase({
+            ...p,
+            ...(participantPatch.juzsOrSurahs !== undefined
+              ? { juzsOrSurahs: participantPatch.juzsOrSurahs }
+              : {}),
+            ...(participantPatch.isUnmemorized !== undefined
+              ? { isUnmemorized: participantPatch.isUnmemorized }
+              : {}),
+            ...(participantPatch.passageSeed !== undefined
+              ? { passageSeed: participantPatch.passageSeed }
+              : {}),
+          });
+        });
+      }
+
+      return {
+        ...c,
+        evaluations: currentEvals,
+        participants: updatedParticipants,
+      };
+    });
+
+    const now = Date.now();
+    this.lastCompUpdatedAt = now;
+    this.memoryCache['data/competitions'] = updatedComps;
+    this.notify('data/competitions', updatedComps);
+
+    if (broadcastChannel) {
+      try {
+        broadcastChannel.postMessage({
+          path: 'data/competitions',
+          value: updatedComps,
+          updatedAt: now,
+        });
+      } catch {}
+    }
+
+    await this.safeWriteDoc('appData', 'competitions', {
+      list: updatedComps,
+      updatedAt: now,
+    });
+
+    return updatedComps;
+  }
 }
 
 // إنشاء مثيل وحيد للمحول الفوري المباشر لقاعدة بيانات Firestore
 const realtimeAdapterInstance = new FirestoreRealtimeDbAdapter();
+
+export const commitParticipantEvaluationToCloud = (
+  compId: number | string,
+  newEval: any,
+  participantPatch?: {
+    participantId: number | string;
+    juzsOrSurahs?: string;
+    isUnmemorized?: boolean;
+    passageSeed?: number;
+  }
+) => {
+  return realtimeAdapterInstance.commitSingleEvaluation(compId, newEval, participantPatch);
+};
 
 export const getDb = () => {
   return realtimeAdapterInstance;

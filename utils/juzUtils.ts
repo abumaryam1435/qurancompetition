@@ -164,7 +164,11 @@ export function extractJuzCount(str: string | undefined): number {
 export function isUnspecifiedJuzCount(scope: string | undefined): boolean {
   if (!scope) return false;
   const s = scope.trim();
-  if (s.startsWith('الأجزاء:') || s.startsWith('السور:')) return false;
+  if (s.startsWith('السور:')) return false;
+  if (s.startsWith('الأجزاء:')) {
+    const nums = parseJuzsToNumbers(s.replace('الأجزاء:', ''));
+    return nums.length === 0;
+  }
   const count = extractJuzCount(s);
   return count > 0 && count < 30;
 }

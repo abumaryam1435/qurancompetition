@@ -61,8 +61,19 @@ import {
   parseJuzsToNumbers,
   formatJuzsFromNumbers,
   formatJuzsOrSurahsDisplay,
+  isUnspecifiedJuzCount,
+  extractJuzCount,
 } from '../../utils/juzUtils';
 import ConfirmDeleteModal from '../ConfirmDeleteModal';
+import {
+  createStyledWorkbook,
+  createStyledSheetFromRows,
+  appendStyledSheet,
+  writeStyledWorkbookFile,
+  getLevelSheetTheme,
+} from '../../utils/excelStyledExport';
+
+const inlinedImageCache = new Map<string, string>();
 import MultiSelectFilterDropdown from './MultiSelectFilterDropdown';
 
 /**
@@ -735,60 +746,79 @@ function exportCompetitionSetupExcel(
           },
         ];
 
-  const wb = XLSX.utils.book_new();
-  (wb as any).Workbook = { Views: [{ RTL: true }] };
+  const wb = createStyledWorkbook();
 
-  const wsEvals = XLSX.utils.json_to_sheet(evaluatorsSheetData);
-  (wsEvals as any)['!views'] = [{ rightToLeft: true }];
-  wsEvals['!cols'] = [
-    { wch: 6 },
-    { wch: 28 },
-    { wch: 18 },
-    { wch: 45 },
-    { wch: 22 },
-    { wch: 26 },
-  ];
-  XLSX.utils.book_append_sheet(wb, wsEvals, 'المقيمون ومستوياتهم');
+  const wsEvals = createStyledSheetFromRows(evaluatorsSheetData, {
+    titleBanner: `${comp.name} — كشف المقيمين والمستويات المسندة إليهم`,
+    colWidths: [8, 28, 18, 45, 22, 26, 18],
+    theme: getLevelSheetTheme(0),
+  });
+  appendStyledSheet(wb, wsEvals, 'المقيمون ومستوياتهم', 1);
 
-  const wsLevels = XLSX.utils.json_to_sheet(levelsSheetData);
-  (wsLevels as any)['!views'] = [{ rightToLeft: true }];
-  wsLevels['!cols'] = [
-    { wch: 6 },
-    { wch: 26 },
-    { wch: 32 },
-    { wch: 14 },
-    { wch: 18 },
-    { wch: 15 },
-    { wch: 20 },
-    { wch: 45 },
-    { wch: 20 },
-  ];
-  XLSX.utils.book_append_sheet(wb, wsLevels, 'المستويات وتقسيم اللجان');
+  const wsLevels = createStyledSheetFromRows(levelsSheetData, {
+    titleBanner: `${comp.name} — إعدادات المستويات وتقسيم لجان المقيمين`,
+    colWidths: [8, 26, 32, 16, 18, 15, 20, 45, 20],
+    theme: getLevelSheetTheme(1),
+  });
+  appendStyledSheet(wb, wsLevels, 'المستويات وتقسيم اللجان', 2);
 
-  const wsGeneral = XLSX.utils.json_to_sheet(generalAndErrorsData);
-  (wsGeneral as any)['!views'] = [{ rightToLeft: true }];
-  wsGeneral['!cols'] = [{ wch: 30 }, { wch: 42 }, { wch: 42 }];
-  XLSX.utils.book_append_sheet(wb, wsGeneral, 'الإعدادات وبنود الخصم');
+  const wsGeneral = createStyledSheetFromRows(generalAndErrorsData, {
+    titleBanner: `${comp.name} — الإعدادات العامة وبنود خصم الأخطاء`,
+    colWidths: [30, 42, 42],
+    theme: getLevelSheetTheme(3),
+  });
+  appendStyledSheet(wb, wsGeneral, 'الإعدادات وبنود الخصم', 3);
 
-  const wsParticipants = XLSX.utils.json_to_sheet(participantsSheetData);
-  (wsParticipants as any)['!views'] = [{ rightToLeft: true }];
-  wsParticipants['!cols'] = [
-    { wch: 14 },
-    { wch: 32 },
-    { wch: 16 },
-    { wch: 16 },
-    { wch: 10 },
-    { wch: 16 },
-    { wch: 26 },
-    { wch: 28 },
-    { wch: 22 },
-  ];
-  XLSX.utils.book_append_sheet(wb, wsParticipants, 'كشف المشاركين');
+  const wsParticipants = createStyledSheetFromRows(participantsSheetData, {
+    titleBanner: `${comp.name} — كشف المتسابقين المسجلين (${participants.length} متسابق)`,
+    colWidths: [14, 32, 16, 16, 12, 16, 26, 28, 22],
+    theme: getLevelSheetTheme(4),
+  });
+  appendStyledSheet(wb, wsParticipants, 'كشف المشاركين الشامل', 4);
+
+  // إضافة ورقة مستقلة لكل مستوى تحتوي على متسابقي ذلك المستوى
+  levels.forEach((lvl, idx) => {
+    const lvlParts = participants.filter(p => Number(p.levelId) === Number(lvl.id));
+    const lvlRows =
+      lvlParts.length > 0
+        ? lvlParts.map((p, pIdx) => ({
+            'رقم الطلب': p.requestNumber || pIdx + 1,
+            'الاسم الكامل': p.name || '',
+            'الرقم المدني': p.civilId || '',
+            'رقم الهاتف': p.phone || '',
+            'الجنس': p.gender || '',
+            'الولاية': p.wilayat || '',
+            'مستوى المشاركة': lvl.name || '',
+            'المقرر المعتمد': formatJuzsOrSurahsDisplay(p.juzsOrSurahs || lvl.juzsOrSurahs || ''),
+            'وقت وتاريخ التسجيل': p.registrationDate || '',
+          }))
+        : [
+            {
+              'رقم الطلب': '-',
+              'الاسم الكامل': 'لا يوجد متسابقون مسجلون في هذا المستوى حالياً',
+              'الرقم المدني': '-',
+              'رقم الهاتف': '-',
+              'الجنس': '-',
+              'الولاية': '-',
+              'مستوى المشاركة': lvl.name,
+              'المقرر المعتمد': formatJuzsOrSurahsDisplay(lvl.juzsOrSurahs),
+              'وقت وتاريخ التسجيل': '-',
+            },
+          ];
+
+    const wsLvl = createStyledSheetFromRows(lvlRows, {
+      titleBanner: `${comp.name} — متسابقو ${lvl.name}`,
+      subtitleBanner: `المقرر: ${formatJuzsOrSurahsDisplay(lvl.juzsOrSurahs)} | عدد المتسابقين: ${lvlParts.length}`,
+      colWidths: [14, 32, 16, 16, 12, 16, 26, 28, 22],
+      theme: getLevelSheetTheme(idx),
+    });
+    appendStyledSheet(wb, wsLvl, lvl.name || `المستوى ${idx + 1}`, idx + 5);
+  });
 
   const safeName = (comp.name || 'المسابقة').replace(/[\\/:*?"<>|]/g, '_');
-  XLSX.writeFile(wb, `إعدادات_ومراجعة_${safeName}.xlsx`);
+  writeStyledWorkbookFile(wb, `إعدادات_ومراجعة_${safeName}.xlsx`);
   showToast?.(
-    'تم تصدير ملف إكسل الشامل لإعدادات المسابقة وتقسيم المقيمين والمستويات بنجاح!',
+    'تم تصدير ملف إكسل المنسق والملون لإعدادات المسابقة وأوراق المستويات بنجاح!',
     'success'
   );
 }
@@ -953,7 +983,7 @@ async function exportCompetitionSetupPDF(
   </style>
 </head>
 <body dir="rtl">
-  <div style="border: 2px solid #065f46; border-radius: 14px; padding: 16px; background: #ffffff;">
+  <div id="root" style="border: 2px solid #065f46; border-radius: 14px; padding: 16px; background: #ffffff;">
     <!-- الترويسة الرسمية -->
     <div style="background: linear-gradient(135deg, #064e3b, #0f2347); color: #ffffff; padding: 16px 20px; border-radius: 12px; border-bottom: 4px solid #d4af37; display: flex; justify-content: space-between; align-items: center;">
       <div>
@@ -2434,9 +2464,15 @@ function LevelEditor({
     }));
     const syncedParticipants = (comp.participants || []).map(p => {
       const matchedLvl = syncedLevels.find(l => Number(l.id) === Number(p.levelId));
-      return matchedLvl
-        ? { ...p, juzsOrSurahs: matchedLvl.juzsOrSurahs }
-        : p;
+      if (!matchedLvl) return p;
+      const lvlUnspecified = Boolean(matchedLvl.isUnspecifiedJuzs) || isUnspecifiedJuzCount(matchedLvl.juzsOrSurahs);
+      if (lvlUnspecified && p.juzsOrSurahs && p.juzsOrSurahs.startsWith('الأجزاء:')) {
+        const pJuzs = parseJuzsToNumbers(p.juzsOrSurahs.replace('الأجزاء:', ''));
+        if (!matchedLvl.juzCount || pJuzs.length === matchedLvl.juzCount) {
+          return p;
+        }
+      }
+      return { ...p, juzsOrSurahs: matchedLvl.juzsOrSurahs };
     });
     setLevels(syncedLevels);
     onUpdate({
@@ -3187,30 +3223,155 @@ function LevelEditor({
                   {(() => {
                     const isSpecificSurahs = level.juzsOrSurahs.startsWith('السور:');
                     const isSpecificJuzs = !isSpecificSurahs;
+                    const isUnspecified =
+                      Boolean(level.isUnspecifiedJuzs) || isUnspecifiedJuzCount(level.juzsOrSurahs);
 
                     const currentJuzNums: number[] = (() => {
+                      if (isUnspecified) return [];
                       if (level.juzsOrSurahs.startsWith('الأجزاء:')) {
                         return parseJuzsToNumbers(level.juzsOrSurahs.replace('الأجزاء:', ''));
                       }
                       const raw = level.juzsOrSurahs.trim();
-                      if (raw.includes('القرآن كاملاً') || raw.includes('المصحف كاملاً') || raw.includes('30 جزء')) {
+                      if (
+                        raw.includes('القرآن كاملاً') ||
+                        raw.includes('المصحف كاملاً') ||
+                        raw.includes('30 جزء')
+                      ) {
                         return Array.from({ length: 30 }, (_, i) => i + 1);
                       }
-                      return parseJuzsToNumbers(raw);
+                      return [];
                     })();
 
-                    const formattedJuzSummary = formatJuzsFromNumbers(currentJuzNums);
-                    const all30Selected = currentJuzNums.length === 30;
+                    const inferredJuzCount =
+                      level.juzCount ||
+                      extractJuzCount(level.name) ||
+                      extractJuzCount(level.juzsOrSurahs) ||
+                      (currentJuzNums.length > 0 ? currentJuzNums.length : 5);
+                    const levelJuzCount = Math.min(30, Math.max(1, inferredJuzCount));
+                    const isLessThan30 = levelJuzCount < 30;
+                    const isConsecutive = level.isConsecutiveJuzs !== false; // الافتراضي: متتالية
 
-                    const applyJuzSelection = (nums: number[]) => {
+                    const formattedJuzSummary = formatJuzsFromNumbers(currentJuzNums);
+                    const all30Selected = !isUnspecified && currentJuzNums.length === 30;
+
+                    const buildUnspecifiedScopeLabel = (count: number, consecutive: boolean) => {
+                      if (count === 1) return 'جزء واحد (يحدده المقيم)';
+                      if (count === 2) return `جزآن ${consecutive ? 'متتاليان' : 'متفرقان'}`;
+                      const unit = count >= 3 && count <= 10 ? 'أجزاء' : 'جزءاً';
+                      return `${count} ${unit} ${consecutive ? 'متتالية' : 'متفرقة'}`;
+                    };
+
+                    const applyJuzSelection = (
+                      nums: number[],
+                      overrides?: Partial<CompetitionLevel>
+                    ) => {
                       const sortedUnique = [...new Set(nums)]
                         .filter(n => n >= 1 && n <= 30)
                         .sort((a, b) => a - b);
-                      const nextScope =
-                        sortedUnique.length > 0
-                          ? `الأجزاء: ${formatJuzsFromNumbers(sortedUnique)}`
-                          : 'الأجزاء: ';
-                      updateLevel(level.id, { juzsOrSurahs: nextScope });
+                      const nextCount = overrides?.juzCount ?? levelJuzCount;
+                      const nextConsecutive = overrides?.isConsecutiveJuzs ?? isConsecutive;
+
+                      if (sortedUnique.length === 0) {
+                        const effectiveCount = nextCount < 30 ? nextCount : 5;
+                        updateLevel(level.id, {
+                          juzCount: effectiveCount,
+                          isConsecutiveJuzs: nextConsecutive,
+                          isUnspecifiedJuzs: true,
+                          juzsOrSurahs: buildUnspecifiedScopeLabel(effectiveCount, nextConsecutive),
+                          ...overrides,
+                        });
+                        return;
+                      }
+
+                      const nextScope = `الأجزاء: ${formatJuzsFromNumbers(sortedUnique)}`;
+                      updateLevel(level.id, {
+                        juzCount: sortedUnique.length === 30 ? 30 : nextCount,
+                        isConsecutiveJuzs: nextConsecutive,
+                        isUnspecifiedJuzs: false,
+                        juzsOrSurahs: nextScope,
+                        ...overrides,
+                      });
+                    };
+
+                    const handleSetLevelJuzCount = (newCount: number) => {
+                      const clamped = Math.min(30, Math.max(1, newCount));
+                      if (clamped === 30) {
+                        applyJuzSelection(
+                          Array.from({ length: 30 }, (_, i) => i + 1),
+                          {
+                            juzCount: 30,
+                            isConsecutiveJuzs: true,
+                            isUnspecifiedJuzs: false,
+                          }
+                        );
+                        return;
+                      }
+
+                      if (isUnspecified) {
+                        updateLevel(level.id, {
+                          juzCount: clamped,
+                          isConsecutiveJuzs: isConsecutive,
+                          isUnspecifiedJuzs: true,
+                          juzsOrSurahs: buildUnspecifiedScopeLabel(clamped, isConsecutive),
+                        });
+                        return;
+                      }
+
+                      if (isConsecutive) {
+                        const firstSelected = currentJuzNums[0] || 1;
+                        const start = Math.min(firstSelected, Math.max(1, 30 - clamped + 1));
+                        const nextNums = Array.from({ length: clamped }, (_, i) => start + i);
+                        applyJuzSelection(nextNums, {
+                          juzCount: clamped,
+                          isConsecutiveJuzs: true,
+                        });
+                      } else {
+                        const trimmed = currentJuzNums.slice(0, clamped);
+                        if (trimmed.length > 0) {
+                          applyJuzSelection(trimmed, {
+                            juzCount: clamped,
+                            isConsecutiveJuzs: false,
+                          });
+                        } else {
+                          updateLevel(level.id, {
+                            juzCount: clamped,
+                            isConsecutiveJuzs: false,
+                            isUnspecifiedJuzs: true,
+                            juzsOrSurahs: buildUnspecifiedScopeLabel(clamped, false),
+                          });
+                        }
+                      }
+                    };
+
+                    const handleToggleConsecutive = (checked: boolean) => {
+                      if (isUnspecified) {
+                        updateLevel(level.id, {
+                          juzCount: levelJuzCount,
+                          isConsecutiveJuzs: checked,
+                          isUnspecifiedJuzs: true,
+                          juzsOrSurahs: buildUnspecifiedScopeLabel(levelJuzCount, checked),
+                        });
+                        return;
+                      }
+                      if (checked && isLessThan30 && currentJuzNums.length > 0) {
+                        const start = Math.min(
+                          currentJuzNums[0],
+                          Math.max(1, 30 - levelJuzCount + 1)
+                        );
+                        const consecutiveNums = Array.from(
+                          { length: levelJuzCount },
+                          (_, i) => start + i
+                        );
+                        applyJuzSelection(consecutiveNums, {
+                          juzCount: levelJuzCount,
+                          isConsecutiveJuzs: true,
+                        });
+                      } else {
+                        updateLevel(level.id, {
+                          juzCount: levelJuzCount,
+                          isConsecutiveJuzs: checked,
+                        });
+                      }
                     };
 
                     return (
@@ -3231,7 +3392,10 @@ function LevelEditor({
                                 if (currentJuzNums.length > 0) {
                                   applyJuzSelection(currentJuzNums);
                                 } else {
-                                  applyJuzSelection([28, 29, 30]);
+                                  const start = Math.max(1, 30 - levelJuzCount + 1);
+                                  applyJuzSelection(
+                                    Array.from({ length: levelJuzCount }, (_, i) => start + i)
+                                  );
                                 }
                               }}
                               className="text-emerald-600 focus:ring-emerald-500 w-4 h-4 shrink-0"
@@ -3251,7 +3415,10 @@ function LevelEditor({
                               name={`scopeType-${level.id}`}
                               checked={isSpecificSurahs}
                               onChange={() =>
-                                updateLevel(level.id, { juzsOrSurahs: 'السور: البقرة' })
+                                updateLevel(level.id, {
+                                  juzsOrSurahs: 'السور: البقرة',
+                                  isUnspecifiedJuzs: false,
+                                })
                               }
                               className="text-emerald-600 focus:ring-emerald-500 w-4 h-4 shrink-0"
                             />
@@ -3259,19 +3426,108 @@ function LevelEditor({
                           </label>
                         </div>
 
-                        {/* تحديد الأجزاء داخل المستوى (مع تحديد الكل وإلغاء الكل وكتابة النطاق المتتالي "من 1 إلى 20" أو "من 28 إلى 30") */}
+                        {/* تحديد الأجزاء داخل المستوى + خيار متتالية أو متفرقة للمستويات الأقل من 30 جزءاً */}
                         {isSpecificJuzs && (
                           <div className="p-3.5 bg-slate-50 dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
-                            {/* شريط عرض النطاق المتتالي + أزرار تحديد الكل وإلغاء الكل */}
+                            {/* شريط عدد أجزاء المستوى + خيار متتالية (يظهر للمستويات الأقل من 30 جزءاً) */}
+                            <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2.5">
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-xs font-black text-slate-700 dark:text-slate-200">
+                                    عدد أجزاء المستوى:
+                                  </span>
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    {[1, 2, 3, 5, 10, 15, 20, 25, 30].map(cnt => (
+                                      <button
+                                        key={cnt}
+                                        type="button"
+                                        onClick={() => handleSetLevelJuzCount(cnt)}
+                                        className={`min-w-[34px] h-8 px-2 rounded-lg text-xs font-black transition active:scale-95 cursor-pointer border ${
+                                          levelJuzCount === cnt
+                                            ? 'bg-emerald-700 text-white border-emerald-700 shadow-2xs'
+                                            : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-emerald-400'
+                                        }`}
+                                      >
+                                        {cnt === 30 ? '30 (كامل)' : cnt}
+                                      </button>
+                                    ))}
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={30}
+                                      value={levelJuzCount}
+                                      onChange={e => {
+                                        const val = parseInt(e.target.value, 10);
+                                        if (!isNaN(val)) handleSetLevelJuzCount(val);
+                                      }}
+                                      className="w-16 h-8 px-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-center text-xs font-black text-slate-900 dark:text-white"
+                                      title="عدد أجزاء المستوى"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* مربع علامة صح "متتالية" للمستويات الأقل من 30 جزءاً */}
+                                {isLessThan30 && (
+                                  <label className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/60 border-2 border-amber-400 dark:border-amber-600 text-amber-950 dark:text-amber-200 font-black text-xs sm:text-sm cursor-pointer select-none shadow-2xs transition active:scale-95">
+                                    <input
+                                      type="checkbox"
+                                      checked={isConsecutive}
+                                      onChange={e => handleToggleConsecutive(e.target.checked)}
+                                      className="w-4 h-4 rounded accent-emerald-600 cursor-pointer"
+                                    />
+                                    <span>متتالية</span>
+                                    <span className="text-[11px] font-bold text-amber-800 dark:text-amber-300">
+                                      ({isConsecutive ? 'تلقائياً عند اختيار جزء' : 'أجزاء متفرقة'})
+                                    </span>
+                                  </label>
+                                )}
+                              </div>
+
+                              {isLessThan30 && (
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                                  <span>
+                                    {isConsecutive
+                                      ? `عند النقر على أي جزء بالأسفل، سيتم تحديده مع ${
+                                          levelJuzCount - 1
+                                        } أجزاء تليه تلقائياً (${levelJuzCount} أجزاء متتالية).`
+                                      : `يمكنك النقر على أرقام الأجزاء لتحديد ${levelJuzCount} أجزاء متفرقة يدوياً.`}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => applyJuzSelection([])}
+                                    className={`px-3 py-1.5 rounded-xl font-black text-xs transition active:scale-95 cursor-pointer border shrink-0 flex items-center gap-1.5 ${
+                                      isUnspecified
+                                        ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-2xs'
+                                        : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/60 dark:text-amber-200 dark:border-amber-700'
+                                    }`}
+                                  >
+                                    <Check size={14} className={isUnspecified ? 'opacity-100' : 'opacity-0 w-0'} />
+                                    <span>
+                                      ترك الـ {levelJuzCount} أجزاء غير محددة (يحددها المقيم لكل متسابق)
+                                    </span>
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* شريط عرض النطاق المتتالي + أزرار تحديد الكل وإلغاء التحديد */}
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-slate-700">
                               <div className="space-y-0.5">
                                 <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">
-                                  الأجزاء المختارة في هذا المستوى ({currentJuzNums.length} جزء):
+                                  {isUnspecified
+                                    ? `حالة أجزاء المستوى (${levelJuzCount} أجزاء):`
+                                    : `الأجزاء المختارة في هذا المستوى (${currentJuzNums.length} جزء):`}
                                 </span>
                                 <div className="text-sm sm:text-base font-black text-emerald-800 dark:text-emerald-300">
-                                  {formattedJuzSummary
-                                    ? formattedJuzSummary
-                                    : 'لم يتم تحديد أي جزء بعد (اختر من الأجزاء بالأسفل)'}
+                                  {isUnspecified ? (
+                                    <span className="text-amber-700 dark:text-amber-300">
+                                      غير محددة مسبقاً — ({buildUnspecifiedScopeLabel(levelJuzCount, isConsecutive)}) يحددها المقيم عند التقييم
+                                    </span>
+                                  ) : formattedJuzSummary ? (
+                                    formattedJuzSummary
+                                  ) : (
+                                    'لم يتم تحديد أي جزء بعد (اختر من الأجزاء بالأسفل)'
+                                  )}
                                 </div>
                               </div>
 
@@ -3280,7 +3536,12 @@ function LevelEditor({
                                   type="button"
                                   onClick={() =>
                                     applyJuzSelection(
-                                      Array.from({ length: 30 }, (_, i) => i + 1)
+                                      Array.from({ length: 30 }, (_, i) => i + 1),
+                                      {
+                                        juzCount: 30,
+                                        isConsecutiveJuzs: true,
+                                        isUnspecifiedJuzs: false,
+                                      }
                                     )
                                   }
                                   className={`min-h-[38px] px-3.5 py-1.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer border ${
@@ -3296,11 +3557,11 @@ function LevelEditor({
                                 <button
                                   type="button"
                                   onClick={() => applyJuzSelection([])}
-                                  disabled={currentJuzNums.length === 0}
+                                  disabled={isUnspecified && currentJuzNums.length === 0}
                                   className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 disabled:opacity-40 text-red-700 border border-red-200 dark:bg-red-950/50 dark:text-red-300 dark:border-red-800/60 font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer"
                                 >
                                   <Trash2 size={14} />
-                                  <span>إلغاء الكل</span>
+                                  <span>{isLessThan30 ? 'عدم تحديد أجزاء (يحددها المقيم)' : 'إلغاء الكل'}</span>
                                 </button>
                               </div>
                             </div>
@@ -3308,7 +3569,7 @@ function LevelEditor({
                             {/* اختصارات سريعة للنطاقات المتتالية الشائعة */}
                             <div className="space-y-1.5">
                               <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block">
-                                اختصارات سريعة للأجزاء المتتالية أو اضغط على أرقام الأجزاء بالأسفل:
+                                اختصارات سريعة للأجزاء المتتالية أو اضغط على رقم الجزء الأول بالأسفل:
                               </span>
                               <div className="flex flex-wrap gap-1.5">
                                 {[
@@ -3333,6 +3594,10 @@ function LevelEditor({
                                     nums: [1, 2, 3, 4, 5],
                                   },
                                   {
+                                    label: 'من 6 إلى 10',
+                                    nums: [6, 7, 8, 9, 10],
+                                  },
+                                  {
                                     label: 'من 26 إلى 30',
                                     nums: [26, 27, 28, 29, 30],
                                   },
@@ -3351,13 +3616,20 @@ function LevelEditor({
                                 ].map((preset, idx) => {
                                   const presetFormatted = formatJuzsFromNumbers(preset.nums);
                                   const isPresetActive =
+                                    !isUnspecified &&
                                     formattedJuzSummary === presetFormatted &&
                                     currentJuzNums.length === preset.nums.length;
                                   return (
                                     <button
                                       key={idx}
                                       type="button"
-                                      onClick={() => applyJuzSelection(preset.nums)}
+                                      onClick={() =>
+                                        applyJuzSelection(preset.nums, {
+                                          juzCount: preset.nums.length,
+                                          isConsecutiveJuzs: true,
+                                          isUnspecifiedJuzs: false,
+                                        })
+                                      }
                                       className={`min-h-[34px] px-2.5 py-1 rounded-lg text-[11px] font-black transition active:scale-95 cursor-pointer ${
                                         isPresetActive
                                           ? 'bg-amber-500 text-slate-950 shadow-2xs'
@@ -3374,20 +3646,49 @@ function LevelEditor({
                             {/* شبكة الأجزاء من 1 إلى 30 */}
                             <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5">
                               {Array.from({ length: 30 }, (_, i) => i + 1).map(juz => {
-                                const isSelected = currentJuzNums.includes(juz);
+                                const isSelected = !isUnspecified && currentJuzNums.includes(juz);
+                                const isFirstOfConsecutive =
+                                  isSelected &&
+                                  isLessThan30 &&
+                                  isConsecutive &&
+                                  currentJuzNums[0] === juz;
                                 return (
                                   <button
                                     key={juz}
                                     type="button"
                                     onClick={() => {
+                                      if (isLessThan30 && isConsecutive) {
+                                        // إذا نقر المشرف على جزء وكان خيار "متتالية" مفعلاً، نحدد هذا الجزء مع باقي الأجزاء بعده تلقائياً
+                                        const start = Math.min(
+                                          juz,
+                                          Math.max(1, 30 - levelJuzCount + 1)
+                                        );
+                                        const consecutiveNums = Array.from(
+                                          { length: levelJuzCount },
+                                          (_, idx) => start + idx
+                                        );
+                                        applyJuzSelection(consecutiveNums, {
+                                          juzCount: levelJuzCount,
+                                          isConsecutiveJuzs: true,
+                                          isUnspecifiedJuzs: false,
+                                        });
+                                        return;
+                                      }
+
                                       const nextNums = isSelected
                                         ? currentJuzNums.filter(j => j !== juz)
                                         : [...currentJuzNums, juz].sort((a, b) => a - b);
-                                      applyJuzSelection(nextNums);
+                                      applyJuzSelection(nextNums, {
+                                        juzCount:
+                                          nextNums.length > 0 ? nextNums.length : levelJuzCount,
+                                        isConsecutiveJuzs: false,
+                                      });
                                     }}
-                                    className={`min-h-[40px] p-1.5 text-xs sm:text-sm rounded-xl font-black transition active:scale-95 cursor-pointer ${
+                                    className={`min-h-[40px] p-1.5 text-xs sm:text-sm rounded-xl font-black transition active:scale-95 cursor-pointer relative ${
                                       isSelected
-                                        ? 'bg-emerald-700 text-white shadow-xs'
+                                        ? isFirstOfConsecutive
+                                          ? 'bg-emerald-800 text-white shadow-xs ring-2 ring-amber-400'
+                                          : 'bg-emerald-700 text-white shadow-xs'
                                         : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-emerald-400'
                                     }`}
                                   >
@@ -6767,7 +7068,7 @@ function CompetitionReports({
   }, [baseFilteredResults, evalAvgFilterMode, evaluatedStudentsCount]);
 
   /**
-   * تحويل الصور داخل عنصر التقرير إلى Data URL (Base64) لضمان ظهور الديباجة فوراً في ملف الـ PDF
+   * تحويل الصور داخل عنصر التقرير إلى Data URL (Base64) مع التخزين المؤقت الفوري لضمان سرعة تصدير الـ PDF
    */
   const inlineImagesInClone = async (rootEl: HTMLElement) => {
     const imgs = Array.from(rootEl.querySelectorAll('img'));
@@ -6779,6 +7080,10 @@ function CompetitionReports({
           const absUrl = src.startsWith('http')
             ? src
             : `${window.location.origin}${src.startsWith('/') ? '' : '/'}${src}`;
+          if (inlinedImageCache.has(absUrl)) {
+            img.setAttribute('src', inlinedImageCache.get(absUrl)!);
+            return;
+          }
           const response = await fetch(absUrl);
           if (!response.ok) return;
           const blob = await response.blob();
@@ -6789,6 +7094,7 @@ function CompetitionReports({
             reader.readAsDataURL(blob);
           });
           if (dataUrl.startsWith('data:')) {
+            inlinedImageCache.set(absUrl, dataUrl);
             img.setAttribute('src', dataUrl);
           }
         } catch {
@@ -6799,9 +7105,8 @@ function CompetitionReports({
   };
 
   /**
-   * تصدير التقرير الرسمي إلى PDF بجودة عالية جداً وبخط عربي متصل وسليم 100% (غير متقطع ولا مقلوب)
-   * يعتمد أولاً على محرك Chromium Vector PDF في الخادم (/api/pdf) مع خطي Tajawal و Cairo،
-   * مع محرك احتياطي معالج لاتجاه النص العربي (RTL Canvas Shaping) عند عدم توفر الاتصال.
+   * تصدير التقرير الرسمي إلى PDF بسرعة فائقة وجودة عالية جداً وبخط عربي متصل وسليم 100%
+   * يتم تضمين قواعد CSS المجمّعة مباشرة داخل HTML لتفادي أي طلبات شبكة بطيئة داخل الخادم
    */
   const exportToPdf = async (
     elementId: string,
@@ -6812,12 +7117,12 @@ function CompetitionReports({
     if (!el) return;
     setIsExportingPdf(true);
     context?.showToast(
-      'جاري تجهيز وتصدير التقرير الرسمي بملف PDF عالي الدقة...',
+      'جاري تصدير التقرير الرسمي بملف PDF عالي الدقة...',
       'info'
     );
 
     try {
-      // 1. تجهيز نسخة نظيفة من التقرير مع تضمين الصور والخطوط العربية المتصلة
+      // 1. تجهيز نسخة نظيفة من التقرير مع تضمين الصور المخبأة
       const clone = el.cloneNode(true) as HTMLElement;
       clone.querySelectorAll('.no-print').forEach(n => n.remove());
       clone.classList.remove('dark:bg-slate-900', 'dark:border-slate-800');
@@ -6828,23 +7133,38 @@ function CompetitionReports({
 
       await inlineImagesInClone(clone);
 
-      // جمع كافة قواعد الأنماط الحالية (شاملة Tailwind)
-      const headStyles = Array.from(
-        document.querySelectorAll('style, link[rel="stylesheet"]')
-      )
-        .map(node => node.outerHTML)
-        .join('\n');
+      // 2. استخراج كافة قواعد الأنماط المجمعة مباشرة من الذاكرة (مع استبعاد قاعدة إخفاء العناصر خارج #root)
+      const compiledCssChunks: string[] = [];
+      for (const sheet of Array.from(document.styleSheets)) {
+        try {
+          const rules = sheet.cssRules;
+          if (rules) {
+            for (let i = 0; i < rules.length; i++) {
+              const ruleText = rules[i].cssText || '';
+              if (
+                ruleText.includes(':not(#root)') ||
+                ruleText.includes('netlify')
+              ) {
+                continue;
+              }
+              compiledCssChunks.push(ruleText);
+            }
+          }
+        } catch {
+          // تخطي ملفات الأنماط الخارجية المحمية بـ CORS
+        }
+      }
+      const inlineCompiledCss = `<style>${compiledCssChunks.join('\n')}</style>`;
 
       const orientation = isLandscape ? 'landscape' : 'portrait';
       const fullHtml = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8" />
-  <base href="${window.location.origin}/" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=Tajawal:wght@400;500;700;800;900&family=Amiri:wght@400;700&display=swap" rel="stylesheet">
-  ${headStyles}
+  ${inlineCompiledCss}
   <style>
     @page {
       size: A4 ${orientation};
@@ -6868,6 +7188,16 @@ function CompetitionReports({
       direction: rtl !important;
       text-align: right !important;
       width: 100% !important;
+      height: auto !important;
+      overflow: visible !important;
+    }
+    #root, body > div {
+      display: block !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+      width: 100% !important;
+      height: auto !important;
+      overflow: visible !important;
     }
     .no-print {
       display: none !important;
@@ -6887,13 +7217,13 @@ function CompetitionReports({
   </style>
 </head>
 <body dir="rtl">
-  <div style="width: 100%; padding: 4px; background: #ffffff; direction: rtl;">
+  <div id="root" style="width: 100%; padding: 4px; background: #ffffff; direction: rtl;">
     ${clone.outerHTML}
   </div>
 </body>
 </html>`;
 
-      // المحاولة الأولى: التصدير المتجهي الأصلي عبر خادم الطباعة الرسمي (/api/pdf) لضمان خط عربي متصل 100% وغير مقلوب
+      // المحاولة الأولى: التصدير المتجهي السريع عبر خادم الطباعة الرسمي (/api/pdf)
       try {
         const res = await fetch('/api/pdf', {
           method: 'POST',
@@ -7007,12 +7337,14 @@ function CompetitionReports({
     }
   };
 
-  // تصدير النتائج لملف إكسل احترافي متعدد الأوراق (RTL) يشمل كافة حقول القالب الرسمية والنتائج والإحصائيات
+  // تصدير النتائج لملف إكسل احترافي ملون ومنسق بالكامل (RTL) مع تخصيص ورقة مستقلة لكل مستوى من مستويات المسابقة
   const exportExcel = () => {
     const evaluatorsList = activeEvaluatorsList;
 
-    // الورقة 1: كشف النتائج التفصيلي الشامل مع جميع حقول القالب الـ 8
-    const detailedData = filteredResults.map(r => {
+    const buildParticipantResultRow = (
+      r: (typeof filteredResults)[number],
+      evalsForColumns: CompetitionEvaluator[]
+    ) => {
       const row: Record<string, any> = {
         'المركز في المستوى':
           r.rankInLevel !== null
@@ -7033,9 +7365,9 @@ function CompetitionReports({
         الجنس: r.participant.gender || '-',
         الولاية: r.participant.wilayat || '-',
         'مستوى المشاركة': r.level?.name || '',
-        'وقت وتاريخ التسجيل': r.participant.registrationDate || '-',
-        'المقرر / الأجزاء':
-          r.participant.juzsOrSurahs || r.level?.juzsOrSurahs || '',
+        'المقرر / الأجزاء': formatJuzsOrSurahsDisplay(
+          r.participant.juzsOrSurahs || r.level?.juzsOrSurahs || ''
+        ),
         'حالة الحفظ': r.isUnmemorized
           ? 'غير حافظ'
           : r.evaluationsCount > 0
@@ -7045,7 +7377,7 @@ function CompetitionReports({
         'عدد المقيمين': r.evaluationsCount,
       };
 
-      evaluatorsList.forEach(evaluatorItem => {
+      evalsForColumns.forEach(evaluatorItem => {
         const evRecord = r.evaluations.find(
           e => Number(e.evaluatorId) === Number(evaluatorItem.id)
         );
@@ -7070,11 +7402,91 @@ function CompetitionReports({
       row['النسبة المئوية'] =
         r.percentage !== null && !r.isUnmemorized ? `${r.percentage}%` : '-';
       row['التقدير العام'] = r.gradeInfo.label;
+      row['وقت وتاريخ التسجيل'] = r.participant.registrationDate || '-';
 
       return row;
+    };
+
+    const wb = createStyledWorkbook();
+    let sheetCounter = 1;
+
+    // 1. إنشاء ورقة مستقلة وملونة لكل مستوى من مستويات المسابقة (بحسب طلب المستخدم: بيانات كل مستوى في ورقة من ورقات أكسل)
+    const levelsToExport = comp.levels || [];
+    levelsToExport.forEach((lvl, lvlIdx) => {
+      // جلب نتائج هذا المستوى مرتبة حسب المركز في المستوى
+      const levelResults = allResults
+        .filter(r => Number(r.effectiveLevelId) === Number(lvl.id))
+        .sort((a, b) => {
+          if (a.rankInLevel !== null && b.rankInLevel !== null) {
+            return a.rankInLevel - b.rankInLevel;
+          }
+          if (a.rankInLevel !== null) return -1;
+          if (b.rankInLevel !== null) return 1;
+          if (a.isUnmemorized && !b.isUnmemorized) return 1;
+          if (!a.isUnmemorized && b.isUnmemorized) return -1;
+          return (a.participant.name || '').localeCompare(b.participant.name || '', 'ar');
+        });
+
+      // تحديد المقيمين المسندين لهذا المستوى لعرض أعمدتهم في ورقة المستوى
+      const levelEvaluators = (comp.evaluators || []).filter(ev => {
+        const assignedIds = Array.isArray(ev.levelIds) ? ev.levelIds.map(Number) : [];
+        const hasEvaluatedInLevel = levelResults.some(r =>
+          r.evaluations.some(e => Number(e.evaluatorId) === Number(ev.id))
+        );
+        return (
+          assignedIds.length === 0 ||
+          assignedIds.includes(Number(lvl.id)) ||
+          hasEvaluatedInLevel
+        );
+      });
+
+      const lvlMemorizedCount = levelResults.filter(
+        r => r.averageScore !== null && !r.isUnmemorized
+      ).length;
+      const lvlUnmemorizedCount = levelResults.filter(r => r.isUnmemorized).length;
+      const lvlPendingCount = levelResults.filter(r => r.evaluationsCount === 0).length;
+
+      const levelRows =
+        levelResults.length > 0
+          ? levelResults.map(r => buildParticipantResultRow(r, levelEvaluators))
+          : [
+              {
+                'المركز في المستوى': '-',
+                'الاسم الكامل': 'لا يوجد متسابقون مسجلون في هذا المستوى حالياً',
+                'مستوى المشاركة': lvl.name,
+                'المقرر / الأجزاء': formatJuzsOrSurahsDisplay(lvl.juzsOrSurahs),
+                'حالة الحفظ': '-',
+                'المتوسط بين المقيمين': '-',
+                'التقدير العام': '-',
+              },
+            ];
+
+      const wsLevel = createStyledSheetFromRows(levelRows, {
+        titleBanner: `${comp.name} — نتائج ${lvl.name} (${formatJuzsOrSurahsDisplay(lvl.juzsOrSurahs)})`,
+        subtitleBanner: `إجمالي المسجلين بالمستوى: ${levelResults.length} | الحافظون المقيمون: ${lvlMemorizedCount} | غير حافظين: ${lvlUnmemorizedCount} | بانتظار التقييم: ${lvlPendingCount} | الدرجة العظمى: ${lvl.maxScore}`,
+        theme: getLevelSheetTheme(lvlIdx),
+      });
+
+      appendStyledSheet(wb, wsLevel, lvl.name || `المستوى ${lvlIdx + 1}`, sheetCounter++);
     });
 
-    // الورقة 2: إحصائيات تفصيلية مصنفة حسب المستوى والولاية والجنس والتقدير
+    // 2. ورقة النتائج التفصيلية الشاملة (جميع المستويات معاً)
+    const detailedData = filteredResults.map(r =>
+      buildParticipantResultRow(r, evaluatorsList)
+    );
+    const wsAll = createStyledSheetFromRows(detailedData, {
+      titleBanner: `${comp.name} — كشف النتائج التفصيلي الشامل (جميع المستويات)`,
+      subtitleBanner: `إجمالي المتسابقين بالكشف: ${filteredResults.length} | تاريخ التصدير: ${new Date().toLocaleDateString('ar-OM')}`,
+      theme: {
+        bannerBg: '09152C',
+        bannerFg: 'FFFFFF',
+        headerBg: '065F46',
+        headerFg: 'FFFFFF',
+      },
+    });
+    appendStyledSheet(wb, wsAll, 'النتائج الشاملة للمسابقة', sheetCounter++);
+
+    // 3. ورقة الإحصائيات التفصيلية مصنفة حسب المستوى والولاية والجنس
     const summaryRows: Record<string, any>[] = [];
 
     (comp.levels || []).forEach(lvl => {
@@ -7158,7 +7570,14 @@ function CompetitionReports({
       });
     });
 
-    // الورقة 3: بيانات المشاركين مطابقة لترتيب القالب الرسمي (8 أعمدة)
+    const wsSummary = createStyledSheetFromRows(summaryRows, {
+      titleBanner: `${comp.name} — الإحصائيات التفصيلية للمستويات والولايات والجنس`,
+      colWidths: [24, 28, 18, 20, 16, 18, 18],
+      theme: getLevelSheetTheme(2),
+    });
+    appendStyledSheet(wb, wsSummary, 'إحصائيات المستويات والولايات', sheetCounter++);
+
+    // 4. ورقة بيانات المشاركين مطابقة لترتيب القالب الرسمي (8 أعمدة)
     const templateFormatRows = baseFilteredResults.map(r => ({
       'رقم الطلب': r.participant.requestNumber || '',
       'الاسم الكامل': r.participant.name || '',
@@ -7170,59 +7589,16 @@ function CompetitionReports({
       'وقت وتاريخ التسجيل': r.participant.registrationDate || '',
     }));
 
-    const wb = XLSX.utils.book_new();
-    wb.Workbook = { Views: [{ RTL: true }] };
+    const wsTemplate = createStyledSheetFromRows(templateFormatRows, {
+      titleBanner: `${comp.name} — بيانات المشاركين حسب القالب الرسمي`,
+      colWidths: [15, 30, 18, 16, 12, 18, 26, 22],
+      theme: getLevelSheetTheme(3),
+    });
+    appendStyledSheet(wb, wsTemplate, 'بيانات المشاركين حسب القالب', sheetCounter++);
 
-    const ws1 = XLSX.utils.json_to_sheet(detailedData);
-    (ws1 as any)['!views'] = [{ rightToLeft: true }];
-    ws1['!cols'] = [
-      { wch: 15 },
-      { wch: 14 },
-      { wch: 14 },
-      { wch: 28 },
-      { wch: 16 },
-      { wch: 15 },
-      { wch: 10 },
-      { wch: 15 },
-      { wch: 24 },
-      { wch: 20 },
-      { wch: 22 },
-      { wch: 14 },
-      { wch: 12 },
-      { wch: 12 },
-    ];
-    XLSX.utils.book_append_sheet(wb, ws1, 'كشف النتائج التفصيلي الشامل');
-
-    const ws2 = XLSX.utils.json_to_sheet(summaryRows);
-    (ws2 as any)['!views'] = [{ rightToLeft: true }];
-    ws2['!cols'] = [
-      { wch: 22 },
-      { wch: 26 },
-      { wch: 16 },
-      { wch: 18 },
-      { wch: 14 },
-      { wch: 16 },
-      { wch: 16 },
-    ];
-    XLSX.utils.book_append_sheet(wb, ws2, 'إحصائيات المستويات والولايات');
-
-    const ws3 = XLSX.utils.json_to_sheet(templateFormatRows);
-    (ws3 as any)['!views'] = [{ rightToLeft: true }];
-    ws3['!cols'] = [
-      { wch: 15 },
-      { wch: 28 },
-      { wch: 16 },
-      { wch: 15 },
-      { wch: 12 },
-      { wch: 16 },
-      { wch: 24 },
-      { wch: 22 },
-    ];
-    XLSX.utils.book_append_sheet(wb, ws3, 'بيانات المشاركين حسب القالب');
-
-    XLSX.writeFile(wb, `تقرير_نتائج_وإحصائيات_${comp.name}.xlsx`);
+    writeStyledWorkbookFile(wb, `تقرير_نتائج_ومستويات_${comp.name}.xlsx`);
     context?.showToast(
-      'تم تصدير ملف الإكسل الاحترافي (3 أوراق عمل منسقة RTL) بنجاح!',
+      `تم تصدير ملف الإكسل الملون والمنسق بنجاح (ورقة خاصة لكل مستوى من الـ ${levelsToExport.length} مستويات + الكشف الشامل والإحصائيات)!`,
       'success'
     );
   };

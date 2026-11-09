@@ -238,7 +238,6 @@ async function startServer() {
   // API constraints
   app.post("/api/pdf", async (req, res) => {
     let page: Page | null = null;
-    let browser: Browser | null = null;
     try {
       const { html, orientation = "landscape" } = req.body;
       
@@ -247,38 +246,32 @@ async function startServer() {
         return;
       }
 
-      console.log("Launching/getting browser...");
-      // Reuse browser instance
       const browser = await getBrowser();
-
-      console.log("Creating new page...");
       page = await browser.newPage();
-      
-      console.log("Setting content...");
-      // Wait for network idle so Google Fonts finish loading before rendering PDF
-      try {
-        await page.setContent(html, { waitUntil: "networkidle0" as any, timeout: 12000 });
-      } catch (e) {
-        console.warn("networkidle0 timeout, falling back to domcontentloaded:", e);
-        await page.setContent(html, { waitUntil: "domcontentloaded", timeout: 10000 });
-      }
-      
-      console.log("Evaluating fonts...");
-      // Explicitly wait for fonts to load and apply
+
+      await page.setViewport({
+        width: orientation === "landscape" ? 1123 : 794,
+        height: orientation === "landscape" ? 794 : 1123,
+        deviceScaleFactor: 2,
+      });
+
+      // Fast DOM load since styles & images are already inlined by the client
+      await page.setContent(html, { waitUntil: "domcontentloaded", timeout: 8000 });
+
+      // Wait briefly (max 500ms) for fonts if any are still decoding
       try {
         await page.evaluate(async () => {
           if (document.fonts) {
             await Promise.race([
               document.fonts.ready,
-              new Promise(resolve => setTimeout(resolve, 3000))
+              new Promise(resolve => setTimeout(resolve, 500))
             ]);
           }
         });
-      } catch (e) {
-        console.warn("Font loading timeout:", e);
+      } catch {
+        // ignore font wait error
       }
 
-      console.log("Generating PDF...");
       await page.emulateMediaType('print');
       const pdfBuffer = await page.pdf({
         format: "A4",
@@ -291,9 +284,8 @@ async function startServer() {
           bottom: "4mm",
           left: "4mm",
         },
-        timeout: 60000
+        timeout: 20000
       });
-      console.log("PDF generated successfully.");
 
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", 'attachment; filename="report.pdf"');
@@ -330,6 +322,8 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
+    // Pre-warm headless browser in background so the first PDF export is instant
+    getBrowser().catch(err => console.warn("Pre-warm browser warning:", err?.message || err));
   });
 }
 

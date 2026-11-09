@@ -54,6 +54,7 @@ interface MushafReaderModalProps {
   onCompetitionSegmentErrorChange?: (segIdx: number, errorId: number, newCount: number) => void;
   onToggleSegmentUnmemorized?: (segIdx: number, unmemorized: boolean) => void;
   segmentMaxScore?: number;
+  onCompleteSegmentInMushaf?: (segmentNumber: number) => void;
 }
 
 export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
@@ -98,6 +99,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
   onCompetitionSegmentErrorChange,
   onToggleSegmentUnmemorized,
   segmentMaxScore,
+  onCompleteSegmentInMushaf,
 }) => {
   // Convert previousWeekPages to Set for fast lookup
   const prevWeekSet = useMemo(() => {
@@ -521,19 +523,38 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                           <span>▶</span>
                           <span className="hidden sm:inline mr-0.5">السابق</span>
                         </button>
-                        <button
-                          type="button"
-                          disabled={activePassage.passageNumber >= allPassages.length}
-                          onClick={() => {
-                            const next = allPassages.find(p => p.passageNumber === activePassage.passageNumber + 1);
-                            if (next) onSelectPassage(next);
-                          }}
-                          className="min-h-[26px] sm:min-h-[30px] px-1.5 sm:px-2 py-0.5 rounded bg-amber-950 text-amber-100 text-[10px] sm:text-xs font-black disabled:opacity-30 disabled:pointer-events-none hover:bg-black transition active:scale-95"
-                          title="المقطع التالي"
-                        >
-                          <span className="hidden sm:inline ml-0.5">التالي</span>
-                          <span>◀</span>
-                        </button>
+                        {(() => {
+                          const isNextLockedBySequence =
+                            hasCompetitionControls &&
+                            !hideEvaluation &&
+                            !isCompReadOnly &&
+                            !completedPassages.includes(activePassage.passageNumber);
+                          return (
+                            <button
+                              type="button"
+                              disabled={
+                                activePassage.passageNumber >= allPassages.length ||
+                                isNextLockedBySequence
+                              }
+                              onClick={() => {
+                                if (isNextLockedBySequence) return;
+                                const next = allPassages.find(
+                                  p => p.passageNumber === activePassage.passageNumber + 1
+                                );
+                                if (next) onSelectPassage(next);
+                              }}
+                              className="min-h-[26px] sm:min-h-[30px] px-1.5 sm:px-2 py-0.5 rounded bg-amber-950 text-amber-100 text-[10px] sm:text-xs font-black disabled:opacity-35 disabled:cursor-not-allowed hover:bg-black transition active:scale-95"
+                              title={
+                                isNextLockedBySequence
+                                  ? 'اضغط على «تم التقييم» أولاً للانتقال تلقائياً للمقطع التالي'
+                                  : 'المقطع التالي'
+                              }
+                            >
+                              <span className="hidden sm:inline ml-0.5">التالي</span>
+                              <span>{isNextLockedBySequence ? '🔒' : '◀'}</span>
+                            </button>
+                          );
+                        })()}
                       </div>
                     )}
 
@@ -875,13 +896,21 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                     <div className="flex flex-col gap-1.5 w-full max-w-5xl mx-auto">
                       {/* السطر العلوي: تبديل المقاطع + تحديد كمسموع + غير حافظ + الدرجة الكلية + رقم الصفحة بدون أي قص لعناصر الشريط */}
                       <div className="flex flex-wrap items-center justify-between gap-1 bg-slate-100/90 dark:bg-gray-900/90 px-1.5 py-1 rounded-xl border border-slate-200 dark:border-gray-800 w-full">
-                        {/* أزرار التنقل المختصرة بين المقاطع المقترحة */}
+                        {/* أزرار التنقل المختصرة بين المقاطع المقترحة (لا يفتح المقطع التالي إلا بعد إتمام تقييم المقطع السابق) */}
                         <div className="flex flex-wrap items-center gap-1 min-w-0">
                           {Array.from({ length: totalSegs }, (_, i) => {
                             const pNum = i + 1;
                             const segItem = competitionSegments?.[i];
                             const segUnmem = Boolean(segItem?.isUnmemorized);
                             const segDone = completedPassages.includes(pNum);
+                            // المقطع متاح فقط إذا كان الأول، أو وضع القراءة فقط، أو تم تقييم كافة المقاطع السابقة له
+                            const isUnlocked =
+                              i === 0 ||
+                              isCompReadOnly ||
+                              hideEvaluation ||
+                              Array.from({ length: i }, (_, prevIdx) => prevIdx + 1).every(prevNum =>
+                                completedPassages.includes(prevNum)
+                              );
                             const segDed = segItem
                               ? calcSegDed(segItem.errorsCount || {}, segUnmem)
                               : i === currentSegIdx
@@ -894,30 +923,45 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                               <button
                                 key={pNum}
                                 type="button"
+                                disabled={!isUnlocked}
                                 onClick={() => {
+                                  if (!isUnlocked) return;
                                   onSelectSegmentIndex?.(i);
                                   if (passageObj && onSelectPassage) {
                                     onSelectPassage(passageObj);
                                   }
                                 }}
-                                className={`min-h-[28px] sm:min-h-[32px] px-2 sm:px-2.5 py-0.5 rounded-lg text-[11px] sm:text-xs font-black transition-all flex items-center gap-1 shrink-0 cursor-pointer active:scale-95 border ${
-                                  isSelected
-                                    ? 'bg-[#0F2347] text-[#F5D77F] border-[#D4AF37] shadow-2xs ring-1 ring-[#D4AF37]/50'
-                                    : 'bg-white dark:bg-gray-800 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-gray-700 hover:bg-amber-50'
+                                title={
+                                  !isUnlocked
+                                    ? `مقفل — يجب الضغط على «تم التقييم» للمقطع ${toArabicDigits(i)} أولاً`
+                                    : `المقطع ${toArabicDigits(pNum)}`
+                                }
+                                className={`min-h-[28px] sm:min-h-[32px] px-2 sm:px-2.5 py-0.5 rounded-lg text-[11px] sm:text-xs font-black transition-all flex items-center gap-1 shrink-0 border ${
+                                  !isUnlocked
+                                    ? 'bg-slate-200/70 dark:bg-gray-800/40 text-slate-400 dark:text-gray-500 border-slate-300/60 dark:border-gray-700/50 opacity-60 cursor-not-allowed'
+                                    : isSelected
+                                    ? 'bg-[#0F2347] text-[#F5D77F] border-[#D4AF37] shadow-2xs ring-1 ring-[#D4AF37]/50 cursor-pointer active:scale-95'
+                                    : segDone
+                                    ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700 cursor-pointer active:scale-95'
+                                    : 'bg-white dark:bg-gray-800 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-gray-700 hover:bg-amber-50 cursor-pointer active:scale-95'
                                 }`}
                               >
                                 <span className="sm:hidden">م{toArabicDigits(pNum)}</span>
                                 <span className="hidden sm:inline">مقطع {toArabicDigits(pNum)}</span>
-                                {segDone && (
-                                  <span className="text-[9px] text-emerald-500 font-black" title="تم التسميع">
+                                {!isUnlocked ? (
+                                  <span className="text-[9px]" title="مقفل حتى تقييم المقطع السابق">
+                                    🔒
+                                  </span>
+                                ) : segDone ? (
+                                  <span className="text-[9px] text-emerald-600 dark:text-emerald-400 font-black" title="تم التقييم">
                                     ✓
                                   </span>
-                                )}
-                                {segUnmem ? (
+                                ) : null}
+                                {isUnlocked && segUnmem ? (
                                   <span className="px-1 rounded bg-rose-600 text-white text-[9px] font-black">
                                     ٠
                                   </span>
-                                ) : segDed > 0 ? (
+                                ) : isUnlocked && segDed > 0 ? (
                                   <span className="px-1 rounded bg-amber-500 text-slate-950 text-[9px] font-black">
                                     -{segDed}
                                   </span>
@@ -949,31 +993,47 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                           )}
                         </div>
 
-                        {/* زر تحديد كمسموع + الدرجة النهائية + زر اختيار الصفحة */}
+                        {/* زر إتمام التقييم والانتقال التلقائي للمقطع التالي + الدرجة النهائية + زر اختيار الصفحة */}
                         <div className="flex flex-wrap items-center gap-1 shrink-0 mr-auto">
-                          {/* زر تحديد كمسموع جنب الدرجة وفوق أزرار الأخطاء */}
+                          {/* زر تم التقييم جنب الدرجة وفوق أزرار الأخطاء */}
                           <button
                             type="button"
-                            disabled={!onTogglePassage}
-                            onClick={() => onTogglePassage?.(currentPassageNum)}
-                            className={`min-h-[28px] sm:min-h-[32px] px-2 sm:px-2.5 py-0.5 rounded-lg text-[11px] sm:text-xs font-black transition-all flex items-center justify-center gap-1 shrink-0 border ${
-                              !onTogglePassage
+                            disabled={!onTogglePassage && !onCompleteSegmentInMushaf}
+                            onClick={() => {
+                              if (onCompleteSegmentInMushaf) {
+                                onCompleteSegmentInMushaf(currentPassageNum);
+                              } else {
+                                onTogglePassage?.(currentPassageNum);
+                              }
+                            }}
+                            className={`min-h-[28px] sm:min-h-[32px] px-2.5 sm:px-3 py-0.5 rounded-lg text-[11px] sm:text-xs font-black transition-all flex items-center justify-center gap-1 shrink-0 border ${
+                              !onTogglePassage && !onCompleteSegmentInMushaf
                                 ? isCurrentPassageDone
                                   ? 'bg-emerald-600 text-white border-emerald-700 opacity-90 cursor-default'
                                   : 'bg-slate-200 dark:bg-gray-800 text-slate-500 border-slate-300 dark:border-gray-700 opacity-75 cursor-default'
                                 : isCurrentPassageDone
-                                ? 'bg-emerald-600 text-white border-emerald-700 shadow-2xs cursor-pointer active:scale-95'
-                                : 'bg-amber-100 hover:bg-amber-200/80 text-amber-950 border-amber-300 dark:bg-gray-800 dark:text-amber-200 dark:border-amber-500/40 cursor-pointer active:scale-95'
+                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 shadow-2xs cursor-pointer active:scale-95'
+                                : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white border-emerald-700 shadow-xs ring-2 ring-emerald-400/50 cursor-pointer active:scale-95'
                             }`}
                             title={
                               isCurrentPassageDone
-                                ? `تم تسميع المقطع ${toArabicDigits(currentPassageNum)}`
-                                : `تحديد المقطع ${toArabicDigits(currentPassageNum)} كمسموع`
+                                ? currentPassageNum < totalSegs
+                                  ? `تم تقييم المقطع ${toArabicDigits(currentPassageNum)} — اضغط للانتقال للمقطع ${toArabicDigits(currentPassageNum + 1)}`
+                                  : `تم تقييم المقطع الأخير (${toArabicDigits(currentPassageNum)})`
+                                : currentPassageNum < totalSegs
+                                ? `اعتماد درجة المقطع ${toArabicDigits(currentPassageNum)} والانتقال تلقائياً للمقطع ${toArabicDigits(currentPassageNum + 1)}`
+                                : `اعتماد درجة المقطع الأخير (${toArabicDigits(currentPassageNum)}) وإتمام التقييم`
                             }
                           >
-                            <span>{isCurrentPassageDone ? '✓' : '○'}</span>
+                            <span>✓</span>
                             <span>
-                              {isCurrentPassageDone ? 'تم التسميع' : 'تحديد كمسموع'}
+                              {isCurrentPassageDone
+                                ? currentPassageNum < totalSegs
+                                  ? `تم التقييم (التالي ◀)`
+                                  : 'تم التقييم'
+                                : currentPassageNum < totalSegs
+                                ? `تم التقييم (فتح م${toArabicDigits(currentPassageNum + 1)})`
+                                : 'تم التقييم (الأخير)'}
                             </span>
                           </button>
 
