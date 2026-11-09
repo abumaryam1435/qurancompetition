@@ -314,6 +314,7 @@ export default function ParticipantEvaluation({
     level.isConsecutiveJuzs !== false && !rawLevelScope.includes('متفرقة');
 
   // استخراج الأجزاء المحددة مسبقاً للمتسابق أو من المسودة المحلية
+  // إذا كان المستوى بأجزاء خاصة لكل متسابق (يحددها المقيم عند التقييم) ولم يتم تحديدها بعد لهذا الطالب، يبدأ التحديد فارغاً ليختارها المقيم فوراً
   const initialJuzs = useMemo(() => {
     if (
       savedDraft &&
@@ -332,10 +333,6 @@ export default function ParticipantEvaluation({
     if (!isLevelUnspecified && rawLevelScope.startsWith('الأجزاء:')) {
       const parsed = parseJuzsToNumbers(rawLevelScope.replace('الأجزاء:', ''));
       if (parsed.length > 0) return parsed;
-    }
-    if (isLevelUnspecified && requiredJuzCount > 0) {
-      // افتراضياً: أول الأجزاء المتتالية بعدد المطلوب (مثلاً 1 إلى 5) حتى ينقر المقيم على الجزء المطلوب
-      return Array.from({ length: requiredJuzCount }, (_, idx) => idx + 1);
     }
     return [];
   }, [savedDraft, rawParticipantScope, rawLevelScope, isLevelUnspecified, requiredJuzCount]);

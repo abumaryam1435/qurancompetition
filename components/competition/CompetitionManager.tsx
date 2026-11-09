@@ -3222,9 +3222,10 @@ function LevelEditor({
 
                   {(() => {
                     const isSpecificSurahs = level.juzsOrSurahs.startsWith('السور:');
-                    const isSpecificJuzs = !isSpecificSurahs;
                     const isUnspecified =
-                      Boolean(level.isUnspecifiedJuzs) || isUnspecifiedJuzCount(level.juzsOrSurahs);
+                      !isSpecificSurahs &&
+                      (Boolean(level.isUnspecifiedJuzs) || isUnspecifiedJuzCount(level.juzsOrSurahs));
+                    const isSpecificFixedJuzs = !isSpecificSurahs && !isUnspecified;
 
                     const currentJuzNums: number[] = (() => {
                       if (isUnspecified) return [];
@@ -3255,10 +3256,13 @@ function LevelEditor({
                     const all30Selected = !isUnspecified && currentJuzNums.length === 30;
 
                     const buildUnspecifiedScopeLabel = (count: number, consecutive: boolean) => {
-                      if (count === 1) return 'جزء واحد (يحدده المقيم)';
-                      if (count === 2) return `جزآن ${consecutive ? 'متتاليان' : 'متفرقان'}`;
+                      if (count === 1) return 'جزء واحد (يحدده المقيم لكل متسابق)';
+                      if (count === 2)
+                        return `جزآن ${consecutive ? 'متتاليان' : 'غير متتاليين (متفرقان)'} (يحددهما المقيم)`;
                       const unit = count >= 3 && count <= 10 ? 'أجزاء' : 'جزءاً';
-                      return `${count} ${unit} ${consecutive ? 'متتالية' : 'متفرقة'}`;
+                      return `${count} ${unit} ${
+                        consecutive ? 'متتالية' : 'غير متتالية (متفرقة)'
+                      } (يحددها المقيم لكل متسابق)`;
                     };
 
                     const applyJuzSelection = (
@@ -3295,7 +3299,7 @@ function LevelEditor({
 
                     const handleSetLevelJuzCount = (newCount: number) => {
                       const clamped = Math.min(30, Math.max(1, newCount));
-                      if (clamped === 30) {
+                      if (clamped === 30 && !isUnspecified) {
                         applyJuzSelection(
                           Array.from({ length: 30 }, (_, i) => i + 1),
                           {
@@ -3308,11 +3312,12 @@ function LevelEditor({
                       }
 
                       if (isUnspecified) {
+                        const effectiveCount = Math.min(29, Math.max(1, clamped));
                         updateLevel(level.id, {
-                          juzCount: clamped,
+                          juzCount: effectiveCount,
                           isConsecutiveJuzs: isConsecutive,
                           isUnspecifiedJuzs: true,
-                          juzsOrSurahs: buildUnspecifiedScopeLabel(clamped, isConsecutive),
+                          juzsOrSurahs: buildUnspecifiedScopeLabel(effectiveCount, isConsecutive),
                         });
                         return;
                       }
@@ -3345,11 +3350,12 @@ function LevelEditor({
 
                     const handleToggleConsecutive = (checked: boolean) => {
                       if (isUnspecified) {
+                        const effectiveCount = levelJuzCount < 30 ? levelJuzCount : 5;
                         updateLevel(level.id, {
-                          juzCount: levelJuzCount,
+                          juzCount: effectiveCount,
                           isConsecutiveJuzs: checked,
                           isUnspecifiedJuzs: true,
-                          juzsOrSurahs: buildUnspecifiedScopeLabel(levelJuzCount, checked),
+                          juzsOrSurahs: buildUnspecifiedScopeLabel(effectiveCount, checked),
                         });
                         return;
                       }
@@ -3376,38 +3382,89 @@ function LevelEditor({
 
                     return (
                       <>
-                        <div className="grid grid-cols-2 gap-2 mb-3">
+                        {/* الخيارات الثلاثة الرئيسية لتحديد نوع مقرر المستوى */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
+                          {/* الخيار 1: أجزاء محددة وموحدة للمستوى */}
                           <label
-                            className={`min-h-[44px] px-3 py-2 rounded-xl border font-extrabold text-xs sm:text-sm flex items-center gap-2 cursor-pointer transition active:scale-95 ${
-                              isSpecificJuzs
+                            className={`min-h-[48px] px-3 py-2.5 rounded-xl border font-extrabold text-xs sm:text-sm flex items-start sm:items-center gap-2 cursor-pointer transition active:scale-95 ${
+                              isSpecificFixedJuzs
                                 ? 'bg-emerald-50 border-2 border-emerald-600 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200 dark:border-emerald-500 shadow-2xs'
-                                : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                                : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-slate-50/60 dark:bg-slate-800/40'
                             }`}
                           >
                             <input
                               type="radio"
                               name={`scopeType-${level.id}`}
-                              checked={isSpecificJuzs}
+                              checked={isSpecificFixedJuzs}
                               onChange={() => {
                                 if (currentJuzNums.length > 0) {
-                                  applyJuzSelection(currentJuzNums);
+                                  applyJuzSelection(currentJuzNums, { isUnspecifiedJuzs: false });
                                 } else {
-                                  const start = Math.max(1, 30 - levelJuzCount + 1);
+                                  const countToUse = levelJuzCount || 5;
+                                  const start = Math.max(1, 30 - countToUse + 1);
                                   applyJuzSelection(
-                                    Array.from({ length: levelJuzCount }, (_, i) => start + i)
+                                    Array.from({ length: countToUse }, (_, i) => start + i),
+                                    {
+                                      juzCount: countToUse,
+                                      isConsecutiveJuzs: isConsecutive,
+                                      isUnspecifiedJuzs: false,
+                                    }
                                   );
                                 }
                               }}
-                              className="text-emerald-600 focus:ring-emerald-500 w-4 h-4 shrink-0"
+                              className="text-emerald-600 focus:ring-emerald-500 w-4 h-4 shrink-0 mt-0.5 sm:mt-0"
                             />
-                            <span>تحديد الأجزاء لهذا المستوى (1 إلى 30)</span>
+                            <div className="leading-snug">
+                              <span className="block font-black">1. أجزاء محددة وموحدة للمستوى</span>
+                              <span className="block text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                                نفس الأجزاء لجميع متسابقي هذا المستوى
+                              </span>
+                            </div>
                           </label>
 
+                          {/* الخيار 2: أجزاء خاصة لكل متسابق يحددها المقيم عند التقييم */}
                           <label
-                            className={`min-h-[44px] px-3 py-2 rounded-xl border font-extrabold text-xs sm:text-sm flex items-center gap-2 cursor-pointer transition active:scale-95 ${
+                            className={`min-h-[48px] px-3 py-2.5 rounded-xl border font-extrabold text-xs sm:text-sm flex items-start sm:items-center gap-2 cursor-pointer transition active:scale-95 ${
+                              isUnspecified
+                                ? 'bg-amber-50 border-2 border-amber-500 text-amber-950 dark:bg-amber-950/60 dark:text-amber-200 dark:border-amber-500 shadow-2xs ring-2 ring-amber-400/30'
+                                : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-slate-50/60 dark:bg-slate-800/40'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name={`scopeType-${level.id}`}
+                              checked={isUnspecified}
+                              onChange={() => {
+                                const defaultUnspecifiedCount =
+                                  levelJuzCount < 30 ? levelJuzCount : 5;
+                                updateLevel(level.id, {
+                                  juzCount: defaultUnspecifiedCount,
+                                  isConsecutiveJuzs: isConsecutive,
+                                  isUnspecifiedJuzs: true,
+                                  juzsOrSurahs: buildUnspecifiedScopeLabel(
+                                    defaultUnspecifiedCount,
+                                    isConsecutive
+                                  ),
+                                });
+                              }}
+                              className="text-amber-600 focus:ring-amber-500 w-4 h-4 shrink-0 mt-0.5 sm:mt-0"
+                            />
+                            <div className="leading-snug">
+                              <span className="block font-black">
+                                2. أجزاء خاصة لكل متسابق (يحددها المقيم)
+                              </span>
+                              <span className="block text-[10px] font-bold text-amber-800 dark:text-amber-300">
+                                مثل: 5 أجزاء متتالية أو غير متتالية يختارها المقيم للطالب
+                              </span>
+                            </div>
+                          </label>
+
+                          {/* الخيار 3: سور معينة محددة لهذا المستوى */}
+                          <label
+                            className={`min-h-[48px] px-3 py-2.5 rounded-xl border font-extrabold text-xs sm:text-sm flex items-start sm:items-center gap-2 cursor-pointer transition active:scale-95 ${
                               isSpecificSurahs
                                 ? 'bg-emerald-50 border-2 border-emerald-600 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200 dark:border-emerald-500 shadow-2xs'
-                                : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                                : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 bg-slate-50/60 dark:bg-slate-800/40'
                             }`}
                           >
                             <input
@@ -3420,14 +3477,133 @@ function LevelEditor({
                                   isUnspecifiedJuzs: false,
                                 })
                               }
-                              className="text-emerald-600 focus:ring-emerald-500 w-4 h-4 shrink-0"
+                              className="text-emerald-600 focus:ring-emerald-500 w-4 h-4 shrink-0 mt-0.5 sm:mt-0"
                             />
-                            <span>تحديد سور معينة لهذا المستوى</span>
+                            <div className="leading-snug">
+                              <span className="block font-black">3. سور معينة لهذا المستوى</span>
+                              <span className="block text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                                تحديد سورة أو عدة سور محددة
+                              </span>
+                            </div>
                           </label>
                         </div>
 
-                        {/* تحديد الأجزاء داخل المستوى + خيار متتالية أو متفرقة للمستويات الأقل من 30 جزءاً */}
-                        {isSpecificJuzs && (
+                        {/* ==================== اللوحة الخاصة بالخيار الثاني: أجزاء خاصة لكل متسابق يحددها المقيم أثناء التقييم ==================== */}
+                        {isUnspecified && (
+                          <div className="p-4 bg-amber-50/70 dark:bg-amber-950/30 rounded-2xl border-2 border-amber-400 dark:border-amber-600 space-y-4 shadow-xs">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-200/80 dark:border-amber-800/60 pb-3">
+                              <div>
+                                <h4 className="text-xs sm:text-sm font-black text-amber-950 dark:text-amber-100">
+                                  إعداد مستوى بأجزاء خاصة لكل متسابق (يحددها المقيم عند الدخول لصفحة الطالب)
+                                </h4>
+                                <p className="text-[11px] font-bold text-amber-800 dark:text-amber-300 mt-0.5">
+                                  حدد عدد الأجزاء المطلوبة من المتسابق، وهل يشترط أن تكون متتالية أم غير متتالية (متفرقة).
+                                </p>
+                              </div>
+                              <span className="px-3 py-1 rounded-xl bg-amber-500 text-slate-950 font-black text-xs shrink-0 self-start sm:self-center">
+                                {buildUnspecifiedScopeLabel(levelJuzCount, isConsecutive)}
+                              </span>
+                            </div>
+
+                            {/* 1. اختيار عدد الأجزاء المطلوبة لكل متسابق */}
+                            <div className="space-y-2">
+                              <label className="text-xs font-black text-slate-800 dark:text-slate-200 block">
+                                أ) عدد الأجزاء المطلوبة من كل متسابق في هذا المستوى:
+                              </label>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {[1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 15, 20, 25].map(cnt => (
+                                  <button
+                                    key={cnt}
+                                    type="button"
+                                    onClick={() => handleSetLevelJuzCount(cnt)}
+                                    className={`min-w-[40px] h-9 px-2.5 rounded-xl text-xs font-black transition active:scale-95 cursor-pointer border ${
+                                      levelJuzCount === cnt
+                                        ? 'bg-emerald-700 text-white border-emerald-800 shadow-xs ring-2 ring-emerald-400/50'
+                                        : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:border-emerald-500'
+                                    }`}
+                                  >
+                                    {cnt} {cnt === 1 ? 'جزء' : cnt === 2 ? 'جزآن' : cnt <= 10 ? 'أجزاء' : 'جزءاً'}
+                                  </button>
+                                ))}
+                                <div className="flex items-center gap-1.5 bg-white dark:bg-slate-900 px-2.5 py-1 rounded-xl border border-slate-300 dark:border-slate-700">
+                                  <span className="text-[11px] font-bold text-slate-500">عدد آخر:</span>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={29}
+                                    value={levelJuzCount}
+                                    onChange={e => {
+                                      const val = parseInt(e.target.value, 10);
+                                      if (!isNaN(val)) handleSetLevelJuzCount(val);
+                                    }}
+                                    className="w-14 h-7 px-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-center text-xs font-black text-slate-900 dark:text-white"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* 2. اختيار هل الأجزاء متتالية أم غير متتالية (متفرقة) */}
+                            <div className="space-y-2">
+                              <label className="text-xs font-black text-slate-800 dark:text-slate-200 block">
+                                ب) هل يشترط أن تكون الـ ({levelJuzCount}) أجزاء متتالية أم غير متتالية؟
+                              </label>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleConsecutive(true)}
+                                  className={`p-3 rounded-xl border-2 text-right transition active:scale-95 cursor-pointer flex items-start gap-2.5 ${
+                                    isConsecutive
+                                      ? 'bg-emerald-50 dark:bg-emerald-950/70 border-emerald-600 text-emerald-950 dark:text-emerald-100 shadow-xs'
+                                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isConsecutive}
+                                    readOnly
+                                    className="w-4 h-4 mt-0.5 rounded accent-emerald-600 pointer-events-none shrink-0"
+                                  />
+                                  <div className="space-y-0.5">
+                                    <div className="text-xs sm:text-sm font-black">
+                                      متتالية (الافتراضي) — {levelJuzCount} أجزاء متتالية
+                                    </div>
+                                    <div className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                                      عندما يدخل المقيم لتقييم الطالب ينقر فقط على رقم الجزء الأول (مثلاً 6) فتتحدد تلقائياً الأجزاء ({levelJuzCount} أجزاء متتالية: من 6 إلى {Math.min(30, 6 + levelJuzCount - 1)}).
+                                    </div>
+                                  </div>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleConsecutive(false)}
+                                  className={`p-3 rounded-xl border-2 text-right transition active:scale-95 cursor-pointer flex items-start gap-2.5 ${
+                                    !isConsecutive
+                                      ? 'bg-amber-100/90 dark:bg-amber-950/70 border-amber-600 text-amber-950 dark:text-amber-100 shadow-xs'
+                                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={!isConsecutive}
+                                    readOnly
+                                    className="w-4 h-4 mt-0.5 rounded accent-amber-600 pointer-events-none shrink-0"
+                                  />
+                                  <div className="space-y-0.5">
+                                    <div className="text-xs sm:text-sm font-black">
+                                      غير متتالية (متفرقة) — {levelJuzCount} أجزاء متفرقة
+                                    </div>
+                                    <div className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                                      عندما يدخل المقيم لتقييم الطالب يختار أي {levelJuzCount} أجزاء متفرقة خاصة بالطالب يدوياً من المصحف.
+                                    </div>
+                                  </div>
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* ==================== اللوحة الخاصة بالخيار الأول: أجزاء محددة وموحدة للمستوى ==================== */}
+                        {isSpecificFixedJuzs && (
                           <div className="p-3.5 bg-slate-50 dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
                             {/* شريط عدد أجزاء المستوى + خيار متتالية (يظهر للمستويات الأقل من 30 جزءاً) */}
                             <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2.5">
@@ -3495,15 +3671,10 @@ function LevelEditor({
                                   <button
                                     type="button"
                                     onClick={() => applyJuzSelection([])}
-                                    className={`px-3 py-1.5 rounded-xl font-black text-xs transition active:scale-95 cursor-pointer border shrink-0 flex items-center gap-1.5 ${
-                                      isUnspecified
-                                        ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-2xs'
-                                        : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/60 dark:text-amber-200 dark:border-amber-700'
-                                    }`}
+                                    className="px-3 py-1.5 rounded-xl font-black text-xs transition active:scale-95 cursor-pointer border shrink-0 flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/60 dark:text-amber-200 dark:border-amber-700"
                                   >
-                                    <Check size={14} className={isUnspecified ? 'opacity-100' : 'opacity-0 w-0'} />
                                     <span>
-                                      ترك الـ {levelJuzCount} أجزاء غير محددة (يحددها المقيم لكل متسابق)
+                                      تحويل إلى: أجزاء خاصة لكل متسابق (يحددها المقيم)
                                     </span>
                                   </button>
                                 </div>
@@ -3514,20 +3685,12 @@ function LevelEditor({
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-slate-700">
                               <div className="space-y-0.5">
                                 <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">
-                                  {isUnspecified
-                                    ? `حالة أجزاء المستوى (${levelJuzCount} أجزاء):`
-                                    : `الأجزاء المختارة في هذا المستوى (${currentJuzNums.length} جزء):`}
+                                  الأجزاء المختارة في هذا المستوى ({currentJuzNums.length} جزء):
                                 </span>
                                 <div className="text-sm sm:text-base font-black text-emerald-800 dark:text-emerald-300">
-                                  {isUnspecified ? (
-                                    <span className="text-amber-700 dark:text-amber-300">
-                                      غير محددة مسبقاً — ({buildUnspecifiedScopeLabel(levelJuzCount, isConsecutive)}) يحددها المقيم عند التقييم
-                                    </span>
-                                  ) : formattedJuzSummary ? (
-                                    formattedJuzSummary
-                                  ) : (
-                                    'لم يتم تحديد أي جزء بعد (اختر من الأجزاء بالأسفل)'
-                                  )}
+                                  {formattedJuzSummary
+                                    ? formattedJuzSummary
+                                    : 'لم يتم تحديد أي جزء بعد (اختر من الأجزاء بالأسفل)'}
                                 </div>
                               </div>
 
@@ -3557,11 +3720,9 @@ function LevelEditor({
                                 <button
                                   type="button"
                                   onClick={() => applyJuzSelection([])}
-                                  disabled={isUnspecified && currentJuzNums.length === 0}
-                                  className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 disabled:opacity-40 text-red-700 border border-red-200 dark:bg-red-950/50 dark:text-red-300 dark:border-red-800/60 font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer"
+                                  className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950/50 dark:text-amber-200 dark:border-amber-800/60 font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer"
                                 >
-                                  <Trash2 size={14} />
-                                  <span>{isLessThan30 ? 'عدم تحديد أجزاء (يحددها المقيم)' : 'إلغاء الكل'}</span>
+                                  <span>جعلها يحددها المقيم لكل طالب</span>
                                 </button>
                               </div>
                             </div>
@@ -3658,7 +3819,6 @@ function LevelEditor({
                                     type="button"
                                     onClick={() => {
                                       if (isLessThan30 && isConsecutive) {
-                                        // إذا نقر المشرف على جزء وكان خيار "متتالية" مفعلاً، نحدد هذا الجزء مع باقي الأجزاء بعده تلقائياً
                                         const start = Math.min(
                                           juz,
                                           Math.max(1, 30 - levelJuzCount + 1)
