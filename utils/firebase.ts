@@ -1,14 +1,13 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import {
   getFirestore,
+  initializeFirestore,
   Firestore,
   doc,
   setDoc,
   getDoc,
   onSnapshot,
   getDocFromServer,
-  enableNetwork,
-  disableNetwork,
   Unsubscribe,
 } from 'firebase/firestore';
 import { getAuth, Auth } from 'firebase/auth';
@@ -64,10 +63,23 @@ if (getApps().length > 0) {
 }
 
 /* CRITICAL: The app will break without this line */
-export const rawFirestore: Firestore = getFirestore(
-  firebaseApp,
-  HARDCODED_FIREBASE_CONFIG.firestoreDatabaseId
-);
+let firestoreInstance: Firestore;
+try {
+  firestoreInstance = initializeFirestore(
+    firebaseApp,
+    {
+      experimentalAutoDetectLongPolling: true,
+    },
+    HARDCODED_FIREBASE_CONFIG.firestoreDatabaseId
+  );
+} catch {
+  firestoreInstance = getFirestore(
+    firebaseApp,
+    HARDCODED_FIREBASE_CONFIG.firestoreDatabaseId
+  );
+}
+
+export const rawFirestore: Firestore = firestoreInstance;
 export const auth: Auth = getAuth(firebaseApp);
 
 export function handleFirestoreError(
@@ -97,7 +109,7 @@ export function handleFirestoreError(
 }
 
 /**
- * Validate Connection to Firestore on boot
+ * Validate Connection to Firestore on boot (runs once on startup)
  */
 export async function testFirestoreConnection(): Promise<boolean> {
   try {
@@ -108,12 +120,10 @@ export async function testFirestoreConnection(): Promise<boolean> {
       console.warn('Firestore offline: Please check your Firebase configuration.');
       return false;
     }
-    // Any response from the server (even document not found) confirms connectivity
     return true;
   }
 }
 
-// Test connection on startup
 testFirestoreConnection().catch(() => {});
 
 export const sanitizeForFirebase = (obj: any): any => {
@@ -146,9 +156,8 @@ const broadcastChannel =
     : null;
 
 /**
- * محول فوري حقيقي (Realtime Adapter) يعمل فوق Firestore بمزامنة لحظية كاملة onSnapshot
- * مدعوم بإعادة اتصال تلقائي عند انقطاع الاتصال أو خمول شاشة الهاتف، مع فحص نبض دوري خلفي
- * لضمان التزامن المباشر والفوري 100% بين جميع المقيمين والمشرفين على Netlify وأي استضافة.
+ * محول فوري حقيقي (Realtime Adapter) يعمل فوق Firestore بمزامنة لحظية مستقرة عبر onSnapshot
+ * بدون تكرار فتح وإغلاق المستمعين لتجنب تعارض WatchChangeAggregator (ID: b815 / ca9).
  */
 class FirestoreRealtimeDbAdapter {
   private listeners: Map<string, Set<(snap: { val: () => any; exists: () => boolean }) => void>> =
@@ -157,12 +166,10 @@ class FirestoreRealtimeDbAdapter {
   private isOnline = true;
   private memoryCache: Record<string, any> = {};
   private lastCompUpdatedAt = 0;
-  private isHeartbeatRunning = false;
 
   constructor() {
     this.initDocListeners();
     this.initBroadcastChannel();
-    this.startBackgroundHeartbeat();
   }
 
   private markConnected() {
@@ -200,10 +207,7 @@ class FirestoreRealtimeDbAdapter {
 
   public listenToCompetitions() {
     if (this.unsubs.has('appData/competitions')) {
-      try {
-        this.unsubs.get('appData/competitions')!();
-      } catch {}
-      this.unsubs.delete('appData/competitions');
+      return;
     }
 
     const compDoc = doc(rawFirestore, 'appData', 'competitions');
@@ -225,11 +229,11 @@ class FirestoreRealtimeDbAdapter {
         });
       },
       err => {
-        console.warn('Competitions realtime snapshot note (auto-reconnecting):', err?.message || err);
-        // إعادة الاشتراك التلقائي بعد ثانية في حال نوم الشاشة أو تقلب اتصال الجوال
+        console.warn('Competitions realtime snapshot note:', err?.message || err);
+        this.unsubs.delete('appData/competitions');
         setTimeout(() => {
           this.listenToCompetitions();
-        }, 1500);
+        }, 3000);
       }
     );
     this.unsubs.set('appData/competitions', unsubComp);
@@ -237,10 +241,7 @@ class FirestoreRealtimeDbAdapter {
 
   private listenToConfig() {
     if (this.unsubs.has('appConfig/main')) {
-      try {
-        this.unsubs.get('appConfig/main')!();
-      } catch {}
-      this.unsubs.delete('appConfig/main');
+      return;
     }
 
     const configDoc = doc(rawFirestore, 'appConfig', 'main');
@@ -258,8 +259,9 @@ class FirestoreRealtimeDbAdapter {
           this.notify('config/supervisorPassword', cfg.supervisorPassword);
       },
       err => {
-        console.warn('Config realtime snapshot note (auto-reconnecting):', err?.message || err);
-        setTimeout(() => this.listenToConfig(), 2000);
+        console.warn('Config realtime snapshot note:', err?.message || err);
+        this.unsubs.delete('appConfig/main');
+        setTimeout(() => this.listenToConfig(), 3000);
       }
     );
     this.unsubs.set('appConfig/main', unsubCfg);
@@ -267,10 +269,7 @@ class FirestoreRealtimeDbAdapter {
 
   private listenToUsers() {
     if (this.unsubs.has('appData/users')) {
-      try {
-        this.unsubs.get('appData/users')!();
-      } catch {}
-      this.unsubs.delete('appData/users');
+      return;
     }
 
     const userDoc = doc(rawFirestore, 'appData', 'users');
@@ -290,8 +289,9 @@ class FirestoreRealtimeDbAdapter {
         });
       },
       err => {
-        console.warn('Users realtime snapshot note (auto-reconnecting):', err?.message || err);
-        setTimeout(() => this.listenToUsers(), 2000);
+        console.warn('Users realtime snapshot note:', err?.message || err);
+        this.unsubs.delete('appData/users');
+        setTimeout(() => this.listenToUsers(), 3000);
       }
     );
     this.unsubs.set('appData/users', unsubUsers);
@@ -299,10 +299,7 @@ class FirestoreRealtimeDbAdapter {
 
   private listenToEvaluators() {
     if (this.unsubs.has('appData/evaluators')) {
-      try {
-        this.unsubs.get('appData/evaluators')!();
-      } catch {}
-      this.unsubs.delete('appData/evaluators');
+      return;
     }
 
     const evaluatorsDoc = doc(rawFirestore, 'appData', 'evaluators');
@@ -318,63 +315,12 @@ class FirestoreRealtimeDbAdapter {
         this.notify('data/evaluators', list);
       },
       err => {
-        console.warn('Evaluators realtime snapshot note (auto-reconnecting):', err?.message || err);
-        setTimeout(() => this.listenToEvaluators(), 2000);
+        console.warn('Evaluators realtime snapshot note:', err?.message || err);
+        this.unsubs.delete('appData/evaluators');
+        setTimeout(() => this.listenToEvaluators(), 3000);
       }
     );
     this.unsubs.set('appData/evaluators', unsubEvaluators);
-  }
-
-  /**
-   * فحص نبض دوري بالخلفية كل ثانيتين للتأكد من مطابقة بيانات السيرفر اللحظية
-   * حتى لو قام متصفح الهاتف أو Netlify بتعليق اتصال السوكيت مؤقتاً
-   */
-  private startBackgroundHeartbeat() {
-    if (typeof window === 'undefined' || this.isHeartbeatRunning) return;
-    this.isHeartbeatRunning = true;
-
-    const pullServerCompetitions = async () => {
-      if (!navigator.onLine || !this.isOnline) return;
-      try {
-        const compDoc = doc(rawFirestore, 'appData', 'competitions');
-        const snap = await getDocFromServer(compDoc);
-        if (snap.exists()) {
-          const data = snap.data();
-          const serverUpdated = Number(data?.updatedAt || 0);
-          if (serverUpdated > this.lastCompUpdatedAt) {
-            this.lastCompUpdatedAt = serverUpdated;
-            const list = normalizeToArray(data?.list);
-            this.memoryCache['data/competitions'] = list;
-            this.notify('data/competitions', list);
-            this.notify('data', {
-              competitions: list,
-              users: this.memoryCache['data/users'] || [],
-              globalEvaluators: this.memoryCache['data/globalEvaluators'] || [],
-            });
-          }
-        }
-      } catch {}
-    };
-
-    // فحص منتظم كل 2.5 ثانية
-    setInterval(() => {
-      pullServerCompetitions();
-    }, 2500);
-
-    // إنعاش فوري بمجرد تنشيط الشاشة أو عودة الاتصال أو التركيز على التطبيق
-    const handleWakeup = () => {
-      enableNetwork(rawFirestore).catch(() => {});
-      this.initDocListeners();
-      pullServerCompetitions();
-    };
-
-    window.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') {
-        handleWakeup();
-      }
-    });
-    window.addEventListener('focus', handleWakeup);
-    window.addEventListener('online', handleWakeup);
   }
 
   private notify(cleanPath: string, value: any) {
@@ -395,21 +341,58 @@ class FirestoreRealtimeDbAdapter {
 
   public goOnline() {
     this.isOnline = true;
-    enableNetwork(rawFirestore).catch(() => {});
+    this.initDocListeners();
     this.notify('.info/connected', true);
   }
 
   public goOffline() {
     this.isOnline = false;
-    disableNetwork(rawFirestore).catch(() => {});
     this.notify('.info/connected', false);
   }
 
-  private async fetchDocPreferServer(docRef: ReturnType<typeof doc>) {
+  private async safeWriteDoc(
+    collectionName: string,
+    docId: string,
+    payload: Record<string, any>,
+    merge: boolean = false
+  ) {
+    const docRef = doc(rawFirestore, collectionName, docId);
     try {
-      return await getDocFromServer(docRef);
-    } catch {
-      return await getDoc(docRef);
+      if (merge) {
+        await setDoc(docRef, payload, { merge: true });
+      } else {
+        await setDoc(docRef, payload);
+      }
+    } catch (err: any) {
+      const msg = String(err?.message || err || '');
+      // في حال حدوث انقطاع لحظي في دفق WebChannel مثل missing stream token أو Unexpected state، نعيد المحاولة بعد مهلة قصيرة
+      if (
+        msg.includes('missing stream token') ||
+        msg.includes('Unexpected state') ||
+        msg.includes('INTERNAL ASSERTION FAILED')
+      ) {
+        await new Promise(resolve => setTimeout(resolve, 600));
+        try {
+          if (merge) {
+            await setDoc(docRef, payload, { merge: true });
+          } else {
+            await setDoc(docRef, payload);
+          }
+          return;
+        } catch (retryErr: any) {
+          const retryMsg = String(retryErr?.message || retryErr || '');
+          if (
+            retryMsg.includes('missing stream token') ||
+            retryMsg.includes('Unexpected state') ||
+            retryMsg.includes('INTERNAL ASSERTION FAILED')
+          ) {
+            console.warn('Transient Firestore stream state during write, local state preserved:', retryMsg);
+            return;
+          }
+          throw retryErr;
+        }
+      }
+      throw err;
     }
   }
 
@@ -474,50 +457,77 @@ class FirestoreRealtimeDbAdapter {
         let resultVal: any = null;
         try {
           if (cleanPath === 'data') {
-            const [compSnap, userSnap, evalSnap] = await Promise.all([
-              this.fetchDocPreferServer(doc(rawFirestore, 'appData', 'competitions')),
-              this.fetchDocPreferServer(doc(rawFirestore, 'appData', 'users')),
-              this.fetchDocPreferServer(doc(rawFirestore, 'appData', 'evaluators')),
-            ]);
-            const comps = compSnap.exists() ? normalizeToArray(compSnap.data()?.list) : undefined;
-            const users = userSnap.exists() ? normalizeToArray(userSnap.data()?.list) : undefined;
-            const evals = evalSnap.exists() ? normalizeToArray(evalSnap.data()?.list) : undefined;
-
-            if (comps !== undefined) this.memoryCache['data/competitions'] = comps;
-            if (users !== undefined) this.memoryCache['data/users'] = users;
-            if (evals !== undefined) this.memoryCache['data/globalEvaluators'] = evals;
-
-            if (comps !== undefined || users !== undefined || evals !== undefined) {
+            if (
+              this.memoryCache['data/competitions'] !== undefined &&
+              this.memoryCache['data/users'] !== undefined
+            ) {
               resultVal = {
-                competitions: comps ?? this.memoryCache['data/competitions'] ?? [],
-                users: users ?? this.memoryCache['data/users'] ?? [],
-                globalEvaluators: evals ?? this.memoryCache['data/globalEvaluators'] ?? [],
+                competitions: this.memoryCache['data/competitions'] || [],
+                users: this.memoryCache['data/users'] || [],
+                globalEvaluators: this.memoryCache['data/globalEvaluators'] || [],
               };
+            } else {
+              const [compSnap, userSnap, evalSnap] = await Promise.all([
+                getDoc(doc(rawFirestore, 'appData', 'competitions')),
+                getDoc(doc(rawFirestore, 'appData', 'users')),
+                getDoc(doc(rawFirestore, 'appData', 'evaluators')),
+              ]);
+              const comps = compSnap.exists() ? normalizeToArray(compSnap.data()?.list) : undefined;
+              const users = userSnap.exists() ? normalizeToArray(userSnap.data()?.list) : undefined;
+              const evals = evalSnap.exists() ? normalizeToArray(evalSnap.data()?.list) : undefined;
+
+              if (comps !== undefined) this.memoryCache['data/competitions'] = comps;
+              if (users !== undefined) this.memoryCache['data/users'] = users;
+              if (evals !== undefined) this.memoryCache['data/globalEvaluators'] = evals;
+
+              if (comps !== undefined || users !== undefined || evals !== undefined) {
+                resultVal = {
+                  competitions: comps ?? this.memoryCache['data/competitions'] ?? [],
+                  users: users ?? this.memoryCache['data/users'] ?? [],
+                  globalEvaluators: evals ?? this.memoryCache['data/globalEvaluators'] ?? [],
+                };
+              }
             }
           } else if (cleanPath === 'data/competitions') {
-            const snap = await this.fetchDocPreferServer(doc(rawFirestore, 'appData', 'competitions'));
-            if (snap.exists()) {
-              const list = normalizeToArray(snap.data()?.list);
-              this.memoryCache['data/competitions'] = list;
-              resultVal = list;
+            if (this.memoryCache['data/competitions'] !== undefined) {
+              resultVal = this.memoryCache['data/competitions'];
+            } else {
+              const snap = await getDoc(doc(rawFirestore, 'appData', 'competitions'));
+              if (snap.exists()) {
+                const list = normalizeToArray(snap.data()?.list);
+                this.memoryCache['data/competitions'] = list;
+                resultVal = list;
+              }
             }
           } else if (cleanPath === 'config') {
-            const snap = await this.fetchDocPreferServer(doc(rawFirestore, 'appConfig', 'main'));
-            if (snap.exists()) {
-              resultVal = snap.data() || {};
-              this.memoryCache['config'] = resultVal;
+            if (this.memoryCache['config'] !== undefined) {
+              resultVal = this.memoryCache['config'];
+            } else {
+              const snap = await getDoc(doc(rawFirestore, 'appConfig', 'main'));
+              if (snap.exists()) {
+                resultVal = snap.data() || {};
+                this.memoryCache['config'] = resultVal;
+              }
             }
           } else if (cleanPath === 'data/users') {
-            const snap = await this.fetchDocPreferServer(doc(rawFirestore, 'appData', 'users'));
-            if (snap.exists()) {
-              resultVal = normalizeToArray(snap.data()?.list);
-              this.memoryCache['data/users'] = resultVal;
+            if (this.memoryCache['data/users'] !== undefined) {
+              resultVal = this.memoryCache['data/users'];
+            } else {
+              const snap = await getDoc(doc(rawFirestore, 'appData', 'users'));
+              if (snap.exists()) {
+                resultVal = normalizeToArray(snap.data()?.list);
+                this.memoryCache['data/users'] = resultVal;
+              }
             }
           } else if (cleanPath === 'data/globalEvaluators' || cleanPath === 'data/evaluators') {
-            const snap = await this.fetchDocPreferServer(doc(rawFirestore, 'appData', 'evaluators'));
-            if (snap.exists()) {
-              resultVal = normalizeToArray(snap.data()?.list);
-              this.memoryCache['data/globalEvaluators'] = resultVal;
+            if (this.memoryCache['data/globalEvaluators'] !== undefined) {
+              resultVal = this.memoryCache['data/globalEvaluators'];
+            } else {
+              const snap = await getDoc(doc(rawFirestore, 'appData', 'evaluators'));
+              if (snap.exists()) {
+                resultVal = normalizeToArray(snap.data()?.list);
+                this.memoryCache['data/globalEvaluators'] = resultVal;
+              }
             }
           }
         } catch (e) {
@@ -561,7 +571,7 @@ class FirestoreRealtimeDbAdapter {
                 });
               } catch {}
             }
-            await setDoc(doc(rawFirestore, 'appData', 'competitions'), {
+            await this.safeWriteDoc('appData', 'competitions', {
               list: listToSave,
               updatedAt: now,
             });
@@ -588,40 +598,42 @@ class FirestoreRealtimeDbAdapter {
                 });
               } catch {}
             }
-            await setDoc(doc(rawFirestore, 'appData', 'competitions'), {
+            await this.safeWriteDoc('appData', 'competitions', {
               list: currentList,
               updatedAt: now,
             });
           } else if (cleanPath === 'config') {
-            await setDoc(
-              doc(rawFirestore, 'appConfig', 'main'),
+            await this.safeWriteDoc(
+              'appConfig',
+              'main',
               {
                 ...sanitized,
                 updatedAt: Date.now(),
               },
-              { merge: true }
+              true
             );
           } else if (cleanPath.startsWith('config/')) {
             const field = cleanPath.replace('config/', '');
-            await setDoc(
-              doc(rawFirestore, 'appConfig', 'main'),
+            await this.safeWriteDoc(
+              'appConfig',
+              'main',
               {
                 [field]: sanitized,
                 updatedAt: Date.now(),
               },
-              { merge: true }
+              true
             );
           } else if (cleanPath === 'data/users') {
             const listToSave = normalizeToArray(sanitized);
             this.memoryCache['data/users'] = listToSave;
-            await setDoc(doc(rawFirestore, 'appData', 'users'), {
+            await this.safeWriteDoc('appData', 'users', {
               list: listToSave,
               updatedAt: Date.now(),
             });
           } else if (cleanPath === 'data/globalEvaluators' || cleanPath === 'data/evaluators') {
             const listToSave = normalizeToArray(sanitized);
             this.memoryCache['data/globalEvaluators'] = listToSave;
-            await setDoc(doc(rawFirestore, 'appData', 'evaluators'), {
+            await this.safeWriteDoc('appData', 'evaluators', {
               list: listToSave,
               updatedAt: Date.now(),
             });
@@ -630,7 +642,7 @@ class FirestoreRealtimeDbAdapter {
               if (sanitized.competitions !== undefined) {
                 const compsList = normalizeToArray(sanitized.competitions);
                 this.memoryCache['data/competitions'] = compsList;
-                await setDoc(doc(rawFirestore, 'appData', 'competitions'), {
+                await this.safeWriteDoc('appData', 'competitions', {
                   list: compsList,
                   updatedAt: Date.now(),
                 });
@@ -638,7 +650,7 @@ class FirestoreRealtimeDbAdapter {
               if (sanitized.users !== undefined) {
                 const usersList = normalizeToArray(sanitized.users);
                 this.memoryCache['data/users'] = usersList;
-                await setDoc(doc(rawFirestore, 'appData', 'users'), {
+                await this.safeWriteDoc('appData', 'users', {
                   list: usersList,
                   updatedAt: Date.now(),
                 });
@@ -648,7 +660,7 @@ class FirestoreRealtimeDbAdapter {
                   sanitized.globalEvaluators || sanitized.evaluators
                 );
                 this.memoryCache['data/globalEvaluators'] = evalList;
-                await setDoc(doc(rawFirestore, 'appData', 'evaluators'), {
+                await this.safeWriteDoc('appData', 'evaluators', {
                   list: evalList,
                   updatedAt: Date.now(),
                 });
@@ -666,7 +678,7 @@ class FirestoreRealtimeDbAdapter {
         this.notify(cleanPath, null);
         try {
           if (cleanPath === 'data/competitions') {
-            await setDoc(doc(rawFirestore, 'appData', 'competitions'), {
+            await this.safeWriteDoc('appData', 'competitions', {
               list: [],
               updatedAt: Date.now(),
             });

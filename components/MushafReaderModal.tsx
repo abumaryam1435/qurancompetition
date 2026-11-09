@@ -467,7 +467,8 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
 
   const hasErrorControls = Boolean(setEvalFath || setEvalTashkeel || setEvalTajweed);
 
-  const hasCompetitionControls = Boolean(competitionErrors && competitionErrors.length > 0 && onCompetitionErrorChange);
+  const hasCompetitionControls = Boolean(competitionErrors && competitionErrors.length > 0);
+  const isCompReadOnly = !onCompetitionErrorChange && !onCompetitionSegmentErrorChange;
 
   if (!isOpen) return null;
 
@@ -693,7 +694,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
         <div className="flex-1 min-h-0 w-full relative flex flex-col overflow-hidden bg-[#f4ece1] dark:bg-gray-950">
           {targetPages.length > 1 && (
             <>
-              {/* زر الصفحة السابقة (جهة اليمين - يتجه السهم لليمين) - ثابت في مكانه عند التمرير */}
+              {/* زر الصفحة السابقة (جهة اليمين - يتجه السهم لليمين) - يظهر في الشاشات الكبيرة فقط ويثبت في مكانه عند التمرير */}
               <button
                 type="button"
                 onClick={(e) => {
@@ -701,7 +702,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                   handlePrev();
                 }}
                 disabled={currentIndex === 0}
-                className={`flex absolute right-1.5 sm:right-4 top-1/2 -translate-y-1/2 z-30 w-9 h-9 sm:w-12 sm:h-12 rounded-full bg-black/65 hover:bg-black/85 text-white shadow-xl border border-white/25 items-center justify-center font-black transition-all cursor-pointer ${
+                className={`hidden sm:flex absolute right-4 top-1/2 -translate-y-1/2 z-30 w-12 h-12 rounded-full bg-black/65 hover:bg-black/85 text-white shadow-xl border border-white/25 items-center justify-center font-black transition-all cursor-pointer ${
                   currentIndex === 0
                     ? 'opacity-0 pointer-events-none'
                     : 'hover:scale-110 active:scale-95'
@@ -709,12 +710,12 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                 title="الصفحة السابقة"
                 aria-label="الصفحة السابقة"
               >
-                <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.75" d="M9 5l7 7-7 7" />
                 </svg>
               </button>
 
-              {/* زر الصفحة التالية (جهة اليسار - يتجه السهم لليسار) - ثابت في مكانه عند التمرير */}
+              {/* زر الصفحة التالية (جهة اليسار - يتجه السهم لليسار) - يظهر في الشاشات الكبيرة فقط ويثبت في مكانه عند التمرير */}
               <button
                 type="button"
                 onClick={(e) => {
@@ -722,7 +723,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                   handleNext();
                 }}
                 disabled={currentIndex === targetPages.length - 1}
-                className={`flex absolute left-1.5 sm:left-4 top-1/2 -translate-y-1/2 z-30 w-9 h-9 sm:w-12 sm:h-12 rounded-full bg-black/65 hover:bg-black/85 text-white shadow-xl border border-white/25 items-center justify-center font-black transition-all cursor-pointer ${
+                className={`hidden sm:flex absolute left-4 top-1/2 -translate-y-1/2 z-30 w-12 h-12 rounded-full bg-black/65 hover:bg-black/85 text-white shadow-xl border border-white/25 items-center justify-center font-black transition-all cursor-pointer ${
                   currentIndex === targetPages.length - 1
                     ? 'opacity-0 pointer-events-none'
                     : 'hover:scale-110 active:scale-95'
@@ -730,7 +731,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                 title="الصفحة التالية"
                 aria-label="الصفحة التالية"
               >
-                <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.75" d="M15 19l-7-7 7-7" />
                 </svg>
               </button>
@@ -867,9 +868,12 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                       ? 'grid-cols-4 sm:grid-cols-7'
                       : 'grid-cols-4 sm:grid-cols-8';
 
+                  const currentPassageNum = currentSegIdx + 1;
+                  const isCurrentPassageDone = completedPassages.includes(currentPassageNum);
+
                   return (
                     <div className="flex flex-col gap-1.5 w-full max-w-5xl mx-auto">
-                      {/* السطر العلوي: تبديل المقاطع + غير حافظ + الدرجة الكلية + رقم الصفحة بدون أي قص لعناصر الشريط */}
+                      {/* السطر العلوي: تبديل المقاطع + تحديد كمسموع + غير حافظ + الدرجة الكلية + رقم الصفحة بدون أي قص لعناصر الشريط */}
                       <div className="flex flex-wrap items-center justify-between gap-1 bg-slate-100/90 dark:bg-gray-900/90 px-1.5 py-1 rounded-xl border border-slate-200 dark:border-gray-800 w-full">
                         {/* أزرار التنقل المختصرة بين المقاطع المقترحة */}
                         <div className="flex flex-wrap items-center gap-1 min-w-0">
@@ -877,6 +881,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                             const pNum = i + 1;
                             const segItem = competitionSegments?.[i];
                             const segUnmem = Boolean(segItem?.isUnmemorized);
+                            const segDone = completedPassages.includes(pNum);
                             const segDed = segItem
                               ? calcSegDed(segItem.errorsCount || {}, segUnmem)
                               : i === currentSegIdx
@@ -903,6 +908,11 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                               >
                                 <span className="sm:hidden">م{toArabicDigits(pNum)}</span>
                                 <span className="hidden sm:inline">مقطع {toArabicDigits(pNum)}</span>
+                                {segDone && (
+                                  <span className="text-[9px] text-emerald-500 font-black" title="تم التسميع">
+                                    ✓
+                                  </span>
+                                )}
                                 {segUnmem ? (
                                   <span className="px-1 rounded bg-rose-600 text-white text-[9px] font-black">
                                     ٠
@@ -939,8 +949,34 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                           )}
                         </div>
 
-                        {/* الدرجة النهائية + زر اختيار الصفحة */}
-                        <div className="flex items-center gap-1 shrink-0 mr-auto">
+                        {/* زر تحديد كمسموع + الدرجة النهائية + زر اختيار الصفحة */}
+                        <div className="flex flex-wrap items-center gap-1 shrink-0 mr-auto">
+                          {/* زر تحديد كمسموع جنب الدرجة وفوق أزرار الأخطاء */}
+                          <button
+                            type="button"
+                            disabled={!onTogglePassage}
+                            onClick={() => onTogglePassage?.(currentPassageNum)}
+                            className={`min-h-[28px] sm:min-h-[32px] px-2 sm:px-2.5 py-0.5 rounded-lg text-[11px] sm:text-xs font-black transition-all flex items-center justify-center gap-1 shrink-0 border ${
+                              !onTogglePassage
+                                ? isCurrentPassageDone
+                                  ? 'bg-emerald-600 text-white border-emerald-700 opacity-90 cursor-default'
+                                  : 'bg-slate-200 dark:bg-gray-800 text-slate-500 border-slate-300 dark:border-gray-700 opacity-75 cursor-default'
+                                : isCurrentPassageDone
+                                ? 'bg-emerald-600 text-white border-emerald-700 shadow-2xs cursor-pointer active:scale-95'
+                                : 'bg-amber-100 hover:bg-amber-200/80 text-amber-950 border-amber-300 dark:bg-gray-800 dark:text-amber-200 dark:border-amber-500/40 cursor-pointer active:scale-95'
+                            }`}
+                            title={
+                              isCurrentPassageDone
+                                ? `تم تسميع المقطع ${toArabicDigits(currentPassageNum)}`
+                                : `تحديد المقطع ${toArabicDigits(currentPassageNum)} كمسموع`
+                            }
+                          >
+                            <span>{isCurrentPassageDone ? '✓' : '○'}</span>
+                            <span>
+                              {isCurrentPassageDone ? 'تم التسميع' : 'تحديد كمسموع'}
+                            </span>
+                          </button>
+
                           <div className="flex items-center gap-1 bg-emerald-50 dark:bg-gray-800 px-2 py-0.5 min-h-[28px] sm:min-h-[32px] rounded-lg border border-emerald-300 dark:border-emerald-500/40">
                             <span className="text-[10px] sm:text-[11px] text-gray-600 dark:text-gray-300 font-bold hidden xs:inline">
                               الدرجة:
@@ -976,7 +1012,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                       <div className={`grid gap-1.5 sm:gap-2 w-full ${gridColsClass}`}>
                         {competitionErrors.map((err, errIdx) => {
                           const count = currentCounts?.[err.id] || 0;
-                          const isPlusDisabled = isCurrentSegUnmem || isCurrentCapReached;
+                          const isPlusDisabled = isCompReadOnly || isCurrentSegUnmem || isCurrentCapReached;
                           const st = getErrorColorStyle(err, competitionErrorCategories);
                           // في شاشة الهاتف فقط إذا كان عدد الأزرار 3 يتمدد الزر الثالث ليملأ الصف الثاني
                           const spanClass =
@@ -1025,7 +1061,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
 
                                 <button
                                   type="button"
-                                  disabled={count === 0 || isCurrentSegUnmem}
+                                  disabled={isCompReadOnly || count === 0 || isCurrentSegUnmem}
                                   onClick={() =>
                                     updateErrorForCurrentSeg(err.id, Math.max(0, count - 1))
                                   }

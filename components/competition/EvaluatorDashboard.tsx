@@ -11,6 +11,8 @@ import {
   Award,
   AlertTriangle,
   MessageSquare,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 import ParticipantEvaluation from './ParticipantEvaluation';
 import { Logo, AwqafBadge } from '../Logo';
@@ -247,6 +249,7 @@ export default function EvaluatorDashboard({
     if (participant) {
       return (
         <ParticipantEvaluation
+          key={participant.id}
           comp={comp}
           evaluator={evaluator}
           participant={participant}
@@ -450,7 +453,7 @@ export default function EvaluatorDashboard({
           </div>
 
           {/* شبكة بطاقات المتسابقين */}
-          <div className="grid gap-3 sm:grid-cols-2 pt-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 w-full">
             {filteredParticipants.map(p => {
               const level = (comp.levels || []).find(
                 l => Number(l.id) === Number(p.levelId)
@@ -475,11 +478,15 @@ export default function EvaluatorDashboard({
                 myEval?.isUnmemorized ||
                 allStudentEvals.some(ev => ev.isUnmemorized);
 
+              const isEditAllowed = (evaluator.allowedEditLevelIds || [])
+                .map(Number)
+                .includes(Number(p.levelId));
+
               return (
                 <button
                   key={p.id}
                   onClick={() => setSelectedParticipantId(p.id)}
-                  className={`min-h-[112px] flex flex-col justify-between text-right p-4 rounded-2xl border-2 transition-all active:scale-[0.98] cursor-pointer ${
+                  className={`w-full max-w-full min-w-0 overflow-hidden flex flex-col justify-between gap-2.5 text-right p-3.5 sm:p-4 rounded-2xl border-2 transition-all active:scale-[0.99] cursor-pointer ${
                     isStudentUnmemorized
                       ? 'border-red-300 bg-red-50/50 dark:bg-red-950/20 dark:border-red-900/60 hover:bg-red-50'
                       : hasEvaluated
@@ -487,60 +494,83 @@ export default function EvaluatorDashboard({
                       : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 hover:border-emerald-500 hover:shadow-md'
                   }`}
                 >
-                  <div className="flex justify-between items-start w-full gap-2 mb-2">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-black text-base sm:text-lg text-slate-900 dark:text-white block">
-                          {p.name}
-                        </span>
-                        {isStudentUnmemorized && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-red-600 text-white text-[11px] font-black shrink-0 shadow-xs">
-                            <AlertTriangle size={12} />
-                            <span>غير حافظ</span>
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
-                        {level?.name || 'مستوى عام'}
+                  {/* 1. الاسم الكامل للمتسابق (الاسم الثلاثي والقبيلة) + اسم المستوى بكامل عرض البطاقة */}
+                  <div className="w-full min-w-0 text-right space-y-1">
+                    <div className="flex items-start justify-between gap-2 w-full min-w-0">
+                      <span className="font-black text-base sm:text-lg text-slate-900 dark:text-white leading-snug break-words whitespace-normal flex-1 min-w-0">
+                        {p.name}
                       </span>
+                      {isStudentUnmemorized && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-red-600 text-white text-[11px] font-black shrink-0 shadow-xs">
+                          <AlertTriangle size={12} />
+                          <span>غير حافظ</span>
+                        </span>
+                      )}
                     </div>
 
-                    {hasEvaluated ? (
-                      myEval.isUnmemorized ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-red-600 text-white text-xs font-black shrink-0 shadow-xs">
-                          <AlertTriangle size={13} />
-                          <span>غير حافظ (0)</span>
+                    <span className="block text-xs sm:text-sm font-bold text-emerald-800 dark:text-emerald-300 leading-snug break-words whitespace-normal">
+                      {level?.name || 'مستوى عام'}
+                    </span>
+                  </div>
+
+                  {/* 2. شريط النتيجة وحالة الاعتماد في سطر مستقل مريح بعرض البطاقة */}
+                  {hasEvaluated ? (
+                    <div className="w-full flex flex-wrap items-center justify-between gap-1.5 bg-white/85 dark:bg-slate-900/60 px-2.5 py-2 rounded-xl border border-emerald-200/80 dark:border-slate-700/80">
+                      {myEval.isUnmemorized ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-red-600 text-white text-xs font-black shadow-xs">
+                          <AlertTriangle size={13} className="shrink-0" />
+                          <span>غير حافظ (0 / {level?.maxScore || 100})</span>
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-emerald-600 text-white text-xs font-black shrink-0 shadow-xs">
-                          <CheckCircle size={14} />
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-600 text-white text-xs font-black shadow-xs">
+                          <CheckCircle size={14} className="shrink-0" />
                           <span>
                             درجتك: {myEval.totalScore} / {level?.maxScore || 100}
                           </span>
                         </span>
-                      )
-                    ) : (
-                      <span className="px-2.5 py-1 rounded-xl bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 text-xs font-black shrink-0 border border-amber-300/60 dark:border-amber-800">
-                        ابدأ التقييم
-                      </span>
-                    )}
-                  </div>
+                      )}
 
-                  {myEval?.notes && (
-                    <div className="w-full mb-2.5 text-xs text-slate-700 dark:text-slate-300 bg-amber-50/80 dark:bg-slate-900/60 border border-amber-200 dark:border-slate-700 p-2 rounded-xl flex items-start gap-1.5 font-bold">
-                      <MessageSquare size={13} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                      <span className="truncate">ملاحظتك: {myEval.notes}</span>
+                      {isEditAllowed ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-900 dark:text-emerald-200 bg-emerald-100 dark:bg-emerald-950/80 px-2.5 py-1 rounded-lg border border-emerald-300 dark:border-emerald-700 shadow-2xs">
+                          <Unlock size={11} className="text-emerald-700 dark:text-emerald-400 shrink-0" />
+                          <span>التعديل مأذون</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-900 dark:text-amber-200 bg-amber-100/90 dark:bg-amber-950/80 px-2.5 py-1 rounded-lg border border-amber-300 dark:border-amber-800">
+                          <Lock size={11} className="text-amber-700 dark:text-amber-400 shrink-0" />
+                          <span>معتمد ومقفل</span>
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="w-full flex items-center justify-between gap-2 bg-amber-50/70 dark:bg-slate-900/50 px-2.5 py-1.5 rounded-xl border border-amber-200/70 dark:border-slate-700/80">
+                      <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                        بانتظار رصد التقييم
+                      </span>
+                      <span className="px-2.5 py-1 rounded-lg bg-amber-500 text-white text-xs font-black shrink-0 shadow-2xs">
+                        ابدأ التقييم ←
+                      </span>
                     </div>
                   )}
 
-                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/70 dark:border-slate-700/70 text-[11px] text-slate-600 dark:text-slate-300 w-full">
-                    <div className="flex flex-wrap items-center gap-1.5">
+                  {myEval?.notes && (
+                    <div className="w-full min-w-0 text-xs text-slate-700 dark:text-slate-300 bg-amber-50/80 dark:bg-slate-900/60 border border-amber-200 dark:border-slate-700 p-2 rounded-xl flex items-start gap-1.5 font-bold overflow-hidden">
+                      <MessageSquare size={13} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                      <span className="break-words whitespace-normal min-w-0 flex-1">
+                        ملاحظتك: {myEval.notes}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* 3. تفاصيل المقاطع والأجزاء وعدد المقيمين */}
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 pt-2 border-t border-slate-200/70 dark:border-slate-700/70 text-[11px] text-slate-600 dark:text-slate-300 w-full min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                       <span className="font-black bg-emerald-100 dark:bg-emerald-900/50 text-emerald-900 dark:text-emerald-200 px-2 py-0.5 rounded-lg">
                         🎯 {level?.segmentsCount || 3} مقاطع ×{' '}
                         {level?.linesPerSegment || 7} أسطر فعلية
                       </span>
                       {(p.juzsOrSurahs || level?.juzsOrSurahs) && (
-                        <span className="bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-lg font-bold truncate max-w-[190px]">
+                        <span className="bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-lg font-bold break-words">
                           📖 {formatJuzsOrSurahsDisplay(p.juzsOrSurahs || level?.juzsOrSurahs)}
                         </span>
                       )}
@@ -548,10 +578,10 @@ export default function EvaluatorDashboard({
 
                     {allStudentEvals.length > 0 && (
                       <span
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-black"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-black shrink-0"
                         title="عدد المقيمين الذين قاموا بتقييم هذا المتسابق"
                       >
-                        <Users size={12} />
+                        <Users size={12} className="shrink-0" />
                         <span>قيّمه {allStudentEvals.length} مقيم</span>
                       </span>
                     )}

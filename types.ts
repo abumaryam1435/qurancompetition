@@ -51,6 +51,7 @@ export interface CompetitionEvaluator {
   name: string;
   pin?: string;
   levelIds: number[];
+  allowedEditLevelIds?: number[];
 }
 
 export interface GlobalEvaluator {

@@ -41,6 +41,8 @@ import {
   Search,
   RefreshCw,
   FileCheck,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
@@ -607,6 +609,14 @@ function exportCompetitionSetupExcel(
     evaluators.length > 0
       ? evaluators.map((ev, idx) => {
           const info = getEvaluatorAssignedLevelsInfo(ev, levels, participants);
+          const allowedEditNames = (ev.allowedEditLevelIds || [])
+            .map(lvlId => levels.find(l => Number(l.id) === Number(lvlId))?.name)
+            .filter(Boolean);
+          const editPermissionText =
+            allowedEditNames.length > 0
+              ? `مسموح بالتعديل في (${allowedEditNames.join(' ، ')})`
+              : 'مقفل بعد الاعتماد (الافتراضي)';
+
           return {
             'م': idx + 1,
             'اسم المقيم': ev.name,
@@ -615,6 +625,7 @@ function exportCompetitionSetupExcel(
             'نطاق الإسناد': info.isAllLevels
               ? `جميع المستويات (${info.assignedLevels.length})`
               : `${info.assignedLevels.length} من ${levels.length} مستويات`,
+            'صلاحية تعديل التقييمات بعد الحفظ': editPermissionText,
             'عدد المتسابقين المشمولين بتحكيمه': info.participantsCount,
           };
         })
@@ -625,6 +636,7 @@ function exportCompetitionSetupExcel(
             'رمز الدخول (PIN)': '-',
             'المستويات المسندة للمقيم': '-',
             'نطاق الإسناد': '-',
+            'صلاحية تعديل التقييمات بعد الحفظ': '-',
             'عدد المتسابقين المشمولين بتحكيمه': 0,
           },
         ];
@@ -820,6 +832,12 @@ async function exportCompetitionSetupPDF(
                   `<span style="display:inline-block;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0;border-radius:6px;padding:2px 8px;margin:2px;font-size:11px;font-weight:800;">${l.name}</span>`
               )
               .join(' ');
+            const allowedEditCount = (ev.allowedEditLevelIds || []).length;
+            const editPermHtml =
+              allowedEditCount > 0
+                ? `<span style="color:#047857;font-weight:800;font-size:10px;background:#ecfdf5;padding:2px 6px;border-radius:4px;border:1px solid #a7f3d0;">🔓 مسموح (${allowedEditCount})</span>`
+                : `<span style="color:#64748b;font-weight:700;font-size:10px;background:#f1f5f9;padding:2px 6px;border-radius:4px;border:1px solid #cbd5e1;">🔒 مقفل بعد الحفظ</span>`;
+
             return `
               <tr style="background:${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
                 <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${idx + 1}</td>
@@ -827,12 +845,13 @@ async function exportCompetitionSetupPDF(
                 <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-family:monospace;font-weight:900;color:#b45309;background:#fffbeb;">${ev.pin || '-'}</td>
                 <td style="padding:8px 10px;border:1px solid #cbd5e1;">${badgesHtml || 'جميع المستويات'}</td>
                 <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${info.assignedLevels.length} من ${levels.length}</td>
+                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;">${editPermHtml}</td>
                 <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;color:#047857;">${info.participantsCount}</td>
               </tr>
             `;
           })
           .join('')
-      : `<tr><td colspan="6" style="padding:14px;border:1px solid #cbd5e1;text-align:center;color:#64748b;font-weight:700;">لا يوجد مقيمون مضافون لهذه المسابقة حالياً</td></tr>`;
+      : `<tr><td colspan="7" style="padding:14px;border:1px solid #cbd5e1;text-align:center;color:#64748b;font-weight:700;">لا يوجد مقيمون مضافون لهذه المسابقة حالياً</td></tr>`;
 
   const levelsRowsHtml =
     levels.length > 0
@@ -983,6 +1002,7 @@ async function exportCompetitionSetupPDF(
           <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 100px; text-align: center;">رمز الدخول</th>
           <th style="padding: 8px 10px; border: 1px solid #cbd5e1;">المستويات المسندة إليه (في أي المستويات هو)</th>
           <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 85px; text-align: center;">عدد المستويات</th>
+          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 110px; text-align: center;">صلاحية التعديل</th>
           <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 85px; text-align: center;">عدد الطلاب</th>
         </tr>
       </thead>
@@ -4052,6 +4072,41 @@ function CompetitionEvaluators({
     context?.showToast('تم تحديث المستويات المسندة للمقيم بنجاح!', 'success');
   };
 
+  const handleQuickToggleEditAllowedLevel = (ev: CompetitionEvaluator, lvlId: number) => {
+    const currentAllowed = ev.allowedEditLevelIds || [];
+    const isAllowed = currentAllowed.includes(lvlId);
+    const nextAllowed = isAllowed
+      ? currentAllowed.filter(id => id !== lvlId)
+      : [...currentAllowed, lvlId];
+
+    const updated = (comp.evaluators || []).map(item =>
+      item.id === ev.id ? { ...item, allowedEditLevelIds: nextAllowed } : item
+    );
+    onUpdate({ ...comp, evaluators: updated });
+    const lvlName = (comp.levels || []).find(l => l.id === lvlId)?.name || `المستوى ${lvlId}`;
+    context?.showToast(
+      isAllowed
+        ? `تم قفل تعديل التقييمات للمقيم (${ev.name}) في (${lvlName})`
+        : `تم السماح للمقيم (${ev.name}) بتعديل التقييمات بعد الحفظ في (${lvlName})!`,
+      isAllowed ? 'info' : 'success'
+    );
+  };
+
+  const handleToggleAllEditAllowed = (ev: CompetitionEvaluator, allowAll: boolean) => {
+    const assigned = ev.levelIds && ev.levelIds.length > 0 ? ev.levelIds : (comp.levels || []).map(l => l.id);
+    const nextAllowed = allowAll ? [...assigned] : [];
+    const updated = (comp.evaluators || []).map(item =>
+      item.id === ev.id ? { ...item, allowedEditLevelIds: nextAllowed } : item
+    );
+    onUpdate({ ...comp, evaluators: updated });
+    context?.showToast(
+      allowAll
+        ? `تم فتح صلاحية تعديل التقييمات للمقيم (${ev.name}) في كافة المستويات المسندة إليه!`
+        : `تم قفل تعديل التقييمات للمقيم (${ev.name}) في جميع المستويات (مقفل بعد الحفظ).`,
+      allowAll ? 'success' : 'info'
+    );
+  };
+
   return (
     <div className="space-y-5 sm:space-y-6">
       {/* بطاقة اختيار المقيمين للمسابقة من القائمة فقط */}
@@ -4383,6 +4438,70 @@ function CompetitionEvaluators({
                     })}
                   </div>
                 </div>
+
+                {/* بطاقة التحكم بصلاحية تعديل التقييمات بعد الحفظ على الهاتف (ملونة ومميزة) */}
+                <div className="bg-gradient-to-br from-indigo-50/90 via-purple-50/40 to-amber-50/50 dark:from-indigo-950/60 dark:via-purple-950/30 dark:to-amber-950/20 border-2 border-indigo-200 dark:border-indigo-800/80 p-3 rounded-2xl shadow-xs space-y-2.5 mt-2">
+                  <div className="flex items-center justify-between gap-2 border-b border-indigo-100 dark:border-indigo-900/60 pb-2">
+                    <span className="text-[11px] font-black text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
+                      <span className="p-1 rounded-lg bg-indigo-600 text-white shrink-0">
+                        <Lock size={12} />
+                      </span>
+                      <span>صلاحية تعديل التقييمات بعد الحفظ:</span>
+                    </span>
+                    <div className="flex items-center gap-1.5 text-[10px]">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleAllEditAllowed(ev, true)}
+                        className="px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-black shadow-2xs flex items-center gap-1 cursor-pointer transition active:scale-95"
+                      >
+                        <Unlock size={10} />
+                        <span>السماح للكل</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleAllEditAllowed(ev, false)}
+                        className="px-2 py-0.5 rounded-lg bg-rose-100 hover:bg-rose-200 dark:bg-rose-950 text-rose-800 dark:text-rose-200 border border-rose-300 dark:border-rose-800 font-black shadow-2xs flex items-center gap-1 cursor-pointer transition active:scale-95"
+                      >
+                        <Lock size={10} />
+                        <span>قفل الكل</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {info.assignedLevels.map(lvl => {
+                      const isAllowed = (ev.allowedEditLevelIds || []).includes(lvl.id);
+                      return (
+                        <button
+                          key={lvl.id}
+                          type="button"
+                          onClick={() => handleQuickToggleEditAllowedLevel(ev, lvl.id)}
+                          className={`px-2.5 py-1 rounded-xl text-[11px] font-black flex items-center gap-1.5 transition active:scale-95 cursor-pointer border-2 shadow-2xs ${
+                            isAllowed
+                              ? 'bg-gradient-to-r from-emerald-500/20 to-emerald-500/10 dark:from-emerald-950 dark:to-emerald-900/80 text-emerald-950 dark:text-emerald-100 border-emerald-500 font-black'
+                              : 'bg-white hover:bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+                          }`}
+                          title={isAllowed ? 'مسموح بالتعديل بعد الحفظ (اضغط للقفل)' : 'مقفل بعد الحفظ (اضغط للسماح بالتعديل)'}
+                        >
+                          {isAllowed ? (
+                            <Unlock size={11} className="text-emerald-600 shrink-0" />
+                          ) : (
+                            <Lock size={11} className="text-slate-400 shrink-0" />
+                          )}
+                          <span>{lvl.name}</span>
+                          <span
+                            className={`text-[9px] font-black px-1.5 py-0.5 rounded-md ${
+                              isAllowed
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            {isAllowed ? 'مسموح' : 'مقفل'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             );
           })}
@@ -4402,6 +4521,7 @@ function CompetitionEvaluators({
                 <th className="p-3.5 border-b dark:border-slate-700">اسم المقيم</th>
                 <th className="p-3.5 border-b dark:border-slate-700">رمز الدخول</th>
                 <th className="p-3.5 border-b dark:border-slate-700">المستويات المسندة للمقيم (اضغط للتبديل السريع)</th>
+                <th className="p-3.5 border-b dark:border-slate-700">صلاحية التعديل بعد الحفظ (بإذن المشرف)</th>
                 <th className="p-3.5 border-b dark:border-slate-700 text-center">المتسابقون</th>
                 <th className="p-3.5 border-b dark:border-slate-700 w-36 text-center">إجراءات</th>
               </tr>
@@ -4468,6 +4588,65 @@ function CompetitionEvaluators({
                         })}
                       </div>
                     </td>
+                    <td className="p-3 bg-gradient-to-br from-indigo-50/40 via-purple-50/20 to-amber-50/30 dark:from-indigo-950/30 dark:via-purple-950/20 dark:to-amber-950/20 border-r border-l border-indigo-100 dark:border-indigo-900/40 text-sm">
+                      <div className="space-y-1.5">
+                        <div className="flex flex-wrap gap-1">
+                          {info.assignedLevels.map(lvl => {
+                            const isAllowed = (ev.allowedEditLevelIds || []).includes(lvl.id);
+                            return (
+                              <button
+                                key={lvl.id}
+                                type="button"
+                                onClick={() => handleQuickToggleEditAllowedLevel(ev, lvl.id)}
+                                className={`px-2 py-0.5 rounded-lg text-[11px] font-black flex items-center gap-1 transition active:scale-95 cursor-pointer border-2 shadow-2xs ${
+                                  isAllowed
+                                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 shadow-xs'
+                                    : 'bg-white hover:bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-600'
+                                }`}
+                                title={
+                                  isAllowed
+                                    ? 'مسموح بالتعديل بعد الحفظ (اضغط للقفل)'
+                                    : 'مقفل بعد الحفظ (اضغط للسماح بالتعديل)'
+                                }
+                              >
+                                {isAllowed ? (
+                                  <Unlock size={11} className="text-white shrink-0" />
+                                ) : (
+                                  <Lock size={11} className="text-slate-400 shrink-0" />
+                                )}
+                                <span>{lvl.name}</span>
+                                <span
+                                  className={`text-[9px] font-black px-1 rounded ${
+                                    isAllowed
+                                      ? 'bg-emerald-800/80 text-white'
+                                      : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                                  }`}
+                                >
+                                  {isAllowed ? 'مسموح' : 'مقفل'}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="flex items-center gap-1.5 text-[10px]">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleAllEditAllowed(ev, true)}
+                            className="px-2 py-0.5 rounded-md bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-black cursor-pointer transition"
+                          >
+                            السماح للكل
+                          </button>
+                          <span className="text-slate-300 dark:text-slate-600">•</span>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleAllEditAllowed(ev, false)}
+                            className="px-2 py-0.5 rounded-md bg-rose-100 hover:bg-rose-200 dark:bg-rose-950 text-rose-800 dark:text-rose-200 border border-rose-200 dark:border-rose-800 font-black cursor-pointer transition"
+                          >
+                            قفل الكل
+                          </button>
+                        </div>
+                      </div>
+                    </td>
                     <td className="p-3.5 text-center">
                       <span className="px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/70 text-amber-900 dark:text-amber-300 text-xs font-black border border-amber-200 dark:border-amber-800">
                         {info.participantsCount} متسابق
@@ -4499,7 +4678,7 @@ function CompetitionEvaluators({
               })}
               {(comp.evaluators || []).length === 0 && (
                 <tr>
-                  <td colSpan={6} className="p-8 text-center text-slate-400 font-bold">
+                  <td colSpan={7} className="p-8 text-center text-slate-400 font-bold">
                     لا يوجد مقيمون مضافون لهذه المسابقة حالياً. اختر من القائمة المنسدلة بالأعلى لإضافتهم وتحديد مستوياتهم.
                   </td>
                 </tr>
@@ -4653,6 +4832,106 @@ function CompetitionEvaluators({
                   })}
                 </div>
               </div>
+
+              {/* بطاقة صلاحية تعديل التقييمات بعد الحفظ (ملونة ومميزة مع تمييز كل جزئية بلون خاص) */}
+              <div className="p-4 rounded-2xl bg-gradient-to-br from-indigo-50/90 via-purple-50/40 to-amber-50/60 dark:from-indigo-950/50 dark:via-purple-950/30 dark:to-amber-950/20 border-2 border-indigo-300 dark:border-indigo-700 shadow-md space-y-3.5">
+                {/* 1. رأس البطاقة: عنوان مميز بأيقونة مع عداد الصلاحيات وأزرار التحكم السريع */}
+                <div className="flex items-center justify-between gap-2 flex-wrap border-b border-indigo-100 dark:border-indigo-900/60 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-xl bg-indigo-600 text-white shadow-xs">
+                      <Lock size={16} />
+                    </div>
+                    <div>
+                      <span className="font-black text-xs sm:text-sm text-indigo-950 dark:text-indigo-200 block">
+                        صلاحية تعديل التقييمات بعد الحفظ
+                      </span>
+                      <span className="text-[10px] font-extrabold text-indigo-700 dark:text-indigo-400">
+                        مسموح بالتعديل في ({(editingEval.allowedEditLevelIds || []).length}) مستويات
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* أزرار السماح والقفل السريع الملونة */}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allAssigned =
+                          editingEval.levelIds && editingEval.levelIds.length > 0
+                            ? editingEval.levelIds
+                            : (comp.levels || []).map(l => l.id);
+                        setEditingEval({ ...editingEval, allowedEditLevelIds: [...allAssigned] });
+                      }}
+                      className="px-2.5 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-black transition active:scale-95 shadow-xs flex items-center gap-1 cursor-pointer"
+                    >
+                      <Unlock size={12} />
+                      <span>السماح للكل</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingEval({ ...editingEval, allowedEditLevelIds: [] });
+                      }}
+                      className="px-2.5 py-1 rounded-xl bg-rose-100 hover:bg-rose-200 dark:bg-rose-950/80 text-rose-800 dark:text-rose-200 border border-rose-300 dark:border-rose-800 text-[11px] font-black transition active:scale-95 shadow-xs flex items-center gap-1 cursor-pointer"
+                    >
+                      <Lock size={12} />
+                      <span>قفل الكل</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 2. شريط التوجيه والإيضاح بلون أزرق تنبيهي مميز */}
+                <div className="p-2.5 rounded-xl bg-blue-50/90 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900/60 text-blue-950 dark:text-blue-200 text-[11px] font-bold flex items-start gap-2 leading-relaxed">
+                  <div className="w-2 h-2 rounded-full bg-blue-600 shrink-0 mt-1.5" />
+                  <span>
+                    الوضع الافتراضي هو <strong>«مقفل بعد الحفظ»</strong> لحماية الدرجات. اضغط على أي مستوى لفتح إمكانية إعادة التقييم للمقيم فيه.
+                  </span>
+                </div>
+
+                {/* 3. شبكة المستويات مع تمييز لوني واضح بين المسموح (أخضر) والمقفل (رمادي/أحمر) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-44 overflow-y-auto p-2 border-2 rounded-2xl dark:border-slate-700 bg-white dark:bg-slate-900 shadow-inner">
+                  {(comp.levels || []).map(lvl => {
+                    const isAssigned =
+                      (editingEval.levelIds || []).length === 0 ||
+                      (editingEval.levelIds || []).includes(lvl.id);
+                    const isAllowedEdit = (editingEval.allowedEditLevelIds || []).includes(lvl.id);
+                    return (
+                      <button
+                        key={lvl.id}
+                        type="button"
+                        disabled={!isAssigned}
+                        onClick={() => {
+                          const current = editingEval.allowedEditLevelIds || [];
+                          const next = isAllowedEdit
+                            ? current.filter(id => id !== lvl.id)
+                            : [...current, lvl.id];
+                          setEditingEval({ ...editingEval, allowedEditLevelIds: next });
+                        }}
+                        className={`p-2.5 rounded-xl text-xs font-bold border-2 transition flex items-center justify-between gap-1.5 cursor-pointer ${
+                          !isAssigned
+                            ? 'opacity-40 bg-slate-100 dark:bg-slate-800/40 text-slate-400 cursor-not-allowed border-dashed border-slate-300 dark:border-slate-700'
+                            : isAllowedEdit
+                            ? 'bg-gradient-to-r from-emerald-500/15 to-emerald-500/5 dark:from-emerald-950/80 dark:to-emerald-900/40 border-emerald-500 text-emerald-950 dark:text-emerald-100 font-black shadow-xs'
+                            : 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+                        }`}
+                      >
+                        <span className="truncate">{lvl.name}</span>
+                        {isAllowedEdit ? (
+                          <span className="bg-emerald-600 text-white px-2 py-0.5 rounded-md font-black text-[10px] flex items-center gap-1 shrink-0 shadow-2xs">
+                            <Unlock size={11} />
+                            <span>مسموح بالتعديل</span>
+                          </span>
+                        ) : (
+                          <span className="bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 px-2 py-0.5 rounded-md font-bold text-[10px] flex items-center gap-1 shrink-0">
+                            <Lock size={11} />
+                            <span>مقفل</span>
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-800">
@@ -4660,7 +4939,7 @@ function CompetitionEvaluators({
                 type="submit"
                 className="min-h-[46px] rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs sm:text-sm cursor-pointer shadow-xs"
               >
-                حفظ المستويات
+                حفظ الإعدادات والصلاحيات
               </button>
               <button
                 type="button"
@@ -5942,6 +6221,13 @@ function CompetitionReports({
   const [deleteConfirmEvalId, setDeleteConfirmEvalId] = useState<string | null>(
     null
   );
+  // إدارة وحذف التقييمات (المحددة أو الكل أو الفردية)
+  const [selectedEvalIds, setSelectedEvalIds] = useState<Set<string>>(new Set());
+  const [showDeleteAllEvalsModal, setShowDeleteAllEvalsModal] = useState(false);
+  const [showDeleteSelectedEvalsModal, setShowDeleteSelectedEvalsModal] = useState(false);
+  const [showManageEvalsModal, setShowManageEvalsModal] = useState(false);
+  const [manageEvalsSearchQuery, setManageEvalsSearchQuery] = useState('');
+  const [deleteConfirmParticipantId, setDeleteConfirmParticipantId] = useState<number | null>(null);
   const [excludeParticipantTarget, setExcludeParticipantTarget] = useState<
     CompetitionParticipant | 'all' | null
   >(null);
@@ -6941,18 +7227,119 @@ function CompetitionReports({
     );
   };
 
-  // حذف تقييم
+  // حذف تقييم فردي
   const handleDeleteEvaluation = (evaluationId: string) => {
     if (!onUpdate) return;
+    const targetEval = (comp.evaluations || []).find(
+      ev => String(ev.id) === String(evaluationId)
+    );
     const updatedEvals = (comp.evaluations || []).filter(
       ev => String(ev.id) !== String(evaluationId)
+    );
+    const targetPId = targetEval?.participantId;
+    let updatedParticipants = comp.participants || [];
+    if (targetPId) {
+      const remainingForPart = updatedEvals.filter(
+        e => Number(e.participantId) === Number(targetPId)
+      );
+      const stillUnmemorized =
+        remainingForPart.length > 0 && remainingForPart.every(e => e.isUnmemorized);
+      updatedParticipants = updatedParticipants.map(p =>
+        Number(p.id) === Number(targetPId)
+          ? { ...p, isUnmemorized: stillUnmemorized }
+          : p
+      );
+    }
+    onUpdate({
+      ...comp,
+      evaluations: updatedEvals,
+      participants: updatedParticipants,
+    });
+    setDeleteConfirmEvalId(null);
+    setSelectedEvalIds(prev => {
+      const copy = new Set(prev);
+      copy.delete(String(evaluationId));
+      return copy;
+    });
+    context?.showToast('تم حذف التقييم بنجاح', 'success');
+  };
+
+  // حذف جميع التقييمات في المسابقة بالكامل
+  const handleDeleteAllEvaluations = () => {
+    if (!onUpdate) return;
+    const totalCount = (comp.evaluations || []).length;
+    const updatedParticipants = (comp.participants || []).map(p => ({
+      ...p,
+      isUnmemorized: false,
+    }));
+    onUpdate({
+      ...comp,
+      evaluations: [],
+      participants: updatedParticipants,
+    });
+    setSelectedEvalIds(new Set());
+    setShowDeleteAllEvalsModal(false);
+    setShowManageEvalsModal(false);
+    context?.showToast(`تم حذف جميع التقييمات (${totalCount} تقييم) بنجاح`, 'success');
+  };
+
+  // حذف التقييمات المحددة فقط
+  const handleDeleteSelectedEvaluations = () => {
+    if (!onUpdate || selectedEvalIds.size === 0) return;
+    const countToDelete = selectedEvalIds.size;
+    const updatedEvals = (comp.evaluations || []).filter(
+      ev => !selectedEvalIds.has(String(ev.id))
+    );
+    const affectedParticipantIds = new Set(
+      (comp.evaluations || [])
+        .filter(ev => selectedEvalIds.has(String(ev.id)))
+        .map(ev => Number(ev.participantId))
+    );
+    const updatedParticipants = (comp.participants || []).map(p => {
+      if (affectedParticipantIds.has(Number(p.id))) {
+        const remaining = updatedEvals.filter(
+          e => Number(e.participantId) === Number(p.id)
+        );
+        const stillUnmemorized =
+          remaining.length > 0 && remaining.every(e => e.isUnmemorized);
+        return { ...p, isUnmemorized: stillUnmemorized };
+      }
+      return p;
+    });
+
+    onUpdate({
+      ...comp,
+      evaluations: updatedEvals,
+      participants: updatedParticipants,
+    });
+    setSelectedEvalIds(new Set());
+    setShowDeleteSelectedEvalsModal(false);
+    context?.showToast(`تم حذف التقييمات المحددة (${countToDelete} تقييم) بنجاح`, 'success');
+  };
+
+  // حذف كافة تقييمات متسابق محدد وإعادته لحالة بانتظار التقييم
+  const handleDeleteParticipantEvaluations = (pId: number) => {
+    if (!onUpdate) return;
+    const updatedEvals = (comp.evaluations || []).filter(
+      ev => Number(ev.participantId) !== Number(pId)
+    );
+    const updatedParticipants = (comp.participants || []).map(p =>
+      Number(p.id) === Number(pId) ? { ...p, isUnmemorized: false } : p
     );
     onUpdate({
       ...comp,
       evaluations: updatedEvals,
+      participants: updatedParticipants,
     });
-    setDeleteConfirmEvalId(null);
-    context?.showToast('تم حذف التقييم بنجاح', 'success');
+    setSelectedEvalIds(prev => {
+      const copy = new Set(prev);
+      (comp.evaluations || [])
+        .filter(ev => Number(ev.participantId) === Number(pId))
+        .forEach(ev => copy.delete(String(ev.id)));
+      return copy;
+    });
+    setDeleteConfirmParticipantId(null);
+    context?.showToast('تم حذف تقييمات المتسابق بنجاح وإعادته لحالة «بانتظار التقييم»', 'success');
   };
 
   // استبعاد غير الحافظين
@@ -7177,8 +7564,34 @@ function CompetitionReports({
           </button>
         </div>
 
-        {/* أزرار التصدير والطباعة السريعة (PDF + Excel + طباعة) */}
+        {/* أزرار التصدير والطباعة السريعة وإدارة التقييمات */}
         <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto justify-end">
+          {/* زر إدارة وحذف التقييمات */}
+          <button
+            type="button"
+            onClick={() => setShowManageEvalsModal(true)}
+            className="min-h-[42px] px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-black text-xs sm:text-sm flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+            title="إدارة وحذف التقييمات المسجلة"
+          >
+            <Sliders size={16} />
+            <span>إدارة وحذف التقييمات</span>
+            <span className="px-2 py-0.5 rounded-full bg-[#09152C] text-amber-300 text-[11px] font-black">
+              {(comp.evaluations || []).length}
+            </span>
+          </button>
+
+          {(comp.evaluations || []).length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowDeleteAllEvalsModal(true)}
+              className="min-h-[42px] px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800 font-black text-xs sm:text-sm flex items-center gap-1.5 transition cursor-pointer"
+              title="حذف جميع تقييمات المسابقة"
+            >
+              <Trash2 size={16} />
+              <span>حذف التقييمات كلها</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={exportExcel}
@@ -7243,6 +7656,43 @@ function CompetitionReports({
           </button>
         </div>
       </div>
+
+      {/* شريط الإجراءات السريعة عند تحديد تقييمات معينة */}
+      {selectedEvalIds.size > 0 && (
+        <div className="sticky top-2 z-30 p-3 sm:p-4 rounded-2xl bg-[#09152C] text-white border-2 border-amber-400 shadow-xl flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 no-print">
+          <div className="flex items-center gap-2.5">
+            <span className="w-8 h-8 rounded-xl bg-amber-400 text-[#09152C] flex items-center justify-center font-black text-sm shrink-0">
+              {selectedEvalIds.size}
+            </span>
+            <div>
+              <span className="font-black text-xs sm:text-sm text-amber-300">
+                تم تحديد {selectedEvalIds.size} تقييم
+              </span>
+              <p className="text-[11px] text-slate-300">
+                يمكنك حذف التقييمات المحددة فقط أو إلغاء التحديد
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowDeleteSelectedEvalsModal(true)}
+              className="min-h-[38px] px-4 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-black text-xs sm:text-sm flex items-center gap-1.5 shadow-md transition cursor-pointer"
+            >
+              <Trash2 size={16} />
+              <span>حذف التقييمات المحددة فقط ({selectedEvalIds.size})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedEvalIds(new Set())}
+              className="min-h-[38px] px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs transition cursor-pointer"
+            >
+              إلغاء التحديد
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* شريط أدوات التصفية المتقدمة متعددة الاختيارات (حسب حقول ملف الإكسل الـ 8 + المقيم + التقدير) */}
       <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border-2 border-[#09152C]/15 dark:border-slate-800 shadow-sm space-y-3 no-print">
@@ -8751,6 +9201,37 @@ function CompetitionReports({
                   {/* الصف الأول: عناوين المجموعات الرئيسية */}
                   <tr className="bg-[#09152C] text-amber-300 font-black border-b border-amber-400/50 text-xs">
                     <th
+                      rowSpan={2}
+                      className="p-2 text-center border-l border-white/15 w-10 bg-[#071022] no-print"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={
+                          filteredResults.some(r => r.evaluations.length > 0) &&
+                          filteredResults
+                            .filter(r => r.evaluations.length > 0)
+                            .every(r =>
+                              r.evaluations.every(ev => selectedEvalIds.has(String(ev.id)))
+                            )
+                        }
+                        onChange={e => {
+                          const checked = e.target.checked;
+                          setSelectedEvalIds(prev => {
+                            const next = new Set(prev);
+                            filteredResults.forEach(r => {
+                              r.evaluations.forEach(ev => {
+                                if (checked) next.add(String(ev.id));
+                                else next.delete(String(ev.id));
+                              });
+                            });
+                            return next;
+                          });
+                        }}
+                        className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                        title="تحديد أو إلغاء تحديد كافة التقييمات الظاهرة في الكشف"
+                      />
+                    </th>
+                    <th
                       colSpan={2}
                       className="p-2.5 text-center border-l border-white/15 bg-[#071022]"
                     >
@@ -8851,6 +9332,33 @@ function CompetitionReports({
                             : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
                         }
                       >
+                        {/* خانة تحديد التقييم للحذف المجمع */}
+                        <td className="p-2 text-center border-l border-slate-200 dark:border-slate-800 no-print">
+                          {r.evaluations.length > 0 ? (
+                            <input
+                              type="checkbox"
+                              checked={r.evaluations.every(ev =>
+                                selectedEvalIds.has(String(ev.id))
+                              )}
+                              onChange={e => {
+                                const checked = e.target.checked;
+                                setSelectedEvalIds(prev => {
+                                  const next = new Set(prev);
+                                  r.evaluations.forEach(ev => {
+                                    if (checked) next.add(String(ev.id));
+                                    else next.delete(String(ev.id));
+                                  });
+                                  return next;
+                                });
+                              }}
+                              className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                              title="تحديد تقييمات هذا المتسابق"
+                            />
+                          ) : (
+                            <span className="text-slate-300 dark:text-slate-700 text-xs">-</span>
+                          )}
+                        </td>
+
                         {/* المركز في المستوى */}
                         <td className="p-2.5 text-center font-black border-l border-slate-200 dark:border-slate-800">
                           {r.isUnmemorized ? (
@@ -9076,6 +9584,19 @@ function CompetitionReports({
                                 التفاصيل
                               </button>
                             )}
+                            {r.evaluations.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDeleteConfirmParticipantId(r.participant.id)
+                                }
+                                className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 font-black text-[10px] rounded-lg transition cursor-pointer border border-rose-200 dark:border-rose-900 flex items-center gap-1"
+                                title="حذف تقييمات هذا المتسابق"
+                              >
+                                <Trash2 size={11} />
+                                <span>حذف</span>
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => {
@@ -9095,7 +9616,7 @@ function CompetitionReports({
                   {filteredResults.length === 0 && (
                     <tr>
                       <td
-                        colSpan={17}
+                        colSpan={18}
                         className="p-8 text-center text-slate-500 font-black text-sm"
                       >
                         لا توجد نتائج مطابقة للبحث أو التصفية الحالية
@@ -10055,7 +10576,7 @@ function CompetitionReports({
         </div>
       )}
 
-      {/* نافذة تأكيد حذف تقييم */}
+      {/* نافذة تأكيد حذف تقييم فردي */}
       <ConfirmDeleteModal
         isOpen={!!deleteConfirmEvalId}
         title="تأكيد حذف التقييم"
@@ -10067,6 +10588,45 @@ function CompetitionReports({
         onClose={() => setDeleteConfirmEvalId(null)}
       />
 
+      {/* نافذة تأكيد حذف تقييمات متسابق محدد */}
+      <ConfirmDeleteModal
+        isOpen={!!deleteConfirmParticipantId}
+        title="تأكيد حذف تقييمات المتسابق"
+        message={`هل أنت متأكد من حذف تقييمات المتسابق "${
+          (comp.participants || []).find(
+            p => Number(p.id) === Number(deleteConfirmParticipantId)
+          )?.name || ''
+        }"؟ ستتم إعادة حالة المتسابق إلى «بانتظار التقييم» وتصفير درجاته.`}
+        confirmLabel="نعم، حذف تقييمات المتسابق"
+        onConfirm={() => {
+          if (deleteConfirmParticipantId)
+            handleDeleteParticipantEvaluations(deleteConfirmParticipantId);
+        }}
+        onClose={() => setDeleteConfirmParticipantId(null)}
+      />
+
+      {/* نافذة تأكيد حذف التقييمات المحددة فقط */}
+      <ConfirmDeleteModal
+        isOpen={showDeleteSelectedEvalsModal}
+        title="تأكيد حذف التقييمات المحددة"
+        message={`هل أنت متأكد من حذف التقييمات المحددة (عددها: ${selectedEvalIds.size} تقييم)؟ ستتم إعادة المتسابقين المتأثرين إلى حالة «بانتظار التقييم» وتصفير درجاتهم.`}
+        confirmLabel={`نعم، حذف (${selectedEvalIds.size}) تقييم`}
+        onConfirm={handleDeleteSelectedEvaluations}
+        onClose={() => setShowDeleteSelectedEvalsModal(false)}
+      />
+
+      {/* نافذة تأكيد حذف جميع التقييمات بالكامل */}
+      <ConfirmDeleteModal
+        isOpen={showDeleteAllEvalsModal}
+        title="تأكيد حذف جميع تقييمات المسابقة"
+        message={`⚠️ تحذير شديد الأهمية: هل أنت متأكد تماماً من حذف جميع التقييمات المسجلة في المسابقة بالكامل (إجمالي التقييمات: ${
+          (comp.evaluations || []).length
+        })؟ سيتم تصفير نتائج كافة المتسابقين وإعادتهم جميعاً إلى حالة «بانتظار التقييم».`}
+        confirmLabel="نعم، تأكيد حذف جميع التقييمات"
+        onConfirm={handleDeleteAllEvaluations}
+        onClose={() => setShowDeleteAllEvalsModal(false)}
+      />
+
       {/* نافذة تأكيد استبعاد متسابق */}
       <ConfirmDeleteModal
         isOpen={!!excludeParticipantTarget}
@@ -10076,6 +10636,194 @@ function CompetitionReports({
         onConfirm={handleExcludeUnmemorizedConfirm}
         onClose={() => setExcludeParticipantTarget(null)}
       />
+
+      {/* نافذة إدارة وحذف التقييمات الشاملة */}
+      {showManageEvalsModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 no-print animate-in fade-in duration-150"
+          onClick={() => setShowManageEvalsModal(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* رأس النافذة */}
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 p-4 bg-[#09152C] text-white">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-400/20 border border-amber-300/40 flex items-center justify-center text-amber-300 shrink-0">
+                  <Sliders size={20} />
+                </div>
+                <div>
+                  <h4 className="font-black text-base text-amber-300">
+                    إدارة وحذف التقييمات المسجلة
+                  </h4>
+                  <p className="text-[11px] font-bold text-slate-300 mt-0.5">
+                    إجمالي التقييمات: {(comp.evaluations || []).length} • يمكنك تحديد تقييمات معينة لحذفها أو حذف كافة التقييمات
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowManageEvalsModal(false)}
+                className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-black cursor-pointer"
+              >
+                إغلاق ✕
+              </button>
+            </div>
+
+            {/* شريط الإجراءات والبحث السريع داخل النافذة */}
+            <div className="p-3 sm:p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-wrap items-center justify-between gap-2.5">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={manageEvalsSearchQuery}
+                  onChange={e => setManageEvalsSearchQuery(e.target.value)}
+                  placeholder="ابحث باسم المتسابق أو المقيم أو المستوى..."
+                  className="w-full pr-9 pl-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={selectedEvalIds.size === 0}
+                  onClick={() => setShowDeleteSelectedEvalsModal(true)}
+                  className="min-h-[36px] px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-black transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Trash2 size={15} />
+                  <span>حذف التقييمات المحددة ({selectedEvalIds.size})</span>
+                </button>
+
+                {(comp.evaluations || []).length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteAllEvalsModal(true)}
+                    className="min-h-[36px] px-3.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800 text-xs font-black transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Trash2 size={15} />
+                    <span>حذف التقييمات كلها</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const allIds = (comp.evaluations || []).map(e => String(e.id));
+                    if (selectedEvalIds.size === allIds.length && allIds.length > 0) {
+                      setSelectedEvalIds(new Set());
+                    } else {
+                      setSelectedEvalIds(new Set(allIds));
+                    }
+                  }}
+                  className="min-h-[36px] px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition cursor-pointer"
+                >
+                  {selectedEvalIds.size === (comp.evaluations || []).length && (comp.evaluations || []).length > 0
+                    ? 'إلغاء تحديد الكل'
+                    : 'تحديد الكل'}
+                </button>
+              </div>
+            </div>
+
+            {/* قائمة التقييمات */}
+            <div className="p-3 sm:p-4 overflow-y-auto max-h-[60vh] space-y-2.5">
+              {(() => {
+                const searchClean = manageEvalsSearchQuery.trim().toLowerCase();
+                const filteredEvals = (comp.evaluations || []).filter(ev => {
+                  if (!searchClean) return true;
+                  const part = (comp.participants || []).find(p => Number(p.id) === Number(ev.participantId));
+                  const lvl = (comp.levels || []).find(l => Number(l.id) === Number(ev.levelId || part?.levelId));
+                  const evName = getEvaluatorName(ev.evaluatorId, ev.evaluatorName).toLowerCase();
+                  const pName = (part?.name || '').toLowerCase();
+                  const lName = (lvl?.name || '').toLowerCase();
+                  return pName.includes(searchClean) || evName.includes(searchClean) || lName.includes(searchClean);
+                });
+
+                if (filteredEvals.length === 0) {
+                  return (
+                    <div className="p-8 text-center text-slate-400 font-bold bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700">
+                      {manageEvalsSearchQuery ? 'لا توجد تقييمات مطابقة لبحثك' : 'لا توجد أي تقييمات مسجلة في هذه المسابقة حتى الآن.'}
+                    </div>
+                  );
+                }
+
+                return filteredEvals.map((ev, idx) => {
+                  const part = (comp.participants || []).find(p => Number(p.id) === Number(ev.participantId));
+                  const lvl = (comp.levels || []).find(l => Number(l.id) === Number(ev.levelId || part?.levelId));
+                  const maxScore = lvl?.maxScore || 100;
+                  const isChecked = selectedEvalIds.has(String(ev.id));
+
+                  return (
+                    <div
+                      key={ev.id || idx}
+                      className={`p-3 rounded-2xl border transition-all flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 ${
+                        isChecked
+                          ? 'bg-amber-50/70 dark:bg-amber-950/30 border-amber-400 shadow-2xs'
+                          : 'bg-white dark:bg-slate-800/70 border-slate-200 dark:border-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={e => {
+                            const checked = e.target.checked;
+                            setSelectedEvalIds(prev => {
+                              const next = new Set(prev);
+                              if (checked) next.add(String(ev.id));
+                              else next.delete(String(ev.id));
+                              return next;
+                            });
+                          }}
+                          className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
+                        />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-black text-xs sm:text-sm text-slate-900 dark:text-white truncate">
+                              {part?.name || `متسابق #${ev.participantId}`}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-[10px] font-bold">
+                              {lvl?.name || 'مستوى المسابقة'}
+                            </span>
+                            {part?.wilayat && (
+                              <span className="text-[10px] text-slate-500 font-bold">
+                                • {part.wilayat}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400 font-bold mt-0.5 flex-wrap">
+                            <span>المقيم: <strong className="text-slate-700 dark:text-slate-200">{getEvaluatorName(ev.evaluatorId, ev.evaluatorName)}</strong></span>
+                            {ev.timestamp && (
+                              <span>• {new Date(ev.timestamp).toLocaleDateString('ar-OM', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between sm:justify-end gap-2.5 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-700">
+                        <div className="text-right sm:text-left">
+                          <span className="px-2.5 py-1 rounded-xl bg-[#09152C] text-amber-300 font-black text-xs">
+                            {ev.isUnmemorized ? '0 (غير حافظ)' : `${ev.totalScore} / ${maxScore}`}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirmEvalId(String(ev.id))}
+                          className="min-h-[32px] px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 rounded-xl border border-rose-200 dark:border-rose-900 font-black text-xs transition active:scale-95 flex items-center gap-1 cursor-pointer"
+                          title="حذف هذا التقييم"
+                        >
+                          <Trash2 size={14} />
+                          <span>حذف</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

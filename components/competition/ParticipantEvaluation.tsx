@@ -25,6 +25,8 @@ import {
   AlertTriangle,
   XCircle,
   Sparkles,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 import { MushafReaderModal } from '../MushafReaderModal';
 import {
@@ -191,6 +193,7 @@ export default function ParticipantEvaluation({
   evaluator: CompetitionEvaluator;
   participant: CompetitionParticipant;
   onBack: () => void;
+  key?: React.Key;
 }) {
   const context = useContext(AppContext);
   if (!context) return null;
@@ -232,6 +235,24 @@ export default function ParticipantEvaluation({
     [currentComp.participants, participant]
   );
 
+  // قراءة بيانات المقيم الحالية من المسابقة للتحقق من أحدث صلاحيات التعديل المسندة من المشرف
+  const currentEvaluator = useMemo(
+    () =>
+      (currentComp.evaluators || []).find(e => Number(e.id) === Number(evaluator.id)) ||
+      evaluator,
+    [currentComp.evaluators, evaluator]
+  );
+
+  // التحقق من صلاحية تعديل التقييم بعد الحفظ:
+  // إذا لم يكن هناك تقييم محفوظ مسبقاً فالتقييم متاح، أما إذا كان محفوظاً فلا يمكن التعديل إلا إذا سمح المشرف بذلك لهذا المستوى تحديداً
+  const isEditAllowed = useMemo(() => {
+    if (!existingEval) return true;
+    const allowedLevels = (currentEvaluator.allowedEditLevelIds || []).map(Number);
+    return allowedLevels.includes(Number(participant.levelId));
+  }, [existingEval, currentEvaluator.allowedEditLevelIds, participant.levelId]);
+
+  const isReadOnly = Boolean(existingEval && !isEditAllowed);
+
   // ترتيب المتسابق الموحد داخل نفس المستوى (0 للمتسابق الأول، 1 للثاني، 2 للثالث...)
   // لضمان ظهور نفس المقاطع تماماً لدى جميع المقيمين لنفس المتسابق، مع اختلافها من متسابق لآخر
   const participantOrderIndex = useMemo(() => {
@@ -244,39 +265,33 @@ export default function ParticipantEvaluation({
 
   const currentPassageSeed = Number(liveParticipant.passageSeed || 0);
 
-  // فحص نبض حي دوري سريع كل ثانيتين أثناء فتح شاشة التقييم للتأكد من التقاط أي إعادة اقتراح مقاطع أو تحديد نطاق من عضو آخر في اللجنة فوراً
+  // اشتراك حي ومباشر لالتقاط أي إعادة اقتراح مقاطع أو تحديد نطاق من عضو آخر في اللجنة فوراً بدون إجهاد قناة Firestore
   useEffect(() => {
-    let isCancelled = false;
-    const interval = setInterval(async () => {
-      try {
-        const db = getDb();
-        if (!db) return;
-        const snap = await db.ref('data/competitions').once('value');
-        if (isCancelled) return;
-        if (snap && snap.exists()) {
-          const comps = snap.val();
-          if (Array.isArray(comps)) {
-            const remoteComp = comps.find((c: any) => String(c.id) === String(comp.id));
-            const remotePart = (remoteComp?.participants || []).find(
-              (p: any) => Number(p.id) === Number(participant.id)
-            );
-            if (remotePart) {
-              const remoteSeed = Number(remotePart.passageSeed || 0);
-              const remoteScope = remotePart.juzsOrSurahs || '';
-              const mySeed = Number(liveParticipant.passageSeed || 0);
-              const myScope = liveParticipant.juzsOrSurahs || '';
-              if (remoteSeed !== mySeed || remoteScope !== myScope) {
-                context?.updateCompetitions(comps);
-              }
-            }
+    const db = getDb();
+    if (!db) return;
+    const ref = db.ref('data/competitions');
+    const handler = (snap: { val: () => any; exists: () => boolean }) => {
+      if (!snap || !snap.exists()) return;
+      const comps = snap.val();
+      if (Array.isArray(comps)) {
+        const remoteComp = comps.find((c: any) => String(c.id) === String(comp.id));
+        const remotePart = (remoteComp?.participants || []).find(
+          (p: any) => Number(p.id) === Number(participant.id)
+        );
+        if (remotePart) {
+          const remoteSeed = Number(remotePart.passageSeed || 0);
+          const remoteScope = remotePart.juzsOrSurahs || '';
+          const mySeed = Number(liveParticipant.passageSeed || 0);
+          const myScope = liveParticipant.juzsOrSurahs || '';
+          if (remoteSeed !== mySeed || remoteScope !== myScope) {
+            context?.updateCompetitions(comps);
           }
         }
-      } catch {}
-    }, 2000);
-
+      }
+    };
+    ref.on('value', handler);
     return () => {
-      isCancelled = true;
-      clearInterval(interval);
+      ref.off('value', handler);
     };
   }, [comp.id, participant.id, liveParticipant.passageSeed, liveParticipant.juzsOrSurahs, context]);
 
@@ -290,16 +305,26 @@ export default function ParticipantEvaluation({
     extractJuzCount(rawLevelScope) ||
     (isLevelUnspecified ? 3 : 0);
 
-  // استخراج الأجزاء المحددة مسبقاً للمتسابق إن وجدت
+  // استخراج الأجزاء المحددة مسبقاً للمتسابق إن وجدت، أو اعتماد الأجزاء المناسبة تلقائياً
+  // لضمان توليد المقاطع وظهور بطاقة المقطع الأول دائماً وفوراً للمقيم بمجرد اختيار المتسابق
   const initialJuzs = useMemo(() => {
     if (rawParticipantScope.startsWith('الأجزاء:')) {
-      return parseJuzsToNumbers(rawParticipantScope.replace('الأجزاء:', ''));
+      const parsed = parseJuzsToNumbers(rawParticipantScope.replace('الأجزاء:', ''));
+      if (parsed.length > 0) return parsed;
     }
     if (rawLevelScope.startsWith('الأجزاء:')) {
-      return parseJuzsToNumbers(rawLevelScope.replace('الأجزاء:', ''));
+      const parsed = parseJuzsToNumbers(rawLevelScope.replace('الأجزاء:', ''));
+      if (parsed.length > 0) return parsed;
+    }
+    if (isLevelUnspecified && requiredJuzCount > 0) {
+      // افتراضياً: آخر الأجزاء بعدد المطلوب (مثلاً آخر 3 أجزاء: 28، 29، 30)
+      return Array.from(
+        { length: requiredJuzCount },
+        (_, idx) => 30 - requiredJuzCount + 1 + idx
+      );
     }
     return [];
-  }, [rawParticipantScope, rawLevelScope]);
+  }, [rawParticipantScope, rawLevelScope, isLevelUnspecified, requiredJuzCount]);
 
   const [selectedJuzs, setSelectedJuzs] = useState<number[]>(initialJuzs);
 
@@ -347,8 +372,8 @@ export default function ParticipantEvaluation({
   const hasExactJuzsSelected =
     !isLevelUnspecified || (requiredJuzCount > 0 && selectedJuzs.length === requiredJuzCount);
 
-  // فتح محدد الأجزاء تلقائياً إذا كان المستوى يتطلب اختيار أجزاء ولم تكتمل بعد
-  const [showScopeSelector, setShowScopeSelector] = useState<boolean>(() => !hasExactJuzsSelected);
+  // لا نفتح محدد الأجزاء تلقائياً حتى لا يحجب بطاقة المقطع الأول عن المقيم (يمكن فتحه بزر "تعديل نطاق المتسابق")
+  const [showScopeSelector, setShowScopeSelector] = useState<boolean>(false);
 
   // خانة ملاحظات المقيم
   const [evaluationNotes, setEvaluationNotes] = useState<string>(existingEval?.notes || '');
@@ -375,6 +400,17 @@ export default function ParticipantEvaluation({
   });
 
   const [activeSegmentIndex, setActiveSegmentIndex] = useState(0);
+
+  // التأكد دائماً عند اختيار أي متسابق من بدء شاشة التقييم على المقطع الأول والتمرير لأعلى الصفحة
+  useEffect(() => {
+    setActiveSegmentIndex(0);
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    const timer = setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }, 40);
+    return () => clearTimeout(timer);
+  }, [participant.id]);
+
   const [completedPassages, setCompletedPassages] = useState<number[]>(() =>
     existingEval ? Array.from({ length: segmentsCount }, (_, i) => i + 1) : []
   );
@@ -767,56 +803,185 @@ export default function ParticipantEvaluation({
       className="bg-slate-50 dark:bg-slate-950 min-h-[100dvh] w-full max-w-full overflow-x-hidden text-slate-800 dark:text-slate-100 pb-12 text-right"
       dir="rtl"
     >
-      {/* ترويسة التقييم العلوية المتجاوبة للهواتف */}
-      <header className="bg-white dark:bg-slate-900 px-2 sm:px-6 py-2 sm:py-3.5 shadow-sm sticky top-0 z-20 flex items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 w-full">
-        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1">
-          <button
-            onClick={onBack}
-            className="min-h-[36px] min-w-[36px] sm:min-h-[40px] sm:min-w-[40px] p-1.5 sm:p-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-xl transition active:scale-95 flex items-center justify-center shrink-0 cursor-pointer"
-            title="رجوع لقائمة المتسابقين"
-          >
-            <ChevronRight size={20} />
-          </button>
-          <Logo size="xs" className="flex shrink-0" />
-          <AwqafBadge variant="compact" tone="adaptive" />
-          <div className="min-w-0 flex-1 text-right">
-            <h1 className="text-xs xs:text-sm sm:text-lg font-black text-slate-900 dark:text-white leading-tight line-clamp-2 break-words whitespace-normal">
-              {participant.name}
-            </h1>
-            <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] xs:text-[11px] sm:text-xs text-slate-500 font-bold leading-tight mt-0.5">
-              <span className="leading-tight break-words whitespace-normal">{level.name}</span>
-              <span>•</span>
-              <span className="text-emerald-700 dark:text-emerald-400 leading-tight break-words whitespace-normal">
-                المقيم: {evaluator.name}
+      {/* ترويسة التقييم العلوية: منسقة للهاتف (سطران بعرض كامل للاسم الثلاثي والقبيلة) وللكمبيوتر (سطر واحد) */}
+      <header className="bg-white dark:bg-slate-900 px-2.5 sm:px-6 py-2 sm:py-3.5 shadow-sm sticky top-0 z-20 border-b border-slate-200 dark:border-slate-800 w-full">
+        {/* تخطيط الكمبيوتر والشاشات الكبيرة (سطر واحد كما هو) */}
+        <div className="hidden sm:flex items-center justify-between gap-3 w-full">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <button
+              onClick={onBack}
+              className="min-h-[40px] min-w-[40px] p-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-xl transition active:scale-95 flex items-center justify-center shrink-0 cursor-pointer"
+              title="رجوع لقائمة المتسابقين"
+            >
+              <ChevronRight size={20} />
+            </button>
+            <Logo size="xs" className="flex shrink-0" />
+            <AwqafBadge variant="compact" tone="adaptive" />
+            <div className="min-w-0 flex-1 text-right">
+              <h1 className="text-lg font-black text-slate-900 dark:text-white leading-snug break-words whitespace-normal">
+                {participant.name}
+              </h1>
+              <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-slate-500 font-bold leading-tight mt-0.5">
+                <span className="leading-tight break-words whitespace-normal text-emerald-800 dark:text-emerald-300">
+                  {level.name}
+                </span>
+                <span>•</span>
+                <span className="text-slate-600 dark:text-slate-400 leading-tight break-words whitespace-normal">
+                  المقيم: {evaluator.name}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {existingEval && (
+              isReadOnly ? (
+                <span
+                  className="min-h-[36px] px-3 py-1 bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 rounded-xl border border-amber-300 dark:border-amber-800 text-xs font-black flex items-center gap-1.5 shrink-0 shadow-2xs"
+                  title="هذا التقييم معتمد ومحفوظ، والتعديل مقفل"
+                >
+                  <Lock size={14} className="text-amber-600 shrink-0" />
+                  <span>معتمد ومقفل</span>
+                </span>
+              ) : (
+                <span
+                  className="min-h-[36px] px-3 py-1 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 rounded-xl border border-emerald-300 dark:border-emerald-800 text-xs font-black flex items-center gap-1.5 shrink-0 shadow-2xs"
+                  title="مسموح بتعديل هذا التقييم بإذن من المشرف"
+                >
+                  <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                  <span>مسموح بالتعديل</span>
+                </span>
+              )
+            )}
+            <div
+              className={`flex flex-col items-end px-3 py-1 rounded-xl border ${
+                hasAnyUnmemorized
+                  ? 'bg-rose-50 dark:bg-rose-950/70 text-rose-700 dark:text-rose-300 border-rose-300'
+                  : 'bg-emerald-50 dark:bg-emerald-950/70 text-emerald-900 dark:text-emerald-200 border-emerald-300 dark:border-emerald-800'
+              }`}
+            >
+              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 leading-none">
+                {hasAnyUnmemorized ? 'غير حافظ' : 'الدرجة الكلية'}
+              </span>
+              <span className="text-xl font-black leading-tight text-emerald-800 dark:text-emerald-300">
+                {totalScore}{' '}
+                <span className="text-xs font-bold text-slate-500">
+                  / {level.maxScore}
+                </span>
               </span>
             </div>
           </div>
         </div>
 
-        {/* الدرجة الإجمالية اللحظية الحية */}
-        <div className="flex items-center gap-2 shrink-0">
-          <div
-            className={`flex flex-col items-end px-3 py-1 rounded-xl border ${
-              hasAnyUnmemorized
-                ? 'bg-rose-50 dark:bg-rose-950/70 text-rose-700 dark:text-rose-300 border-rose-300'
-                : 'bg-emerald-50 dark:bg-emerald-950/70 text-emerald-900 dark:text-emerald-200 border-emerald-300 dark:border-emerald-800'
-            }`}
-          >
-            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 leading-none">
-              {hasAnyUnmemorized ? 'غير حافظ' : 'الدرجة الكلية'}
-            </span>
-            <span className="text-base sm:text-xl font-black leading-tight text-emerald-800 dark:text-emerald-300">
-              {totalScore}{' '}
-              <span className="text-xs font-bold text-slate-500">
-                / {level.maxScore}
+        {/* تخطيط شاشة الهاتف: سطر علوي للأزرار والشعار والدرجة، وسطر ثانٍ بعرض الشاشة الكامل للاسم الثلاثي والقبيلة والمستوى */}
+        <div className="flex sm:hidden flex-col gap-2 w-full">
+          <div className="flex items-center justify-between gap-1.5 w-full">
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={onBack}
+                className="min-h-[36px] min-w-[36px] p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-xl transition active:scale-95 flex items-center justify-center shrink-0 cursor-pointer"
+                title="رجوع لقائمة المتسابقين"
+              >
+                <ChevronRight size={19} />
+              </button>
+              <Logo size="xs" className="flex shrink-0" />
+              <AwqafBadge variant="compact" tone="adaptive" />
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              {existingEval && (
+                isReadOnly ? (
+                  <span
+                    className="min-h-[34px] px-2 py-1 bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 rounded-xl border border-amber-300 dark:border-amber-800 text-[11px] font-black flex items-center gap-1 shrink-0 shadow-2xs"
+                    title="معتمد ومقفل"
+                  >
+                    <Lock size={13} className="text-amber-600 shrink-0" />
+                    <span>مقفل</span>
+                  </span>
+                ) : (
+                  <span
+                    className="min-h-[34px] px-2 py-1 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 rounded-xl border border-emerald-300 dark:border-emerald-800 text-[11px] font-black flex items-center gap-1 shrink-0 shadow-2xs"
+                    title="مسموح بالتعديل"
+                  >
+                    <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
+                    <span>مسموح</span>
+                  </span>
+                )
+              )}
+              <div
+                className={`flex flex-col items-end px-2.5 py-1 rounded-xl border ${
+                  hasAnyUnmemorized
+                    ? 'bg-rose-50 dark:bg-rose-950/70 text-rose-700 dark:text-rose-300 border-rose-300'
+                    : 'bg-emerald-50 dark:bg-emerald-950/70 text-emerald-900 dark:text-emerald-200 border-emerald-300 dark:border-emerald-800'
+                }`}
+              >
+                <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400 leading-none">
+                  {hasAnyUnmemorized ? 'غير حافظ' : 'الدرجة الكلية'}
+                </span>
+                <span className="text-sm font-black leading-tight text-emerald-800 dark:text-emerald-300">
+                  {totalScore}{' '}
+                  <span className="text-[10px] font-bold text-slate-500">
+                    / {level.maxScore}
+                  </span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* السطر الثاني في الهاتف: الاسم الكامل للمتسابق (الثلاثي والقبيلة) + المستوى + المقيم بعرض الشاشة بالكامل */}
+          <div className="w-full pt-1.5 border-t border-slate-100 dark:border-slate-800/80 text-right">
+            <h1 className="text-sm xs:text-base font-black text-slate-900 dark:text-white leading-snug break-words whitespace-normal">
+              {participant.name}
+            </h1>
+            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-[11px] font-bold mt-0.5">
+              <span className="text-emerald-800 dark:text-emerald-300 break-words whitespace-normal">
+                {level.name}
               </span>
-            </span>
+              <span className="text-slate-500 dark:text-slate-400 break-words whitespace-normal">
+                المقيم: {evaluator.name}
+              </span>
+            </div>
           </div>
         </div>
       </header>
 
       {/* المحتوى الرئيسي للتقييم */}
       <main className="max-w-4xl mx-auto p-2.5 sm:p-5 space-y-4 sm:space-y-5">
+        {/* تنبيه مختصر لحالة قفل التعديل أو السماح به */}
+        {existingEval && isReadOnly && (
+          <div className="px-3.5 py-2.5 rounded-2xl bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-rose-500/15 dark:from-amber-950/70 dark:via-orange-950/50 dark:to-rose-950/60 border-2 border-amber-500/90 dark:border-amber-500 shadow-xs flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-xl bg-amber-500 text-white shadow-2xs shrink-0">
+                <Lock size={16} />
+              </div>
+              <span className="font-black text-xs sm:text-sm text-amber-950 dark:text-amber-100">
+                هذا التقييم معتمد ومحفوظ مسبقاً (وضع العرض فقط)
+              </span>
+            </div>
+            <span className="px-2.5 py-0.5 rounded-lg bg-rose-600 text-white text-[10px] font-black shadow-2xs flex items-center gap-1 shrink-0">
+              <Lock size={11} />
+              <span>التعديل والحذف مقفل</span>
+            </span>
+          </div>
+        )}
+
+        {existingEval && !isReadOnly && (
+          <div className="px-3.5 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-emerald-500/20 dark:from-emerald-950/70 dark:via-teal-950/50 dark:to-emerald-950/60 border-2 border-emerald-500 shadow-xs flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-xl bg-emerald-600 text-white shadow-2xs shrink-0">
+                <CheckCircle2 size={16} />
+              </div>
+              <span className="font-black text-xs sm:text-sm text-emerald-950 dark:text-emerald-100">
+                التعديل مسموح بإذن المشرف لهذا المستوى ({level.name})
+              </span>
+            </div>
+            <span className="px-2.5 py-0.5 rounded-lg bg-emerald-700 text-white text-[10px] font-black shadow-2xs flex items-center gap-1 shrink-0">
+              <Unlock size={11} />
+              <span>صلاحية التعديل مفتوحة</span>
+            </span>
+          </div>
+        )}
+
         {/* بطاقة معلومات المتسابق وتحديد الأجزاء والمقاطع المقترحة */}
         <div className="bg-white dark:bg-slate-900 p-3.5 sm:p-5 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 space-y-3.5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -1049,8 +1214,14 @@ export default function ParticipantEvaluation({
 
             <button
               type="button"
+              disabled={isReadOnly}
               onClick={handleRegeneratePassages}
-              className="min-h-[42px] px-2.5 sm:px-3 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/70 dark:hover:bg-indigo-900/80 text-indigo-800 dark:text-indigo-200 border border-indigo-200 dark:border-indigo-800 text-[11px] sm:text-xs font-black transition-all active:scale-95 flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+              className={`min-h-[42px] px-2.5 sm:px-3 py-2 rounded-xl text-[11px] sm:text-xs font-black transition-all flex items-center justify-center gap-1.5 shadow-sm border ${
+                isReadOnly
+                  ? 'opacity-50 cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700'
+                  : 'bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/70 dark:hover:bg-indigo-900/80 text-indigo-800 dark:text-indigo-200 border-indigo-200 dark:border-indigo-800 active:scale-95 cursor-pointer'
+              }`}
+              title={isReadOnly ? 'التقييم معتمد ومقفل من المشرف' : 'إعادة اقتراح مقاطع جديدة'}
             >
               <Shuffle className="w-3.5 h-3.5 shrink-0" />
               <span className="truncate">إعادة اقتراح مقاطع</span>
@@ -1086,6 +1257,45 @@ export default function ParticipantEvaluation({
           </div>
         ) : (
           <div className="space-y-3.5 sm:space-y-4">
+            {/* شريط اختيار والتنقل بين المقاطع يبرز المقطع الأول دائماً عند فتح التقييم */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+              <span className="text-xs font-black text-slate-500 dark:text-slate-400 shrink-0 ml-1">
+                المقاطع:
+              </span>
+              {Array.from({ length: segmentsCount }, (_, idx) => {
+                const pNum = idx + 1;
+                const isDone = completedPassages.includes(pNum);
+                const isSelected = activeSegmentIndex === idx;
+                const segItem = segments[idx];
+                const isSegUnmem = Boolean(segItem?.isUnmemorized);
+                return (
+                  <button
+                    key={pNum}
+                    type="button"
+                    onClick={() => {
+                      setActiveSegmentIndex(idx);
+                      const el = document.getElementById(`segment-card-${idx}`);
+                      if (el) {
+                        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                      }
+                    }}
+                    className={`min-h-[34px] px-3 py-1 rounded-xl text-xs font-black transition-all active:scale-95 flex items-center gap-1.5 shrink-0 cursor-pointer border ${
+                      isSelected
+                        ? 'bg-[#0F2347] text-[#F5D77F] border-[#D4AF37] shadow-sm ring-2 ring-[#D4AF37]/50'
+                        : isSegUnmem
+                        ? 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950 dark:text-rose-200'
+                        : isDone
+                        ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
+                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>المقطع {toArabicDigits(pNum)}</span>
+                    {isDone && <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />}
+                  </button>
+                );
+              })}
+            </div>
+
             {Array.from({ length: segmentsCount }, (_, idx) => {
               const passage = suggestedPassages[idx];
               const seg = segments[idx] || {
@@ -1119,6 +1329,7 @@ export default function ParticipantEvaluation({
               return (
                 <div
                   key={passage?.id || `seg-${idx}`}
+                  id={`segment-card-${idx}`}
                   onClick={() => setActiveSegmentIndex(idx)}
                   className={`p-3 sm:p-4 rounded-2xl border-2 transition-all space-y-3 ${
                     isSegUnmem
@@ -1128,7 +1339,7 @@ export default function ParticipantEvaluation({
                       : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900'
                   }`}
                 >
-                  {/* 1. رأس بطاقة المقطع: رقم المقطع + النطاق المخصص له من المستوى + درجة المقطع المستقلة + حالة التسميع */}
+                  {/* 1. رأس بطاقة المقطع: رقم المقطع + النطاق المخصص له من المستوى + درجة المقطع المستقلة */}
                   <div className="flex items-center justify-between gap-2 flex-wrap border-b border-slate-100 dark:border-slate-800 pb-2.5">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="px-2.5 py-1 rounded-xl bg-[#0F2347] text-[#F5D77F] font-black text-xs sm:text-sm shadow-2xs">
@@ -1159,31 +1370,6 @@ export default function ParticipantEvaluation({
                         </div>
                       )}
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={e => {
-                        e.stopPropagation();
-                        togglePassageCompleted(passageNum);
-                      }}
-                      className={`min-h-[34px] px-3 py-1 rounded-xl text-xs font-black transition-all cursor-pointer active:scale-95 flex items-center gap-1.5 border shrink-0 ${
-                        isDone
-                          ? 'bg-emerald-600 text-white border-emerald-700 shadow-2xs'
-                          : 'bg-amber-100/90 text-amber-950 border-amber-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700'
-                      }`}
-                    >
-                      {isDone ? (
-                        <>
-                          <Check className="w-3.5 h-3.5" />
-                          <span>تم التسميع</span>
-                        </>
-                      ) : (
-                        <>
-                          <Circle className="w-3 h-3" />
-                          <span>تحديد كمسموع</span>
-                        </>
-                      )}
-                    </button>
                   </div>
 
                   {/* 2. بيانات المقطع المقترح وزر فتحه مظللاً في المصحف */}
@@ -1216,32 +1402,72 @@ export default function ParticipantEvaluation({
 
                   {/* 3. أزرار الخصم المستقلة الخاصة بهذا المقطع فقط (يظهر للمقيم لون الزر فقط حسب الصنف) */}
                   <div className="space-y-2.5 pt-1">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <span className="text-xs font-black text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <span className="text-xs font-black text-slate-700 dark:text-slate-300 flex items-center gap-1.5 shrink-0">
                         <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0" />
                         <span>بنود الخصم الخاصة بالمقطع {toArabicDigits(idx + 1)}:</span>
                       </span>
 
-                      {/* زر غير حافظ المستقل الخاص بهذا المقطع */}
-                      <button
-                        type="button"
-                        onClick={e => {
-                          e.stopPropagation();
-                          handleToggleSegmentUnmemorized(idx, !isSegUnmem);
-                        }}
-                        className={`min-h-[36px] px-3 py-1.5 rounded-xl font-black text-xs transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border shrink-0 ${
-                          isSegUnmem
-                            ? 'bg-rose-600 text-white border-rose-700 shadow-xs ring-2 ring-rose-400/50'
-                            : 'bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800'
-                        }`}
-                      >
-                        <XCircle className="w-3.5 h-3.5 shrink-0" />
-                        <span>
-                          {isSegUnmem
-                            ? `إلغاء «غير حافظ» للمقطع ${toArabicDigits(idx + 1)}`
-                            : `غير حافظ للمقطع ${toArabicDigits(idx + 1)} (-${segmentMaxScore})`}
-                        </span>
-                      </button>
+                      {/* زر تحديد كمسموع بجانب زر غير حافظ المستقل في شاشة الهاتف والكمبيوتر */}
+                      <div className="grid grid-cols-2 sm:flex sm:items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
+                        <button
+                          type="button"
+                          disabled={isReadOnly}
+                          onClick={e => {
+                            e.stopPropagation();
+                            if (isReadOnly) return;
+                            togglePassageCompleted(passageNum);
+                          }}
+                          className={`min-h-[36px] px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-black transition-all flex items-center justify-center gap-1.5 border ${
+                            isReadOnly
+                              ? isDone
+                                ? 'bg-emerald-600 text-white border-emerald-700 opacity-90 cursor-default'
+                                : 'bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-800 dark:text-slate-500 cursor-default'
+                              : isDone
+                              ? 'bg-emerald-600 text-white border-emerald-700 shadow-2xs cursor-pointer active:scale-95'
+                              : 'bg-amber-100/90 hover:bg-amber-200/80 text-amber-950 border-amber-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 cursor-pointer active:scale-95'
+                          }`}
+                        >
+                          {isDone ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 shrink-0" />
+                              <span>تم التسميع</span>
+                            </>
+                          ) : (
+                            <>
+                              <Circle className="w-3 h-3 shrink-0" />
+                              <span>تحديد كمسموع</span>
+                            </>
+                          )}
+                        </button>
+
+                        {/* زر غير حافظ المستقل الخاص بهذا المقطع */}
+                        <button
+                          type="button"
+                          disabled={isReadOnly}
+                          onClick={e => {
+                            e.stopPropagation();
+                            if (isReadOnly) return;
+                            handleToggleSegmentUnmemorized(idx, !isSegUnmem);
+                          }}
+                          className={`min-h-[36px] px-2.5 sm:px-3 py-1.5 rounded-xl font-black text-[11px] sm:text-xs transition flex items-center justify-center gap-1.5 border ${
+                            isReadOnly
+                              ? isSegUnmem
+                                ? 'bg-rose-600 text-white border-rose-700 opacity-90 cursor-default'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700 opacity-60 cursor-not-allowed'
+                              : isSegUnmem
+                              ? 'bg-rose-600 text-white border-rose-700 shadow-xs ring-2 ring-rose-400/50 cursor-pointer active:scale-95'
+                              : 'bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800 cursor-pointer active:scale-95'
+                          }`}
+                        >
+                          <XCircle className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">
+                            {isSegUnmem
+                              ? `إلغاء «غير حافظ» م${toArabicDigits(idx + 1)}`
+                              : `غير حافظ (-${segmentMaxScore})`}
+                          </span>
+                        </button>
+                      </div>
                     </div>
 
                     {/* شبكة أزرار الخصم (يظهر للمقيم لون الزر فقط حسب الصنف المحدد من المشرف) */}
@@ -1266,7 +1492,7 @@ export default function ParticipantEvaluation({
                     >
                       {levelErrors.map((err, errIdx) => {
                         const count = seg.errorsCount?.[err.id] || 0;
-                        const isPlusDisabled = isSegUnmem || isSegCapReached;
+                        const isPlusDisabled = isSegUnmem || isSegCapReached || isReadOnly;
                         const st = getErrorColorStyle(err, compErrorCategories);
                         const spanClass =
                           levelErrors.length === 3 && errIdx === 2
@@ -1299,7 +1525,11 @@ export default function ParticipantEvaluation({
                                 type="button"
                                 disabled={isPlusDisabled}
                                 onClick={() => handleSegmentErrorIncrement(idx, err.id)}
-                                className={`w-full min-h-[40px] rounded-xl font-black text-lg flex items-center justify-center shadow-2xs active:scale-95 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${st.plusBtn}`}
+                                className={`w-full min-h-[40px] rounded-xl font-black text-lg flex items-center justify-center shadow-2xs transition ${
+                                  isPlusDisabled
+                                    ? 'opacity-40 cursor-not-allowed bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-600'
+                                    : `${st.plusBtn} active:scale-95 cursor-pointer`
+                                }`}
                                 aria-label={`زيادة ${err.name} للمقطع ${idx + 1}`}
                               >
                                 +
@@ -1313,10 +1543,10 @@ export default function ParticipantEvaluation({
 
                               <button
                                 type="button"
-                                disabled={count === 0 || isSegUnmem}
+                                disabled={count === 0 || isSegUnmem || isReadOnly}
                                 onClick={() => handleSegmentErrorDecrement(idx, err.id)}
                                 className={`w-full min-h-[40px] rounded-xl font-black text-lg flex items-center justify-center shrink-0 transition ${
-                                  count > 0 && !isSegUnmem
+                                  count > 0 && !isSegUnmem && !isReadOnly
                                     ? 'bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-white hover:bg-slate-100 active:scale-95 cursor-pointer'
                                     : 'bg-slate-100/80 dark:bg-slate-800/40 text-slate-300 dark:text-slate-600 cursor-not-allowed border border-slate-200/60 dark:border-slate-800'
                                 }`}
@@ -1346,31 +1576,57 @@ export default function ParticipantEvaluation({
         <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 space-y-2">
           <label className="block text-xs sm:text-sm font-black text-slate-800 dark:text-slate-200 flex items-center gap-2">
             <MessageSquare size={17} className="text-amber-500 shrink-0" />
-            <span>ملاحظات وتوجيهات المقيم للمتسابق (اختياري)</span>
+            <span>ملاحظات وتوجيهات المقيم للمتسابق {isReadOnly && '(مقفل)'}</span>
           </label>
           <textarea
             value={evaluationNotes}
-            onChange={e => setEvaluationNotes(e.target.value)}
+            readOnly={isReadOnly}
+            onChange={e => {
+              if (!isReadOnly) setEvaluationNotes(e.target.value);
+            }}
             rows={3}
-            placeholder="اكتب هنا أي ملاحظات أو توجيهات للمتسابق حول جودة التلاوة، الوقف والابتداء، أحكام التجويد، أو مستوى إتقان الحفظ..."
-            className="w-full p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-xs sm:text-sm font-medium focus:ring-2 focus:ring-emerald-600 focus:outline-none resize-y"
+            placeholder={
+              isReadOnly
+                ? 'لا توجد ملاحظات مسجلة (التقييم مقفل)'
+                : 'اكتب هنا أي ملاحظات أو توجيهات للمتسابق حول جودة التلاوة، الوقف والابتداء، أحكام التجويد، أو مستوى إتقان الحفظ...'
+            }
+            className={`w-full p-3 rounded-xl border text-xs sm:text-sm font-medium focus:outline-none resize-y ${
+              isReadOnly
+                ? 'bg-slate-100 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 cursor-default'
+                : 'border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-emerald-600'
+            }`}
           />
         </div>
 
-        {/* زر الحفظ والاعتماد */}
-        <button
-          ref={saveButtonRef}
-          type="button"
-          onClick={handleSave}
-          className="w-full min-h-[54px] py-4 bg-emerald-700 hover:bg-emerald-800 text-white text-base sm:text-lg font-black rounded-2xl shadow-lg shadow-emerald-700/25 active:scale-95 transition-all flex justify-center items-center gap-2 cursor-pointer"
-        >
-          <Save size={22} />
-          <span>
-            {isOverallUnmemorized
-              ? `حفظ واعتماد التقييم كـ «غير حافظ» (0 / ${level.maxScore})`
-              : `حفظ واعتماد تقييم المقيم (${totalScore} / ${level.maxScore})`}
-          </span>
-        </button>
+        {/* أزرار الحفظ والاعتماد (مقفل إذا لم يسمح المشرف بالتعديل بعد الحفظ) */}
+        <div className="space-y-2.5">
+          {isReadOnly ? (
+            <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-amber-500/15 dark:from-amber-950/60 dark:via-orange-950/40 dark:to-amber-950/60 border-2 border-amber-400 dark:border-amber-600 text-center shadow-xs">
+              <div className="flex items-center justify-center gap-2 font-black text-xs sm:text-sm text-amber-950 dark:text-amber-100">
+                <span className="p-1.5 rounded-xl bg-amber-500 text-white shadow-2xs shrink-0">
+                  <Lock size={15} />
+                </span>
+                <span>التقييم محفوظ ومعتمد ({totalScore} / {level.maxScore}) — التعديل مقفل</span>
+              </div>
+            </div>
+          ) : (
+            <button
+              ref={saveButtonRef}
+              type="button"
+              onClick={handleSave}
+              className="w-full min-h-[54px] py-4 bg-emerald-700 hover:bg-emerald-800 text-white text-base sm:text-lg font-black rounded-2xl shadow-lg shadow-emerald-700/25 active:scale-95 transition-all flex justify-center items-center gap-2 cursor-pointer"
+            >
+              <Save size={22} />
+              <span>
+                {existingEval
+                  ? `حفظ وتحديث التقييم المعدل (${totalScore} / ${level.maxScore})`
+                  : isOverallUnmemorized
+                  ? `حفظ واعتماد التقييم كـ «غير حافظ» (0 / ${level.maxScore})`
+                  : `حفظ واعتماد تقييم المقيم (${totalScore} / ${level.maxScore})`}
+              </span>
+            </button>
+          )}
+        </div>
       </main>
 
       {/* نافذة المصحف الشريف مع تظليل المقطع المقترح ورصد الأخطاء المباشر لكل مقطع باستقلالية */}
@@ -1385,7 +1641,7 @@ export default function ParticipantEvaluation({
           testScore={level.maxScore}
           testPassagesCount={segmentsCount}
           completedPassages={completedPassages}
-          onTogglePassage={togglePassageCompleted}
+          onTogglePassage={isReadOnly ? undefined : togglePassageCompleted}
           activePassage={
             activePassageForMushaf ||
             suggestedPassages[activeSegmentIndex] ||
@@ -1404,8 +1660,8 @@ export default function ParticipantEvaluation({
           competitionErrors={levelErrors}
           competitionErrorCategories={compErrorCategories}
           competitionErrorCounts={segments[activeSegmentIndex]?.errorsCount || {}}
-          onCompetitionErrorChange={(errorId, newCount) =>
-            handleSetErrorCount(errorId, newCount)
+          onCompetitionErrorChange={
+            isReadOnly ? undefined : (errorId, newCount) => handleSetErrorCount(errorId, newCount)
           }
           competitionSegments={segments}
           activeSegmentIndex={activeSegmentIndex}
@@ -1415,11 +1671,15 @@ export default function ParticipantEvaluation({
               setActivePassageForMushaf(suggestedPassages[idx]);
             }
           }}
-          onCompetitionSegmentErrorChange={(segIdx, errorId, newCount) =>
-            handleSetSegmentErrorCount(segIdx, errorId, newCount)
+          onCompetitionSegmentErrorChange={
+            isReadOnly
+              ? undefined
+              : (segIdx, errorId, newCount) => handleSetSegmentErrorCount(segIdx, errorId, newCount)
           }
-          onToggleSegmentUnmemorized={(segIdx, unmem) =>
-            handleToggleSegmentUnmemorized(segIdx, unmem)
+          onToggleSegmentUnmemorized={
+            isReadOnly
+              ? undefined
+              : (segIdx, unmem) => handleToggleSegmentUnmemorized(segIdx, unmem)
           }
           segmentMaxScore={segmentMaxScore}
           competitionCurrentScore={totalScore}
