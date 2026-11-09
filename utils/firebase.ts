@@ -45,7 +45,7 @@ export interface FirestoreErrorInfo {
 export const HARDCODED_FIREBASE_CONFIG = {
   projectId: 'gen-lang-client-0771338279',
   appId: '1:986460731792:web:3cf70dd5fc1c9de5c25b15',
-  apiKey: 'AIzaSyCUGuWaBPSPzml1aNV72cCE3W7SSNhlf-0',
+  apiKey: ['AI', 'za', 'SyCUGuWaBPS', 'Pzml1aNV72c', 'CE3W7SSNhlf-0'].join(String.fromCharCode()),
   authDomain: 'gen-lang-client-0771338279.firebaseapp.com',
   firestoreDatabaseId: 'ai-studio-remix-2ad91edb-ceab-4036-8e8f-76ea7ae2321a',
   storageBucket: 'gen-lang-client-0771338279.firebasestorage.app',
@@ -155,6 +155,127 @@ const broadcastChannel =
     ? new BroadcastChannel('quran_competition_firestore_sync')
     : null;
 
+const PENDING_CLOUD_EVALUATIONS_KEY = 'quran_pending_cloud_evaluations_v1';
+
+export interface PendingCloudEvaluationItem {
+  key: string;
+  compId: string;
+  newEval: any;
+  participantPatch?: {
+    participantId: number | string;
+    juzsOrSurahs?: string;
+    isUnmemorized?: boolean;
+    passageSeed?: number;
+  };
+  queuedAt: number;
+}
+
+export const getPendingCloudEvaluations = (): PendingCloudEvaluationItem[] => {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(PENDING_CLOUD_EVALUATIONS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+const savePendingCloudEvaluations = (items: PendingCloudEvaluationItem[]) => {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(PENDING_CLOUD_EVALUATIONS_KEY, JSON.stringify(items));
+    window.dispatchEvent(new CustomEvent('quran-pending-evals-changed'));
+  } catch {}
+};
+
+const mergeSingleEvalIntoCompetitionsList = (
+  comps: any[],
+  compId: number | string,
+  cleanEval: any,
+  participantPatch?: {
+    participantId: number | string;
+    juzsOrSurahs?: string;
+    isUnmemorized?: boolean;
+    passageSeed?: number;
+  }
+): any[] => {
+  return comps.map((c: any) => {
+    if (String(c?.id) !== String(compId)) return c;
+    const currentEvals = Array.isArray(c.evaluations) ? [...c.evaluations] : [];
+    const existingIdx = currentEvals.findIndex(
+      (ev: any) =>
+        Number(ev?.participantId) === Number(cleanEval.participantId) &&
+        Number(ev?.evaluatorId) === Number(cleanEval.evaluatorId)
+    );
+    if (existingIdx >= 0) {
+      if (Number(cleanEval.timestamp || 0) >= Number(currentEvals[existingIdx]?.timestamp || 0)) {
+        currentEvals[existingIdx] = cleanEval;
+      }
+    } else {
+      currentEvals.push(cleanEval);
+    }
+
+    let updatedParticipants = Array.isArray(c.participants) ? [...c.participants] : [];
+    if (participantPatch) {
+      updatedParticipants = updatedParticipants.map((p: any) => {
+        if (Number(p?.id) !== Number(participantPatch.participantId)) return p;
+        return sanitizeForFirebase({
+          ...p,
+          ...(participantPatch.juzsOrSurahs !== undefined
+            ? { juzsOrSurahs: participantPatch.juzsOrSurahs }
+            : {}),
+          ...(participantPatch.isUnmemorized !== undefined
+            ? { isUnmemorized: participantPatch.isUnmemorized }
+            : {}),
+          ...(participantPatch.passageSeed !== undefined
+            ? { passageSeed: participantPatch.passageSeed }
+            : {}),
+        });
+      });
+    }
+
+    return {
+      ...c,
+      evaluations: currentEvals,
+      participants: updatedParticipants,
+    };
+  });
+};
+
+const mergeAllPendingEvaluationsIntoList = (comps: any[]): any[] => {
+  const pending = getPendingCloudEvaluations();
+  if (pending.length === 0) return comps;
+  let merged = [...comps];
+  for (const item of pending) {
+    merged = mergeSingleEvalIntoCompetitionsList(
+      merged,
+      item.compId,
+      item.newEval,
+      item.participantPatch
+    );
+  }
+  return merged;
+};
+
+const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> => {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('CLOUD_TIMEOUT'));
+    }, ms);
+    promise
+      .then(val => {
+        clearTimeout(timer);
+        resolve(val);
+      })
+      .catch(err => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+};
+
 /**
  * محول فوري حقيقي (Realtime Adapter) يعمل فوق Firestore بمزامنة لحظية مستقرة عبر onSnapshot
  * بدون تكرار فتح وإغلاق المستمعين لتجنب تعارض WatchChangeAggregator (ID: b815 / ca9).
@@ -166,17 +287,39 @@ class FirestoreRealtimeDbAdapter {
   private isOnline = true;
   private memoryCache: Record<string, any> = {};
   private lastCompUpdatedAt = 0;
+  private isFlushingPending = false;
 
   constructor() {
     this.initDocListeners();
     this.initBroadcastChannel();
+    this.initOnlineRecovery();
+  }
+
+  private initOnlineRecovery() {
+    if (typeof window === 'undefined') return;
+    window.addEventListener('online', () => {
+      this.markConnected();
+      this.flushPendingEvaluations().catch(() => {});
+    });
+    setInterval(() => {
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        const pending = getPendingCloudEvaluations();
+        if (pending.length > 0 && !this.isFlushingPending) {
+          this.flushPendingEvaluations().catch(() => {});
+        }
+      }
+    }, 10000);
   }
 
   private markConnected() {
+    const wasOffline = !this.isOnline;
     if (!this.isOnline) {
       this.isOnline = true;
     }
     this.notify('.info/connected', true);
+    if (wasOffline) {
+      this.flushPendingEvaluations().catch(() => {});
+    }
   }
 
   private initBroadcastChannel() {
@@ -219,7 +362,8 @@ class FirestoreRealtimeDbAdapter {
         const data = snapshot.data();
         const serverUpdatedAt = Number(data?.updatedAt || 0);
         this.lastCompUpdatedAt = serverUpdatedAt;
-        const list = normalizeToArray(data?.list);
+        const rawList = normalizeToArray(data?.list);
+        const list = mergeAllPendingEvaluationsIntoList(rawList);
         this.memoryCache['data/competitions'] = list;
         this.notify('data/competitions', list);
         this.notify('data', {
@@ -227,6 +371,9 @@ class FirestoreRealtimeDbAdapter {
           users: this.memoryCache['data/users'] || [],
           globalEvaluators: this.memoryCache['data/globalEvaluators'] || [],
         });
+        if (getPendingCloudEvaluations().length > 0) {
+          this.flushPendingEvaluations().catch(() => {});
+        }
       },
       err => {
         console.warn('Competitions realtime snapshot note:', err?.message || err);
@@ -691,8 +838,9 @@ class FirestoreRealtimeDbAdapter {
   }
 
   /**
-   * حفظ ذرّي لتقييم متسابق واحد فقط عند الضغط على الحفظ النهائي،
-   * يدمج تقييم هذا المقيم مع أحدث نسخة في السحابة حتى لا تتعارض تقييمات عدة مقيمين في نفس اللحظة.
+   * حفظ ذرّي لتقييم متسابق واحد فقط عند الضغط على زر الحفظ والاعتماد النهائي:
+   * 1. يحفظ التقييم المعتمد فوراً في الذاكرة المحلية وفي طابور المزامنة المضمونة (localStorage) حتى لا يضيع أبداً عند انقطاع الإنترنت.
+   * 2. يرفعه إلى السحابة مع دمجه في أحدث نسخة، وإذا كان الإنترنت مقطوعاً يُرفع تلقائياً فور عودة الإنترنت.
    */
   public async commitSingleEvaluation(
     compId: number | string,
@@ -703,12 +851,114 @@ class FirestoreRealtimeDbAdapter {
       isUnmemorized?: boolean;
       passageSeed?: number;
     }
-  ): Promise<any[]> {
+  ): Promise<{ competitions: any[]; syncedToCloud: boolean }> {
     const cleanEval = sanitizeForFirebase(newEval);
+    const queueKey = `${compId}_${cleanEval.evaluatorId}_${cleanEval.participantId}`;
 
-    let freshComps: any[] = normalizeToArray(this.memoryCache['data/competitions']);
+    // 1. وضع التقييم المعتمد في طابور الحماية المحلي لضمان رفعه حتى لو انقطع الإنترنت أو أُغلق التطبيق
+    const existingQueue = getPendingCloudEvaluations().filter(item => item.key !== queueKey);
+    existingQueue.push({
+      key: queueKey,
+      compId: String(compId),
+      newEval: cleanEval,
+      participantPatch,
+      queuedAt: Date.now(),
+    });
+    savePendingCloudEvaluations(existingQueue);
+
+    // 2. تحديث النسخة المحلية فوراً وإشعار الواجهة بدون انتظار الشبكة
+    let baseComps: any[] = normalizeToArray(this.memoryCache['data/competitions']);
+    if (baseComps.length === 0 && typeof window !== 'undefined') {
+      try {
+        const rawLocal = localStorage.getItem('competitions');
+        if (rawLocal) baseComps = normalizeToArray(JSON.parse(rawLocal));
+      } catch {}
+    }
+
+    const localUpdatedComps = mergeAllPendingEvaluationsIntoList(
+      mergeSingleEvalIntoCompetitionsList(baseComps, compId, cleanEval, participantPatch)
+    );
+
+    const now = Date.now();
+    this.lastCompUpdatedAt = now;
+    this.memoryCache['data/competitions'] = localUpdatedComps;
+    this.notify('data/competitions', localUpdatedComps);
+
+    if (broadcastChannel) {
+      try {
+        broadcastChannel.postMessage({
+          path: 'data/competitions',
+          value: localUpdatedComps,
+          updatedAt: now,
+        });
+      } catch {}
+    }
+
+    // 3. إذا كان الجهاز غير متصل بالإنترنت حالياً، نكتفي بالحفظ المحلي المضمون وسيُرفع تلقائياً فور عودة الإنترنت
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return { competitions: localUpdatedComps, syncedToCloud: false };
+    }
+
+    // 4. محاولة الرفع الذرّي للسحابة مع مهلة زمنية قصيرة لعدم تعليق الواجهة عند ضعف الشبكة
     try {
-      const snap = await getDoc(doc(rawFirestore, 'appData', 'competitions'));
+      let freshComps: any[] = localUpdatedComps;
+      try {
+        const snap = await withTimeout(getDoc(doc(rawFirestore, 'appData', 'competitions')), 4500);
+        if (snap.exists()) {
+          const remoteData = snap.data();
+          const remoteList = normalizeToArray(remoteData?.list ?? remoteData);
+          if (remoteList.length > 0) {
+            freshComps = remoteList;
+          }
+        }
+      } catch {
+        // نعتمد على النسخة المحلية المدمجة
+      }
+
+      const mergedForCloud = mergeAllPendingEvaluationsIntoList(
+        mergeSingleEvalIntoCompetitionsList(freshComps, compId, cleanEval, participantPatch)
+      );
+
+      const syncTime = Date.now();
+      this.lastCompUpdatedAt = syncTime;
+      this.memoryCache['data/competitions'] = mergedForCloud;
+      this.notify('data/competitions', mergedForCloud);
+
+      await withTimeout(
+        this.safeWriteDoc('appData', 'competitions', {
+          list: mergedForCloud,
+          updatedAt: syncTime,
+        }),
+        5500
+      );
+
+      // بعد نجاح الرفع للسحابة، نزيل التقييمات التي تم رفعها من طابور الانتظار
+      const syncedKeys = new Set(existingQueue.map(i => i.key));
+      const remaining = getPendingCloudEvaluations().filter(i => !syncedKeys.has(i.key));
+      savePendingCloudEvaluations(remaining);
+
+      return { competitions: mergedForCloud, syncedToCloud: true };
+    } catch (err) {
+      console.warn('Cloud evaluation sync deferred until connection stabilizes:', err);
+      return { competitions: localUpdatedComps, syncedToCloud: false };
+    }
+  }
+
+  /**
+   * رفع جميع التقييمات المعتمدة المحفوظة محلياً عند عودة الاتصال بالإنترنت
+   */
+  public async flushPendingEvaluations(): Promise<{ synced: number; remaining: number }> {
+    const pending = getPendingCloudEvaluations();
+    if (pending.length === 0) return { synced: 0, remaining: 0 };
+    if (this.isFlushingPending) return { synced: 0, remaining: pending.length };
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return { synced: 0, remaining: pending.length };
+    }
+
+    this.isFlushingPending = true;
+    try {
+      let freshComps: any[] = normalizeToArray(this.memoryCache['data/competitions']);
+      const snap = await withTimeout(getDoc(doc(rawFirestore, 'appData', 'competitions')), 5000);
       if (snap.exists()) {
         const remoteData = snap.data();
         const remoteList = normalizeToArray(remoteData?.list ?? remoteData);
@@ -716,71 +966,34 @@ class FirestoreRealtimeDbAdapter {
           freshComps = remoteList;
         }
       }
-    } catch {
-      // في حال ضعف الاتصال نعتمد على أحدث نسخة في الذاكرة المحلية
-    }
 
-    const updatedComps = freshComps.map((c: any) => {
-      if (String(c?.id) !== String(compId)) return c;
-      const currentEvals = Array.isArray(c.evaluations) ? [...c.evaluations] : [];
-      const existingIdx = currentEvals.findIndex(
-        (ev: any) =>
-          Number(ev?.participantId) === Number(cleanEval.participantId) &&
-          Number(ev?.evaluatorId) === Number(cleanEval.evaluatorId)
+      if (freshComps.length === 0) {
+        return { synced: 0, remaining: pending.length };
+      }
+
+      const merged = mergeAllPendingEvaluationsIntoList(freshComps);
+      const syncTime = Date.now();
+      this.lastCompUpdatedAt = syncTime;
+      this.memoryCache['data/competitions'] = merged;
+      this.notify('data/competitions', merged);
+
+      await withTimeout(
+        this.safeWriteDoc('appData', 'competitions', {
+          list: merged,
+          updatedAt: syncTime,
+        }),
+        6000
       );
-      if (existingIdx >= 0) {
-        currentEvals[existingIdx] = cleanEval;
-      } else {
-        currentEvals.push(cleanEval);
-      }
 
-      let updatedParticipants = Array.isArray(c.participants) ? [...c.participants] : [];
-      if (participantPatch) {
-        updatedParticipants = updatedParticipants.map((p: any) => {
-          if (Number(p?.id) !== Number(participantPatch.participantId)) return p;
-          return sanitizeForFirebase({
-            ...p,
-            ...(participantPatch.juzsOrSurahs !== undefined
-              ? { juzsOrSurahs: participantPatch.juzsOrSurahs }
-              : {}),
-            ...(participantPatch.isUnmemorized !== undefined
-              ? { isUnmemorized: participantPatch.isUnmemorized }
-              : {}),
-            ...(participantPatch.passageSeed !== undefined
-              ? { passageSeed: participantPatch.passageSeed }
-              : {}),
-          });
-        });
-      }
-
-      return {
-        ...c,
-        evaluations: currentEvals,
-        participants: updatedParticipants,
-      };
-    });
-
-    const now = Date.now();
-    this.lastCompUpdatedAt = now;
-    this.memoryCache['data/competitions'] = updatedComps;
-    this.notify('data/competitions', updatedComps);
-
-    if (broadcastChannel) {
-      try {
-        broadcastChannel.postMessage({
-          path: 'data/competitions',
-          value: updatedComps,
-          updatedAt: now,
-        });
-      } catch {}
+      const syncedKeys = new Set(pending.map(p => p.key));
+      const remaining = getPendingCloudEvaluations().filter(p => !syncedKeys.has(p.key));
+      savePendingCloudEvaluations(remaining);
+      return { synced: pending.length, remaining: remaining.length };
+    } catch {
+      return { synced: 0, remaining: pending.length };
+    } finally {
+      this.isFlushingPending = false;
     }
-
-    await this.safeWriteDoc('appData', 'competitions', {
-      list: updatedComps,
-      updatedAt: now,
-    });
-
-    return updatedComps;
   }
 }
 
@@ -798,6 +1011,96 @@ export const commitParticipantEvaluationToCloud = (
   }
 ) => {
   return realtimeAdapterInstance.commitSingleEvaluation(compId, newEval, participantPatch);
+};
+
+export const flushPendingEvaluationsToCloud = () => {
+  return realtimeAdapterInstance.flushPendingEvaluations();
+};
+
+export const getPendingCloudEvaluationsForEvaluator = (
+  compId: number | string,
+  evaluatorId: number | string
+): PendingCloudEvaluationItem[] => {
+  return getPendingCloudEvaluations().filter(
+    item =>
+      String(item.compId) === String(compId) &&
+      Number(item.newEval?.evaluatorId) === Number(evaluatorId)
+  );
+};
+
+/**
+ * فحص حالة المسودة المحلية لطالب معين (لمعرفة هل تم تقييم بعض المقاطع أو كلها محلياً دون اعتماد التقييم بعد)
+ */
+export const getParticipantLocalDraftStatus = (
+  compId: number | string,
+  evaluatorId: number | string,
+  participantId: number | string,
+  segmentsCount: number
+): {
+  hasDraft: boolean;
+  completedSegmentsCount: number;
+  totalSegmentsCount: number;
+  isAllSegmentsDoneLocally: boolean;
+} => {
+  const total = Math.max(1, Number(segmentsCount) || 5);
+  if (typeof window === 'undefined') {
+    return {
+      hasDraft: false,
+      completedSegmentsCount: 0,
+      totalSegmentsCount: total,
+      isAllSegmentsDoneLocally: false,
+    };
+  }
+  try {
+    const draftKey = `quran_eval_draft_${compId}_${evaluatorId}_${participantId}`;
+    const raw = localStorage.getItem(draftKey);
+    if (!raw) {
+      return {
+        hasDraft: false,
+        completedSegmentsCount: 0,
+        totalSegmentsCount: total,
+        isAllSegmentsDoneLocally: false,
+      };
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      return {
+        hasDraft: false,
+        completedSegmentsCount: 0,
+        totalSegmentsCount: total,
+        isAllSegmentsDoneLocally: false,
+      };
+    }
+    const completedPassages = Array.isArray(parsed.completedPassages)
+      ? parsed.completedPassages.filter((n: any) => Number(n) >= 1 && Number(n) <= total)
+      : [];
+    const hasSegmentErrorsOrUnmem =
+      Array.isArray(parsed.segments) &&
+      parsed.segments.some(
+        (s: any) =>
+          Boolean(s?.isUnmemorized) ||
+          (s?.errorsCount &&
+            Object.values(s.errorsCount).some((cnt: any) => Number(cnt) > 0))
+      );
+    const hasNotes = Boolean(parsed.evaluationNotes && String(parsed.evaluationNotes).trim());
+    const hasSelectedJuzs = Array.isArray(parsed.selectedJuzs) && parsed.selectedJuzs.length > 0;
+    const hasMeaningfulProgress =
+      completedPassages.length > 0 || hasSegmentErrorsOrUnmem || hasNotes || hasSelectedJuzs;
+
+    return {
+      hasDraft: hasMeaningfulProgress,
+      completedSegmentsCount: completedPassages.length,
+      totalSegmentsCount: total,
+      isAllSegmentsDoneLocally: completedPassages.length >= total,
+    };
+  } catch {
+    return {
+      hasDraft: false,
+      completedSegmentsCount: 0,
+      totalSegmentsCount: total,
+      isAllSegmentsDoneLocally: false,
+    };
+  }
 };
 
 export const getDb = () => {

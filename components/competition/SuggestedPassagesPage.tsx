@@ -220,7 +220,7 @@ export const SuggestedPassagesPage: React.FC = () => {
     showToast(`تم اعتماد "${modeTitle}" للظهور في تقييم المسابقة بنجاح!`, 'success');
   };
 
-  // تحديث عدد الأسطر الفعلية وحفظه في المسابقة وتطبيقه اختيارياً على المستويات
+  // تحديث عدد الأسطر الفعلية محلياً للمعاينة، وعدم الرفع لقاعدة البيانات إلا عند ضغط زر التعميم أو الاعتماد
   const handleLinesChange = (newLines: number, applyToLevels: boolean = false) => {
     const clamped = Math.max(1, Math.min(20, newLines));
     setLinesPerSegment(clamped);
@@ -240,11 +240,6 @@ export const SuggestedPassagesPage: React.FC = () => {
         `تم تعميم (${toArabicDigits(clamped)} أسطر فعلية للمقطع) على جميع مستويات المسابقة!`,
         'success'
       );
-    } else {
-      handleUpdateCompetition({
-        ...activeCompetition,
-        previewLinesPerSegment: clamped,
-      });
     }
   };
 

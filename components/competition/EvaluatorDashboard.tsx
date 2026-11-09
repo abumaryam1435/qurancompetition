@@ -1,4 +1,4 @@
-import React, { useContext, useState, useMemo } from 'react';
+import React, { useContext, useState, useMemo, useEffect } from 'react';
 import { AppContext } from '../../App';
 import { CompetitionEvaluator } from '../../types';
 import {
@@ -8,15 +8,22 @@ import {
   BookOpen,
   Users,
   Sparkles,
-  Award,
   AlertTriangle,
   MessageSquare,
   Lock,
   Unlock,
+  WifiOff,
+  RefreshCw,
+  Clock,
 } from 'lucide-react';
 import ParticipantEvaluation from './ParticipantEvaluation';
 import { Logo, AwqafBadge } from '../Logo';
 import { formatJuzsOrSurahsDisplay } from '../../utils/juzUtils';
+import {
+  getParticipantLocalDraftStatus,
+  getPendingCloudEvaluationsForEvaluator,
+  flushPendingEvaluationsToCloud,
+} from '../../utils/firebase';
 
 export default function EvaluatorDashboard({
   evaluatorUser,
@@ -28,7 +35,7 @@ export default function EvaluatorDashboard({
   const context = useContext(AppContext);
   if (!context) return null;
 
-  const { competitions } = context;
+  const { competitions, setCompetitionsLocally, showToast } = context;
 
   // البحث عن المسابقة الخاصة بالمقيم (مع دعم التطابق النصي أو الرقمي أو البحث التلقائي)
   const comp =
@@ -53,9 +60,39 @@ export default function EvaluatorDashboard({
   >(null);
   const [selectedLevelId, setSelectedLevelId] = useState<number | 'all'>('all');
   const [statusFilter, setStatusFilter] = useState<
-    'all' | 'pending' | 'evaluated'
+    'all' | 'pending' | 'in_progress' | 'evaluated'
   >('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isOnline, setIsOnline] = useState<boolean>(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  const [isSyncingPending, setIsSyncingPending] = useState(false);
+  const [syncTick, setSyncTick] = useState(0);
+
+  useEffect(() => {
+    const handleOnline = async () => {
+      setIsOnline(true);
+      setSyncTick(t => t + 1);
+      const res = await flushPendingEvaluationsToCloud();
+      if (res.synced > 0) {
+        showToast(
+          `عاد الاتصال بالإنترنت وتم رفع (${res.synced}) تقييم معتمد تلقائياً إلى السحابة!`,
+          'success'
+        );
+      }
+      setSyncTick(t => t + 1);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setSyncTick(t => t + 1);
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [showToast]);
 
   if (!comp) {
     return (
@@ -111,6 +148,34 @@ export default function EvaluatorDashboard({
     );
   }
 
+  const pendingCloudEvals = useMemo(() => {
+    void syncTick;
+    void selectedParticipantId;
+    return getPendingCloudEvaluationsForEvaluator(comp.id, evaluator.id);
+  }, [comp.id, evaluator.id, syncTick, selectedParticipantId, comp.evaluations]);
+
+  const handleManualFlushPending = async () => {
+    if (isSyncingPending) return;
+    setIsSyncingPending(true);
+    try {
+      const res = await flushPendingEvaluationsToCloud();
+      if (res.synced > 0) {
+        showToast(
+          `تم رفع (${res.synced}) تقييم معتمد إلى قاعدة البيانات بنجاح!`,
+          'success'
+        );
+      } else if (res.remaining > 0) {
+        showToast(
+          'تعذر الاتصال بالإنترنت حالياً؛ سيتم الرفع تلقائياً فور توفر الشبكة.',
+          'info'
+        );
+      }
+      setSyncTick(t => t + 1);
+    } finally {
+      setIsSyncingPending(false);
+    }
+  };
+
   // المستويات المسندة لهذا المقيم
   const assignedLevels = useMemo(() => {
     const allLevels = comp.levels || [];
@@ -135,6 +200,36 @@ export default function EvaluatorDashboard({
     );
   }, [allParticipants, evaluator.levelIds]);
 
+  // خريطة حالة التقييم المحفوظ محلياً (غير المعتمد بعد) لكل متسابق
+  const participantDraftMap = useMemo(() => {
+    void selectedParticipantId;
+    void syncTick;
+    const map: Record<
+      number,
+      ReturnType<typeof getParticipantLocalDraftStatus>
+    > = {};
+    for (const p of myLevelParticipants) {
+      const lvl = (comp.levels || []).find(
+        l => Number(l.id) === Number(p.levelId)
+      );
+      const segmentsCount = lvl?.segmentsCount || 3;
+      map[Number(p.id)] = getParticipantLocalDraftStatus(
+        comp.id,
+        evaluator.id,
+        p.id,
+        segmentsCount
+      );
+    }
+    return map;
+  }, [
+    myLevelParticipants,
+    comp.levels,
+    comp.id,
+    evaluator.id,
+    selectedParticipantId,
+    syncTick,
+  ]);
+
   // إحصائيات تقييم هذا المقيم
   const evaluatedByMeCount = useMemo(() => {
     return myLevelParticipants.filter(p =>
@@ -145,6 +240,20 @@ export default function EvaluatorDashboard({
       )
     ).length;
   }, [myLevelParticipants, comp.evaluations, evaluator.id]);
+
+  // عدد الطلاب الذين تم تقييم بعض مقاطعهم أو كلها محلياً ولم يتم اعتماد التقييم بعد
+  const inProgressForMeCount = useMemo(() => {
+    return myLevelParticipants.filter(p => {
+      const hasMyEval = (comp.evaluations || []).some(
+        ev =>
+          Number(ev.participantId) === Number(p.id) &&
+          Number(ev.evaluatorId) === Number(evaluator.id)
+      );
+      if (hasMyEval) return false;
+      const draft = participantDraftMap[Number(p.id)];
+      return Boolean(draft?.hasDraft);
+    }).length;
+  }, [myLevelParticipants, comp.evaluations, evaluator.id, participantDraftMap]);
 
   const pendingForMeCount = myLevelParticipants.length - evaluatedByMeCount;
 
@@ -170,8 +279,11 @@ export default function EvaluatorDashboard({
           Number(ev.participantId) === Number(p.id) &&
           Number(ev.evaluatorId) === Number(evaluator.id)
       );
+      const hasLocalDraft =
+        !hasMyEval && Boolean(participantDraftMap[Number(p.id)]?.hasDraft);
 
       if (statusFilter === 'evaluated' && !hasMyEval) return false;
+      if (statusFilter === 'in_progress' && !hasLocalDraft) return false;
       if (statusFilter === 'pending' && hasMyEval) return false;
 
       return true;
@@ -183,6 +295,7 @@ export default function EvaluatorDashboard({
     statusFilter,
     comp.evaluations,
     evaluator.id,
+    participantDraftMap,
   ]);
 
   // إذا كانت المسابقة غير مفعّلة من قِبل المشرف: لا تظهر أسماء المشاركين للمعلمين/المقيمين
@@ -297,6 +410,41 @@ export default function EvaluatorDashboard({
       </header>
 
       <main className="p-2.5 sm:p-6 max-w-5xl mx-auto space-y-3.5 sm:space-y-5 w-full">
+        {/* تنبيه التقييمات المعتمدة المحفوظة بانتظار عودة الإنترنت */}
+        {pendingCloudEvals.length > 0 && (
+          <div className="bg-amber-50 dark:bg-amber-950/60 border-2 border-amber-400 dark:border-amber-700 rounded-2xl p-3 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-start gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 mt-0.5">
+                <WifiOff size={18} />
+              </div>
+              <div className="space-y-0.5">
+                <p className="text-xs sm:text-sm font-black text-amber-950 dark:text-amber-200">
+                  يوجد ({pendingCloudEvals.length}) تقييم معتمد محفوظ في جهازك بانتظار الرفع للسحابة
+                </p>
+                <p className="text-[11px] font-bold text-amber-800 dark:text-amber-300 leading-relaxed">
+                  {isOnline
+                    ? 'الاتصال متوفر حالياً — يتم الرفع تلقائياً أو يمكنك الضغط على زر الرفع الآن.'
+                    : 'الاتصال بالإنترنت منقطع حالياً — جميع التقييمات المعتمدة محفوظة بأمان وسيتم رفعها تلقائياً فور عودة الإنترنت.'}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleManualFlushPending}
+              disabled={isSyncingPending}
+              className="min-h-[40px] px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white font-black text-xs flex items-center gap-1.5 shrink-0 cursor-pointer shadow-xs transition active:scale-95"
+            >
+              <RefreshCw
+                size={14}
+                className={isSyncingPending ? 'animate-spin' : ''}
+              />
+              <span>
+                {isSyncingPending ? 'جاري الرفع...' : 'رفع التقييمات المعلقة الآن'}
+              </span>
+            </button>
+          </div>
+        )}
+
         {/* ملخص سريع للمستويات المسندة وإعدادات الأسطر والمقاطع المعتمدة من المشرف */}
         <div className="bg-gradient-to-l from-emerald-900 via-emerald-800 to-teal-900 text-white p-3.5 sm:p-5 rounded-2xl shadow-md border border-emerald-700/60 text-right">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -310,7 +458,7 @@ export default function EvaluatorDashboard({
               </h2>
             </div>
 
-            <div className="grid grid-cols-3 gap-1.5 sm:gap-2 shrink-0 w-full sm:w-auto">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2 shrink-0 w-full sm:w-auto">
               <div className="bg-white/10 backdrop-blur-sm rounded-xl px-2 sm:px-3 py-2 text-center border border-white/15">
                 <span className="block text-[10px] text-emerald-200 font-bold truncate">
                   إجمالي طلابك
@@ -319,17 +467,25 @@ export default function EvaluatorDashboard({
                   {myLevelParticipants.length}
                 </span>
               </div>
-              <div className="bg-amber-500/20 backdrop-blur-sm rounded-xl px-2 sm:px-3 py-2 text-center border border-amber-400/30">
+              <div className="bg-amber-500/25 backdrop-blur-sm rounded-xl px-2 sm:px-3 py-2 text-center border border-amber-400/40">
                 <span className="block text-[10px] text-amber-200 font-bold truncate">
-                  بانتظار تقييمك
+                  قيد التقييم (محلي)
                 </span>
                 <span className="text-base sm:text-xl font-black text-amber-300">
+                  {inProgressForMeCount}
+                </span>
+              </div>
+              <div className="bg-slate-500/25 backdrop-blur-sm rounded-xl px-2 sm:px-3 py-2 text-center border border-slate-300/25">
+                <span className="block text-[10px] text-slate-200 font-bold truncate">
+                  بانتظار الاعتماد
+                </span>
+                <span className="text-base sm:text-xl font-black text-slate-100">
                   {pendingForMeCount}
                 </span>
               </div>
               <div className="bg-emerald-500/25 backdrop-blur-sm rounded-xl px-2 sm:px-3 py-2 text-center border border-emerald-400/30">
                 <span className="block text-[10px] text-emerald-100 font-bold truncate">
-                  تم تقييمهم
+                  مكتمل ومعتمد
                 </span>
                 <span className="text-base sm:text-xl font-black text-emerald-300">
                   {evaluatedByMeCount}
@@ -415,7 +571,7 @@ export default function EvaluatorDashboard({
             </div>
 
             {/* أزرار تصفية حالة التقييم */}
-            <div className="grid grid-cols-3 gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl shrink-0">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl shrink-0">
               <button
                 type="button"
                 onClick={() => setStatusFilter('all')}
@@ -429,27 +585,59 @@ export default function EvaluatorDashboard({
               </button>
               <button
                 type="button"
-                onClick={() => setStatusFilter('pending')}
-                className={`min-h-[38px] px-2 sm:px-3 py-1 rounded-lg font-black text-[11px] sm:text-xs transition cursor-pointer truncate ${
-                  statusFilter === 'pending'
+                onClick={() => setStatusFilter('in_progress')}
+                className={`min-h-[38px] px-2 sm:px-3 py-1 rounded-lg font-black text-[11px] sm:text-xs transition cursor-pointer truncate flex items-center justify-center gap-1.5 ${
+                  statusFilter === 'in_progress'
                     ? 'bg-white dark:bg-slate-900 text-amber-700 dark:text-amber-400 shadow-xs'
                     : 'text-slate-600 dark:text-slate-400'
                 }`}
               >
-                بانتظارك ({pendingForMeCount})
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0" />
+                <span>قيد التقييم ({inProgressForMeCount})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('pending')}
+                className={`min-h-[38px] px-2 sm:px-3 py-1 rounded-lg font-black text-[11px] sm:text-xs transition cursor-pointer truncate ${
+                  statusFilter === 'pending'
+                    ? 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400'
+                }`}
+              >
+                غير معتمد ({pendingForMeCount})
               </button>
               <button
                 type="button"
                 onClick={() => setStatusFilter('evaluated')}
-                className={`min-h-[38px] px-2 sm:px-3 py-1 rounded-lg font-black text-[11px] sm:text-xs transition cursor-pointer truncate ${
+                className={`min-h-[38px] px-2 sm:px-3 py-1 rounded-lg font-black text-[11px] sm:text-xs transition cursor-pointer truncate flex items-center justify-center gap-1.5 ${
                   statusFilter === 'evaluated'
                     ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 shadow-xs'
                     : 'text-slate-600 dark:text-slate-400'
                 }`}
               >
-                تم تقييمهم ({evaluatedByMeCount})
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
+                <span>معتمد ({evaluatedByMeCount})</span>
               </button>
             </div>
+          </div>
+
+          {/* دليل الألوان للدوائر التوضيحية */}
+          <div className="flex flex-wrap items-center gap-3 sm:gap-5 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/70 text-[11px] font-bold text-slate-700 dark:text-slate-300">
+            <span className="font-black text-slate-500 dark:text-slate-400">
+              دليل حالة المتسابق:
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-full bg-emerald-500 ring-2 ring-emerald-500/30 shrink-0" />
+              <span>مكتمل ومعتمد نهائياً</span>
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-full bg-amber-500 ring-2 ring-amber-500/30 shrink-0" />
+              <span>تم تقييم بعض/كل المقاطع محلياً ولم يُعتمد بعد</span>
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-full bg-slate-300 dark:bg-slate-600 ring-2 ring-slate-300/30 shrink-0" />
+              <span>لم يبدأ التقييم بعد</span>
+            </span>
           </div>
 
           {/* شبكة بطاقات المتسابقين */}
@@ -472,6 +660,12 @@ export default function EvaluatorDashboard({
               );
 
               const hasEvaluated = !!myEval;
+              const draftStatus = participantDraftMap[Number(p.id)];
+              const hasLocalDraft =
+                !hasEvaluated && Boolean(draftStatus?.hasDraft);
+              const isQueuedOffline = pendingCloudEvals.some(
+                item => Number(item.evaluation?.participantId) === Number(p.id)
+              );
 
               const isStudentUnmemorized =
                 p.isUnmemorized ||
@@ -491,15 +685,36 @@ export default function EvaluatorDashboard({
                       ? 'border-red-300 bg-red-50/50 dark:bg-red-950/20 dark:border-red-900/60 hover:bg-red-50'
                       : hasEvaluated
                       ? 'border-emerald-300 bg-emerald-50/70 dark:bg-emerald-950/30 dark:border-emerald-800 hover:bg-emerald-100/70'
+                      : hasLocalDraft
+                      ? 'border-amber-400 bg-amber-50/70 dark:bg-amber-950/30 dark:border-amber-700 hover:bg-amber-100/60'
                       : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 hover:border-emerald-500 hover:shadow-md'
                   }`}
                 >
-                  {/* 1. الاسم الكامل للمتسابق (الاسم الثلاثي والقبيلة) + اسم المستوى بكامل عرض البطاقة */}
+                  {/* 1. الدائرة الملونة + الاسم الكامل للمتسابق + اسم المستوى */}
                   <div className="w-full min-w-0 text-right space-y-1">
                     <div className="flex items-start justify-between gap-2 w-full min-w-0">
-                      <span className="font-black text-base sm:text-lg text-slate-900 dark:text-white leading-snug break-words whitespace-normal flex-1 min-w-0">
-                        {p.name}
-                      </span>
+                      <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                        {/* الدائرة التوضيحية لحالة التقييم: خضراء للمعتمد، برتقالية للمحفوظ محلياً غير المعتمد، رمادية لغير المبدوء */}
+                        <span
+                          className={`w-3.5 h-3.5 rounded-full shrink-0 transition-all ${
+                            hasEvaluated
+                              ? 'bg-emerald-500 ring-4 ring-emerald-500/25 shadow-xs'
+                              : hasLocalDraft
+                              ? 'bg-amber-500 ring-4 ring-amber-500/25 shadow-xs animate-pulse'
+                              : 'bg-slate-300 dark:bg-slate-600 ring-4 ring-slate-300/20 dark:ring-slate-700/30'
+                          }`}
+                          title={
+                            hasEvaluated
+                              ? 'تم إكمال التقييم واعتماده نهائياً'
+                              : hasLocalDraft
+                              ? `تم تقييم (${draftStatus?.completedSegmentsCount || 0}/${draftStatus?.totalSegmentsCount || level?.segmentsCount || 3}) مقاطع محلياً ولم يُعتمد بعد`
+                              : 'لم يبدأ التقييم بعد'
+                          }
+                        />
+                        <span className="font-black text-base sm:text-lg text-slate-900 dark:text-white leading-snug break-words whitespace-normal flex-1 min-w-0">
+                          {p.name}
+                        </span>
+                      </div>
                       {isStudentUnmemorized && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-red-600 text-white text-[11px] font-black shrink-0 shadow-xs">
                           <AlertTriangle size={12} />
@@ -508,7 +723,7 @@ export default function EvaluatorDashboard({
                       )}
                     </div>
 
-                    <span className="block text-xs sm:text-sm font-bold text-emerald-800 dark:text-emerald-300 leading-snug break-words whitespace-normal">
+                    <span className="block text-xs sm:text-sm font-bold text-emerald-800 dark:text-emerald-300 leading-snug break-words whitespace-normal pr-6">
                       {level?.name || 'مستوى عام'}
                     </span>
                   </div>
@@ -530,24 +745,46 @@ export default function EvaluatorDashboard({
                         </span>
                       )}
 
-                      {isEditAllowed ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-900 dark:text-emerald-200 bg-emerald-100 dark:bg-emerald-950/80 px-2.5 py-1 rounded-lg border border-emerald-300 dark:border-emerald-700 shadow-2xs">
-                          <Unlock size={11} className="text-emerald-700 dark:text-emerald-400 shrink-0" />
-                          <span>التعديل مأذون</span>
+                      <div className="flex flex-wrap items-center gap-1">
+                        {isQueuedOffline && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-black text-amber-900 dark:text-amber-200 bg-amber-100 dark:bg-amber-950/80 px-2 py-1 rounded-lg border border-amber-300 dark:border-amber-700">
+                            <WifiOff size={10} className="shrink-0" />
+                            <span>بانتظار الإنترنت للرفع</span>
+                          </span>
+                        )}
+                        {isEditAllowed ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-900 dark:text-emerald-200 bg-emerald-100 dark:bg-emerald-950/80 px-2.5 py-1 rounded-lg border border-emerald-300 dark:border-emerald-700 shadow-2xs">
+                            <Unlock size={11} className="text-emerald-700 dark:text-emerald-400 shrink-0" />
+                            <span>التعديل مأذون</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-900 dark:text-amber-200 bg-amber-100/90 dark:bg-amber-950/80 px-2.5 py-1 rounded-lg border border-amber-300 dark:border-amber-800">
+                            <Lock size={11} className="text-amber-700 dark:text-amber-400 shrink-0" />
+                            <span>معتمد ومقفل</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ) : hasLocalDraft ? (
+                    <div className="w-full flex flex-wrap items-center justify-between gap-2 bg-amber-100/80 dark:bg-amber-950/60 px-2.5 py-2 rounded-xl border border-amber-300 dark:border-amber-700">
+                      <span className="inline-flex items-center gap-1.5 text-[11px] sm:text-xs font-black text-amber-900 dark:text-amber-200">
+                        <Clock size={14} className="text-amber-600 dark:text-amber-400 shrink-0" />
+                        <span>
+                          {draftStatus?.isAllSegmentsCompleted
+                            ? `اكتملت المقاطع (${draftStatus.completedSegmentsCount}/${draftStatus.totalSegmentsCount}) — بانتظار الاعتماد النهائي`
+                            : `تم تقييم (${draftStatus?.completedSegmentsCount || 0} من ${draftStatus?.totalSegmentsCount || level?.segmentsCount || 3}) مقاطع — غير معتمد`}
                         </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-900 dark:text-amber-200 bg-amber-100/90 dark:bg-amber-950/80 px-2.5 py-1 rounded-lg border border-amber-300 dark:border-amber-800">
-                          <Lock size={11} className="text-amber-700 dark:text-amber-400 shrink-0" />
-                          <span>معتمد ومقفل</span>
-                        </span>
-                      )}
+                      </span>
+                      <span className="px-2.5 py-1 rounded-lg bg-amber-600 text-white text-xs font-black shrink-0 shadow-2xs">
+                        متابعة التقييم ←
+                      </span>
                     </div>
                   ) : (
-                    <div className="w-full flex items-center justify-between gap-2 bg-amber-50/70 dark:bg-slate-900/50 px-2.5 py-1.5 rounded-xl border border-amber-200/70 dark:border-slate-700/80">
+                    <div className="w-full flex items-center justify-between gap-2 bg-slate-50 dark:bg-slate-900/50 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700/80">
                       <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
                         بانتظار رصد التقييم
                       </span>
-                      <span className="px-2.5 py-1 rounded-lg bg-amber-500 text-white text-xs font-black shrink-0 shadow-2xs">
+                      <span className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-xs font-black shrink-0 shadow-2xs">
                         ابدأ التقييم ←
                       </span>
                     </div>
@@ -601,3 +838,4 @@ export default function EvaluatorDashboard({
     </div>
   );
 }
+

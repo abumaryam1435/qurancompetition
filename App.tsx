@@ -145,6 +145,7 @@ export interface AppContextType {
   users: User[];
   competitions: Competition[];
   updateCompetitions: (competitions: Competition[]) => void;
+  setCompetitionsLocally: (competitions: Competition[]) => void;
   globalEvaluators: GlobalEvaluator[];
   updateGlobalEvaluators: (evaluators: GlobalEvaluator[]) => void;
   activeCompetitionId: string | null;
@@ -1020,11 +1021,17 @@ const App: React.FC = () => {
     [writeData]
   );
 
+  const setCompetitionsLocally = useCallback((newCompetitions: Competition[]) => {
+    const normalized = (newCompetitions || []).map(normalizeCompetition);
+    setData(prev => ({ ...prev, competitions: normalized }));
+  }, []);
+
   const contextValue = useMemo(
     () => ({
       users: data.users || [],
       competitions: (data.competitions || []).map(normalizeCompetition),
       updateCompetitions,
+      setCompetitionsLocally,
       globalEvaluators,
       updateGlobalEvaluators,
       activeCompetitionId,
@@ -1062,6 +1069,7 @@ const App: React.FC = () => {
       activeCompetitionId,
       setActiveCompetitionId,
       updateCompetitions,
+      setCompetitionsLocally,
       deleteAllData,
       customLogo,
       setCustomLogo,

@@ -2447,12 +2447,6 @@ function LevelEditor({
     setCompErrorCategories(nextCategories);
     const syncedLevels = buildSyncedLevels(levels, nextErrors, nextCategories);
     setLevels(syncedLevels);
-    onUpdate({
-      ...comp,
-      errors: nextErrors,
-      errorCategories: nextCategories,
-      levels: syncedLevels,
-    });
   };
 
   const handleSave = () => {

@@ -64,6 +64,7 @@ interface LocalEvaluationDraft {
   activeSegmentIndex: number;
   evaluationNotes: string;
   localPassageSeed?: number;
+  savedPassages?: SuggestedTestPassage[];
   updatedAt: number;
 }
 
@@ -344,7 +345,13 @@ export default function ParticipantEvaluation({
     const sorted = [...new Set(nextJuzs)]
       .filter(n => n >= 1 && n <= 30)
       .sort((a, b) => a - b);
+    const prevKey = selectedJuzs.join(',');
+    const nextKey = sorted.join(',');
     setSelectedJuzs(sorted);
+    if (prevKey !== nextKey) {
+      setCompletedPassages([]);
+      setActiveSegmentIndex(0);
+    }
   };
 
   // هل اكتمل تحديد عدد الأجزاء المطلوب تماماً؟
@@ -418,6 +425,17 @@ export default function ParticipantEvaluation({
   const [showExitConfirmModal, setShowExitConfirmModal] = useState<boolean>(false);
   const [isSavingFinal, setIsSavingFinal] = useState<boolean>(false);
 
+  const [suggestedPassages, setSuggestedPassages] = useState<SuggestedTestPassage[]>(() => {
+    if (
+      savedDraft &&
+      Array.isArray(savedDraft.savedPassages) &&
+      savedDraft.savedPassages.length === segmentsCount
+    ) {
+      return savedDraft.savedPassages;
+    }
+    return [];
+  });
+
   // حفظ المسودة محلياً (localStorage) تلقائياً عند أي تعديل في الدرجات أو المقاطع دون إرسال أي طلبات سحابية أثناء التقييم
   useEffect(() => {
     if (isReadOnly) return;
@@ -429,6 +447,7 @@ export default function ParticipantEvaluation({
         activeSegmentIndex,
         evaluationNotes,
         localPassageSeed,
+        savedPassages: suggestedPassages.length > 0 ? suggestedPassages : undefined,
         updatedAt: Date.now(),
       };
       localStorage.setItem(draftStorageKey, JSON.stringify(draftPayload));
@@ -444,6 +463,7 @@ export default function ParticipantEvaluation({
     activeSegmentIndex,
     evaluationNotes,
     localPassageSeed,
+    suggestedPassages,
   ]);
 
   // تنبيه المتصفح إذا حاول المقيم إغلاق التبويب قبل حفظ النتيجة النهائية
@@ -471,13 +491,25 @@ export default function ParticipantEvaluation({
     useState<SuggestedTestPassage | null>(null);
   const saveButtonRef = useRef<HTMLButtonElement | null>(null);
 
-  const handleCloseMushafAndScrollToSave = () => {
+  const handleCloseMushafAndScrollToSave = (forceScrollToSave = false) => {
     setIsMushafOpen(false);
     setTimeout(() => {
-      if (saveButtonRef.current) {
-        saveButtonRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      const isAllDone =
+        forceScrollToSave === true ||
+        Array.from({ length: segmentsCount }, (_, i) => i + 1).every(p =>
+          completedPassages.includes(p)
+        );
+      if (isAllDone) {
+        if (saveButtonRef.current) {
+          saveButtonRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        } else {
+          window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+        }
       } else {
-        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+        const currentEl = document.getElementById(`segment-card-${activeSegmentIndex}`);
+        if (currentEl) {
+          currentEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
       }
     }, 80);
   };
@@ -495,8 +527,6 @@ export default function ParticipantEvaluation({
   );
 
   const allowedPages = scopeDetails.pages;
-
-  const [suggestedPassages, setSuggestedPassages] = useState<SuggestedTestPassage[]>([]);
 
   const activePassageMode = comp.passageMode || 'random';
   const activeManualPassages = comp.manualPassages || [];
@@ -626,12 +656,20 @@ export default function ParticipantEvaluation({
     return true;
   }, [completedPassages, segmentsCount]);
 
-  const firstIncompleteSegmentNumber = useMemo(() => {
+  const remainingSegmentNumbers = useMemo(() => {
+    const remaining: number[] = [];
     for (let p = 1; p <= segmentsCount; p++) {
-      if (!completedPassages.includes(p)) return p;
+      if (!completedPassages.includes(p)) remaining.push(p);
     }
-    return segmentsCount;
+    return remaining;
   }, [completedPassages, segmentsCount]);
+
+  const firstIncompleteSegmentNumber = useMemo(() => {
+    return remainingSegmentNumbers[0] || segmentsCount;
+  }, [remainingSegmentNumbers, segmentsCount]);
+
+  const canApproveEvaluation =
+    allSegmentsCompleted && (!isLevelUnspecified || hasExactJuzsSelected);
 
   const compErrorCategories = useMemo(
     () => resolveCompetitionErrorCategories(comp),
@@ -725,7 +763,7 @@ export default function ParticipantEvaluation({
     } else {
       // المقطع الأخير: اكتمل تقييم كافة المقاطع
       if (fromMushaf || isMushafOpen) {
-        handleCloseMushafAndScrollToSave();
+        handleCloseMushafAndScrollToSave(true);
       } else {
         setTimeout(() => {
           if (saveButtonRef.current) {
@@ -760,11 +798,12 @@ export default function ParticipantEvaluation({
 
   const handleSetSegmentErrorCount = (segIdx: number, errorId: number, newCount: number) => {
     const safeCount = Math.max(0, newCount);
+    const passageNum = segIdx + 1;
     setSegments(prev => {
       const updated = [...prev];
       const seg = {
         ...(updated[segIdx] || {
-          segmentNumber: segIdx + 1,
+          segmentNumber: passageNum,
           errorsCount: {},
           score: 0,
         }),
@@ -773,6 +812,10 @@ export default function ParticipantEvaluation({
       updated[segIdx] = seg;
       return updated;
     });
+    // إذا عدّل المقيم أخطاء مقطع كان قد ضغط عليه «تم التقييم»، يُطلب منه الضغط على «تم التقييم» مجدداً لتأكيد درجته الجديدة قبل الاعتماد النهائي
+    if (completedPassages.includes(passageNum)) {
+      setCompletedPassages(prev => prev.filter(n => n !== passageNum));
+    }
   };
 
   const handleSetErrorCount = (errorId: number, newCount: number) => {
@@ -780,11 +823,12 @@ export default function ParticipantEvaluation({
   };
 
   const handleToggleSegmentUnmemorized = (segIdx: number, unmem: boolean) => {
+    const passageNum = segIdx + 1;
     setSegments(prev => {
       const copy = [...prev];
       copy[segIdx] = {
         ...(copy[segIdx] || {
-          segmentNumber: segIdx + 1,
+          segmentNumber: passageNum,
           errorsCount: {},
           score: 0,
         }),
@@ -792,10 +836,13 @@ export default function ParticipantEvaluation({
       };
       return copy;
     });
+    if (completedPassages.includes(passageNum)) {
+      setCompletedPassages(prev => prev.filter(n => n !== passageNum));
+    }
 
     if (unmem) {
       context.showToast(
-        `تم تسجيل المقطع ${segIdx + 1} كـ «غير حافظ» (خصم ${segmentMaxScore} درجة لهذا المقطع فقط)`,
+        `تم تسجيل المقطع ${segIdx + 1} كـ «غير حافظ» (خصم ${segmentMaxScore} درجة لهذا المقطع فقط) — اضغط «تم التقييم» لاعتماده`,
         'info'
       );
     } else {
@@ -925,28 +972,36 @@ export default function ParticipantEvaluation({
         isUnmemorized: allSegmentsUnmemorized,
       };
 
-      // الحفظ الذرّي النهائي في السحابة مع دمج تقييم هذا المقيم فقط دون التأثير على المقيمين الآخرين في نفس اللحظة
-      const updatedComps = await commitParticipantEvaluationToCloud(comp.id, newEval, {
-        participantId: participant.id,
-        juzsOrSurahs: finalScope || participant.juzsOrSurahs,
-        isUnmemorized: allSegmentsUnmemorized,
-        passageSeed: currentPassageSeed,
-      });
+      // الحفظ الذرّي النهائي عند ضغط الزر فقط (يدمج تقييم هذا المقيم فقط، وإذا كان الإنترنت مقطوعاً يُحفظ في طابور الرفع التلقائي فور عودة الإنترنت)
+      const { competitions: updatedComps, syncedToCloud } =
+        await commitParticipantEvaluationToCloud(comp.id, newEval, {
+          participantId: participant.id,
+          juzsOrSurahs: finalScope || participant.juzsOrSurahs,
+          isUnmemorized: allSegmentsUnmemorized,
+          passageSeed: currentPassageSeed,
+        });
 
-      context.updateCompetitions(updatedComps);
+      context.setCompetitionsLocally(updatedComps);
 
-      // مسح المسودة المحلية بعد نجاح الحفظ النهائي
+      // مسح المسودة المحلية بعد نجاح اعتماد التقييم النهائي
       try {
         localStorage.removeItem(draftStorageKey);
       } catch {}
 
       setShowExitConfirmModal(false);
-      context.showToast(
-        allSegmentsUnmemorized
-          ? `تم حفظ واعتماد التقييم للمتسابق "${participant.name}" كـ «غير حافظ» (${finalScore} / ${level.maxScore})`
-          : `تم حفظ واعتماد تقييمك النهائي (${finalScore} / ${level.maxScore}) للمتسابق "${participant.name}" بنجاح!`,
-        'success'
-      );
+      if (syncedToCloud) {
+        context.showToast(
+          allSegmentsUnmemorized
+            ? `تم حفظ واعتماد التقييم للمتسابق "${participant.name}" كـ «غير حافظ» (${finalScore} / ${level.maxScore}) ورفعه لقاعدة البيانات!`
+            : `تم حفظ واعتماد تقييمك النهائي (${finalScore} / ${level.maxScore}) للمتسابق "${participant.name}" ورفعه لقاعدة البيانات بنجاح!`,
+          'success'
+        );
+      } else {
+        context.showToast(
+          `تم اعتماد التقييم (${finalScore} / ${level.maxScore}) للمتسابق "${participant.name}" وحفظه على الجهاز — سيتم رفعه تلقائياً لقاعدة البيانات فور توفر الإنترنت`,
+          'info'
+        );
+      }
       onBack();
     } catch {
       context.showToast('حدث خطأ أثناء حفظ التقييم، يرجى المحاولة مرة أخرى', 'error');
@@ -1316,7 +1371,7 @@ export default function ParticipantEvaluation({
                         <button
                           type="button"
                           disabled={isReadOnly}
-                          onClick={() => setSelectedJuzs([])}
+                          onClick={() => applyEvaluatorJuzSelection([])}
                           className="px-2 py-1 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[11px] font-bold transition active:scale-95 cursor-pointer"
                         >
                           مسح التحديد
@@ -1350,7 +1405,7 @@ export default function ParticipantEvaluation({
                             }
 
                             if (isSelected) {
-                              setSelectedJuzs(prev => prev.filter(j => j !== juz));
+                              applyEvaluatorJuzSelection(selectedJuzs.filter(j => j !== juz));
                             } else {
                               if (selectedJuzs.length >= requiredJuzCount) {
                                 context.showToast(
@@ -1891,20 +1946,42 @@ export default function ParticipantEvaluation({
           ) : (
             <div className="space-y-2">
               {!allSegmentsCompleted && (
-                <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700 text-amber-950 dark:text-amber-200 text-xs font-extrabold flex items-center justify-between gap-2 flex-wrap">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                    <span>
-                      لتفعيل حفظ النتيجة النهائية: يجب الضغط على «تم التقييم» لكل مقطع بالترتيب (اكتمل{' '}
-                      {toArabicDigits(completedPassages.length)} من {toArabicDigits(segmentsCount)} مقاطع).
-                    </span>
+                <div className="p-3 sm:p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/60 border-2 border-amber-300 dark:border-amber-700 text-amber-950 dark:text-amber-200 text-xs font-extrabold flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                  <div className="flex items-start sm:items-center gap-2">
+                    <Lock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5 sm:mt-0" />
+                    <div className="space-y-0.5">
+                      <span className="block font-black">
+                        اعتماد التقييم مقفل حتى يتم تقييم جميع مقاطع المتسابق ({toArabicDigits(completedPassages.length)} من{' '}
+                        {toArabicDigits(segmentsCount)} مقاطع مكتملة)
+                      </span>
+                      <span className="block text-[11px] text-amber-800 dark:text-amber-300">
+                        المقاطع المتبقية للتقييم:{' '}
+                        {remainingSegmentNumbers.map(n => `المقطع ${toArabicDigits(n)}`).join(' ، ')}
+                      </span>
+                    </div>
                   </div>
                   <button
                     type="button"
-                    onClick={() => handleCompleteSegment(activeSegmentIndex, false)}
-                    className="px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black transition active:scale-95 cursor-pointer shrink-0"
+                    onClick={() => {
+                      const targetIdx = Math.max(0, firstIncompleteSegmentNumber - 1);
+                      if (activeSegmentIndex !== targetIdx) {
+                        setActiveSegmentIndex(targetIdx);
+                        setTimeout(() => {
+                          const el = document.getElementById(`segment-card-${targetIdx}`);
+                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }, 50);
+                      } else {
+                        handleCompleteSegment(targetIdx, false);
+                      }
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black transition active:scale-95 cursor-pointer shrink-0 flex items-center justify-center gap-1.5 shadow-2xs"
                   >
-                    تم التقييم للمقطع {toArabicDigits(activeSegmentIndex + 1)}
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    <span>
+                      {activeSegmentIndex === firstIncompleteSegmentNumber - 1
+                        ? `تم التقييم للمقطع ${toArabicDigits(firstIncompleteSegmentNumber)}`
+                        : `الانتقال للمقطع ${toArabicDigits(firstIncompleteSegmentNumber)}`}
+                    </span>
                   </button>
                 </div>
               )}
@@ -1912,22 +1989,24 @@ export default function ParticipantEvaluation({
               <button
                 ref={saveButtonRef}
                 type="button"
-                disabled={isSavingFinal}
+                disabled={isSavingFinal || !canApproveEvaluation}
                 onClick={handleSave}
-                className={`w-full min-h-[54px] py-4 text-base sm:text-lg font-black rounded-2xl shadow-lg transition-all flex justify-center items-center gap-2 ${
-                  allSegmentsCompleted
+                className={`w-full min-h-[54px] py-4 px-4 text-sm sm:text-lg font-black rounded-2xl shadow-lg transition-all flex justify-center items-center gap-2 ${
+                  canApproveEvaluation
                     ? 'bg-emerald-700 hover:bg-emerald-800 text-white shadow-emerald-700/25 active:scale-95 cursor-pointer'
-                    : 'bg-slate-300 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-2 border-dashed border-slate-400 dark:border-slate-700 cursor-pointer'
+                    : 'bg-slate-200 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400 border-2 border-dashed border-slate-300 dark:border-slate-700 opacity-75 cursor-not-allowed shadow-none'
                 }`}
               >
-                <Save size={22} />
+                {canApproveEvaluation ? <Save size={22} className="shrink-0" /> : <Lock size={20} className="shrink-0" />}
                 <span>
                   {isSavingFinal
                     ? 'جاري حفظ واعتماد النتيجة النهائية...'
+                    : isLevelUnspecified && !hasExactJuzsSelected
+                    ? `حدد أجزاء المتسابق (${toArabicDigits(selectedJuzs.length)}/${toArabicDigits(requiredJuzCount)}) وقيّم كافة المقاطع لتفعيل الاعتماد`
                     : !allSegmentsCompleted
-                    ? `أكمل تقييم المقاطع (${toArabicDigits(completedPassages.length)}/${toArabicDigits(segmentsCount)}) لتفعيل الحفظ النهائي`
+                    ? `لا يمكن اعتماد التقييم قبل إتمام جميع المقاطع (${toArabicDigits(completedPassages.length)}/${toArabicDigits(segmentsCount)} مكتمل)`
                     : existingEval
-                    ? `حفظ وتحديث التقييم المعدل (${totalScore} / ${level.maxScore})`
+                    ? `حفظ وتحديث التقييم المعتمد (${totalScore} / ${level.maxScore})`
                     : isOverallUnmemorized
                     ? `حفظ واعتماد التقييم كـ «غير حافظ» (0 / ${level.maxScore})`
                     : `حفظ واعتماد تقييم المقيم (${totalScore} / ${level.maxScore})`}
@@ -1984,7 +2063,7 @@ export default function ParticipantEvaluation({
             </div>
 
             <div className="flex flex-col gap-2 pt-2">
-              {allSegmentsCompleted ? (
+              {canApproveEvaluation ? (
                 <>
                   <button
                     type="button"
@@ -2001,6 +2080,20 @@ export default function ParticipantEvaluation({
                   </button>
                   <button
                     type="button"
+                    onClick={() => {
+                      setShowExitConfirmModal(false);
+                      context.showToast(
+                        `تم الاحتفاظ بتقييم المقاطع محلياً للمتسابق «${participant.name}» دون اعتماد نهائي (ستجده محفوظاً عند الرجوع إليه)`,
+                        'info'
+                      );
+                      onBack();
+                    }}
+                    className="w-full min-h-[42px] py-2 px-4 rounded-xl bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/70 dark:hover:bg-amber-900/70 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-800 font-black text-xs sm:text-sm transition active:scale-95 cursor-pointer"
+                  >
+                    الخروج مؤقتاً مع الاحتفاظ بالتقييم محفوظاً محلياً (دون اعتماد)
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setShowExitConfirmModal(false)}
                     className="w-full min-h-[42px] py-2 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-black text-xs sm:text-sm transition active:scale-95 cursor-pointer"
                   >
@@ -2008,20 +2101,36 @@ export default function ParticipantEvaluation({
                   </button>
                 </>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const nextIdx = Math.max(0, firstIncompleteSegmentNumber - 1);
-                    setActiveSegmentIndex(nextIdx);
-                    setShowExitConfirmModal(false);
-                  }}
-                  className="w-full min-h-[46px] py-2.5 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs sm:text-sm shadow-md flex items-center justify-center gap-2 transition active:scale-95 cursor-pointer"
-                >
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>
-                    متابعة التقييم (الانتقال للمقطع {toArabicDigits(firstIncompleteSegmentNumber)})
-                  </span>
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextIdx = Math.max(0, firstIncompleteSegmentNumber - 1);
+                      setActiveSegmentIndex(nextIdx);
+                      setShowExitConfirmModal(false);
+                    }}
+                    className="w-full min-h-[46px] py-2.5 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs sm:text-sm shadow-md flex items-center justify-center gap-2 transition active:scale-95 cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>
+                      متابعة التقييم الآن (الانتقال للمقطع {toArabicDigits(firstIncompleteSegmentNumber)})
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowExitConfirmModal(false);
+                      context.showToast(
+                        `تم الاحتفاظ بما تم تقييمه محلياً (${toArabicDigits(completedPassages.length)}/${toArabicDigits(segmentsCount)} مقاطع) للمتسابق «${participant.name}» — يمكنك استكماله في أي وقت`,
+                        'info'
+                      );
+                      onBack();
+                    }}
+                    className="w-full min-h-[42px] py-2 px-4 rounded-xl bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/70 dark:hover:bg-amber-900/70 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-800 font-black text-xs sm:text-sm transition active:scale-95 cursor-pointer"
+                  >
+                    الخروج مؤقتاً لقائمة المتسابقين (مع حفظ ما تم تقييمه محلياً)
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -2032,7 +2141,7 @@ export default function ParticipantEvaluation({
       {isMushafOpen && (
         <MushafReaderModal
           isOpen={isMushafOpen}
-          onClose={handleCloseMushafAndScrollToSave}
+          onClose={() => handleCloseMushafAndScrollToSave(false)}
           newPages={allowedPages}
           previousWeekPages={[]}
           studentName={participant.name}
