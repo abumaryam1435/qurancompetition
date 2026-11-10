@@ -114,6 +114,147 @@ export interface CreateCompetitionOptions {
 }
 
 /**
+ * سمات لونية مميزة لكل مستوى في صفحة إعدادات المسابقة لتسهيل متابعة بيانات كل مستوى في شاشات الهاتف والحواسيب
+ */
+export interface LevelVisualTheme {
+  nameAr: string;
+  outerFrame: string;
+  headerGradient: string;
+  headerBadge: string;
+  innerBoxBorder: string;
+  participantsBox: string;
+  accentBadge: string;
+  quickNavBtn: string;
+  inputFocusBorder: string;
+}
+
+export const LEVEL_VISUAL_THEMES: LevelVisualTheme[] = [
+  // 1. المستوى الأول — الزمردي الملكي (Emerald)
+  {
+    nameAr: 'الزمردي',
+    outerFrame:
+      'border-[3px] border-emerald-500 dark:border-emerald-500/80 bg-gradient-to-b from-emerald-50/90 via-emerald-50/40 to-white dark:from-emerald-950/35 dark:via-slate-900 dark:to-slate-900 shadow-md shadow-emerald-900/10 ring-2 ring-emerald-500/15',
+    headerGradient:
+      'bg-gradient-to-l from-emerald-900 via-emerald-700 to-teal-700 text-white border-b-2 border-emerald-400/50',
+    headerBadge: 'bg-amber-400 text-slate-950',
+    innerBoxBorder: 'border-2 border-emerald-200 dark:border-emerald-800/70',
+    participantsBox:
+      'bg-emerald-50/80 dark:bg-emerald-950/25 border-2 border-emerald-300 dark:border-emerald-800/70',
+    accentBadge:
+      'bg-emerald-100 dark:bg-emerald-950 text-emerald-900 dark:text-emerald-200 border border-emerald-400 dark:border-emerald-700',
+    quickNavBtn:
+      'bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/70 text-emerald-950 dark:text-emerald-200 border-2 border-emerald-500',
+    inputFocusBorder: 'border-emerald-400 dark:border-emerald-700 focus:ring-emerald-600',
+  },
+  // 2. المستوى الثاني — الذهبي الكهرماني (Amber)
+  {
+    nameAr: 'الكهرماني الذهبي',
+    outerFrame:
+      'border-[3px] border-amber-500 dark:border-amber-500/80 bg-gradient-to-b from-amber-50/90 via-amber-50/40 to-white dark:from-amber-950/35 dark:via-slate-900 dark:to-slate-900 shadow-md shadow-amber-900/10 ring-2 ring-amber-500/15',
+    headerGradient:
+      'bg-gradient-to-l from-amber-800 via-amber-600 to-orange-600 text-white border-b-2 border-amber-300/60',
+    headerBadge: 'bg-white text-amber-950',
+    innerBoxBorder: 'border-2 border-amber-200 dark:border-amber-800/70',
+    participantsBox:
+      'bg-amber-50/80 dark:bg-amber-950/25 border-2 border-amber-300 dark:border-amber-800/70',
+    accentBadge:
+      'bg-amber-100 dark:bg-amber-950 text-amber-950 dark:text-amber-200 border border-amber-400 dark:border-amber-700',
+    quickNavBtn:
+      'bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/70 text-amber-950 dark:text-amber-200 border-2 border-amber-500',
+    inputFocusBorder: 'border-amber-400 dark:border-amber-700 focus:ring-amber-600',
+  },
+  // 3. المستوى الثالث — الأزرق السماوي الملكي (Sky / Blue)
+  {
+    nameAr: 'الأزرق الملكي',
+    outerFrame:
+      'border-[3px] border-sky-500 dark:border-sky-500/80 bg-gradient-to-b from-sky-50/90 via-sky-50/40 to-white dark:from-sky-950/35 dark:via-slate-900 dark:to-slate-900 shadow-md shadow-sky-900/10 ring-2 ring-sky-500/15',
+    headerGradient:
+      'bg-gradient-to-l from-sky-900 via-sky-700 to-blue-700 text-white border-b-2 border-sky-300/60',
+    headerBadge: 'bg-amber-300 text-slate-950',
+    innerBoxBorder: 'border-2 border-sky-200 dark:border-sky-800/70',
+    participantsBox:
+      'bg-sky-50/80 dark:bg-sky-950/25 border-2 border-sky-300 dark:border-sky-800/70',
+    accentBadge:
+      'bg-sky-100 dark:bg-sky-950 text-sky-950 dark:text-sky-200 border border-sky-400 dark:border-sky-700',
+    quickNavBtn:
+      'bg-sky-50 hover:bg-sky-100 dark:bg-sky-950/70 text-sky-950 dark:text-sky-200 border-2 border-sky-500',
+    inputFocusBorder: 'border-sky-400 dark:border-sky-700 focus:ring-sky-600',
+  },
+  // 4. المستوى الرابع — البنفسجي الملكي (Violet / Purple)
+  {
+    nameAr: 'البنفسجي',
+    outerFrame:
+      'border-[3px] border-violet-500 dark:border-violet-500/80 bg-gradient-to-b from-violet-50/90 via-violet-50/40 to-white dark:from-violet-950/35 dark:via-slate-900 dark:to-slate-900 shadow-md shadow-violet-900/10 ring-2 ring-violet-500/15',
+    headerGradient:
+      'bg-gradient-to-l from-violet-900 via-violet-700 to-purple-700 text-white border-b-2 border-violet-300/60',
+    headerBadge: 'bg-amber-300 text-slate-950',
+    innerBoxBorder: 'border-2 border-violet-200 dark:border-violet-800/70',
+    participantsBox:
+      'bg-violet-50/80 dark:bg-violet-950/25 border-2 border-violet-300 dark:border-violet-800/70',
+    accentBadge:
+      'bg-violet-100 dark:bg-violet-950 text-violet-950 dark:text-violet-200 border border-violet-400 dark:border-violet-700',
+    quickNavBtn:
+      'bg-violet-50 hover:bg-violet-100 dark:bg-violet-950/70 text-violet-950 dark:text-violet-200 border-2 border-violet-500',
+    inputFocusBorder: 'border-violet-400 dark:border-violet-700 focus:ring-violet-600',
+  },
+  // 5. المستوى الخامس — الياقوتي الوردي (Rose)
+  {
+    nameAr: 'الياقوتي',
+    outerFrame:
+      'border-[3px] border-rose-500 dark:border-rose-500/80 bg-gradient-to-b from-rose-50/90 via-rose-50/40 to-white dark:from-rose-950/35 dark:via-slate-900 dark:to-slate-900 shadow-md shadow-rose-900/10 ring-2 ring-rose-500/15',
+    headerGradient:
+      'bg-gradient-to-l from-rose-900 via-rose-700 to-pink-700 text-white border-b-2 border-rose-300/60',
+    headerBadge: 'bg-amber-300 text-slate-950',
+    innerBoxBorder: 'border-2 border-rose-200 dark:border-rose-800/70',
+    participantsBox:
+      'bg-rose-50/80 dark:bg-rose-950/25 border-2 border-rose-300 dark:border-rose-800/70',
+    accentBadge:
+      'bg-rose-100 dark:bg-rose-950 text-rose-950 dark:text-rose-200 border border-rose-400 dark:border-rose-700',
+    quickNavBtn:
+      'bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/70 text-rose-950 dark:text-rose-200 border-2 border-rose-500',
+    inputFocusBorder: 'border-rose-400 dark:border-rose-700 focus:ring-rose-600',
+  },
+  // 6. المستوى السادس — الفيروزي المميز (Teal / Cyan)
+  {
+    nameAr: 'الفيروزي',
+    outerFrame:
+      'border-[3px] border-teal-500 dark:border-teal-500/80 bg-gradient-to-b from-teal-50/90 via-teal-50/40 to-white dark:from-teal-950/35 dark:via-slate-900 dark:to-slate-900 shadow-md shadow-teal-900/10 ring-2 ring-teal-500/15',
+    headerGradient:
+      'bg-gradient-to-l from-teal-900 via-teal-700 to-cyan-700 text-white border-b-2 border-teal-300/60',
+    headerBadge: 'bg-amber-300 text-slate-950',
+    innerBoxBorder: 'border-2 border-teal-200 dark:border-teal-800/70',
+    participantsBox:
+      'bg-teal-50/80 dark:bg-teal-950/25 border-2 border-teal-300 dark:border-teal-800/70',
+    accentBadge:
+      'bg-teal-100 dark:bg-teal-950 text-teal-950 dark:text-teal-200 border border-teal-400 dark:border-teal-700',
+    quickNavBtn:
+      'bg-teal-50 hover:bg-teal-100 dark:bg-teal-950/70 text-teal-950 dark:text-teal-200 border-2 border-teal-500',
+    inputFocusBorder: 'border-teal-400 dark:border-teal-700 focus:ring-teal-600',
+  },
+  // 7. المستوى السابع — النيلي العميق (Indigo)
+  {
+    nameAr: 'النيلي',
+    outerFrame:
+      'border-[3px] border-indigo-500 dark:border-indigo-500/80 bg-gradient-to-b from-indigo-50/90 via-indigo-50/40 to-white dark:from-indigo-950/35 dark:via-slate-900 dark:to-slate-900 shadow-md shadow-indigo-900/10 ring-2 ring-indigo-500/15',
+    headerGradient:
+      'bg-gradient-to-l from-indigo-900 via-indigo-700 to-blue-800 text-white border-b-2 border-indigo-300/60',
+    headerBadge: 'bg-amber-300 text-slate-950',
+    innerBoxBorder: 'border-2 border-indigo-200 dark:border-indigo-800/70',
+    participantsBox:
+      'bg-indigo-50/80 dark:bg-indigo-950/25 border-2 border-indigo-300 dark:border-indigo-800/70',
+    accentBadge:
+      'bg-indigo-100 dark:bg-indigo-950 text-indigo-950 dark:text-indigo-200 border border-indigo-400 dark:border-indigo-700',
+    quickNavBtn:
+      'bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/70 text-indigo-950 dark:text-indigo-200 border-2 border-indigo-500',
+    inputFocusBorder: 'border-indigo-400 dark:border-indigo-700 focus:ring-indigo-600',
+  },
+];
+
+export const getLevelVisualTheme = (index: number): LevelVisualTheme => {
+  return LEVEL_VISUAL_THEMES[Math.abs(index) % LEVEL_VISUAL_THEMES.length];
+};
+
+/**
  * حقول قالب الإكسل المعتمدة بالترتيب (الأصل من اليمين إلى اليسار):
  * رقم الطلب ، الاسم الكامل ، الرقم المدني ، رقم الهاتف ، الجنس ، الولاية ، مستوى المشاركة ، وقت وتاريخ التسجيل
  */
@@ -2095,14 +2236,21 @@ function CompetitionSettings({
                       </span>
                       <div className="flex flex-wrap gap-1">
                         {info.assignedLevels.length > 0 ? (
-                          info.assignedLevels.map(lvl => (
-                            <span
-                              key={lvl.id}
-                              className="px-2 py-0.5 rounded-lg bg-emerald-100/90 dark:bg-emerald-950 text-emerald-900 dark:text-emerald-300 text-[11px] font-black border border-emerald-300/60 dark:border-emerald-800"
-                            >
-                              {lvl.name}
-                            </span>
-                          ))
+                          info.assignedLevels.map(lvl => {
+                            const lvlIndex = Math.max(
+                              0,
+                              (comp.levels || []).findIndex(l => l.id === lvl.id)
+                            );
+                            const lvlTheme = getLevelVisualTheme(lvlIndex);
+                            return (
+                              <span
+                                key={lvl.id}
+                                className={`px-2 py-0.5 rounded-lg text-[11px] font-black ${lvlTheme.accentBadge}`}
+                              >
+                                {lvl.name}
+                              </span>
+                            );
+                          })
                         ) : (
                           <span className="text-xs font-bold text-slate-400">
                             لا توجد مستويات مضافة بعد
@@ -2120,6 +2268,72 @@ function CompetitionSettings({
             </div>
           )}
         </div>
+
+        {/* بطاقات ملخص المستويات بإطار ولون مميز لكل مستوى لسهولة المتابعة في الهاتف والحاسوب */}
+        {(comp.levels || []).length > 0 && (
+          <div className="space-y-3 pt-3 border-t border-emerald-200/80 dark:border-slate-700">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h4 className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                <Award size={16} className="text-amber-600 dark:text-amber-400" />
+                <span>ملخص مستويات المسابقة ({(comp.levels || []).length} مستويات — كل مستوى بإطار ولون مميز)</span>
+              </h4>
+              <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                لتعديل بيانات أي مستوى انتقل لتبويب «المستويات» بالأعلى
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {(comp.levels || []).map((lvl, lvlIdx) => {
+                const lvlTheme = getLevelVisualTheme(lvlIdx);
+                const lvlParticipantsCount = (comp.participants || []).filter(
+                  p => Number(p.levelId) === Number(lvl.id)
+                ).length;
+                return (
+                  <div
+                    key={lvl.id}
+                    className={`rounded-2xl overflow-hidden ${lvlTheme.outerFrame}`}
+                  >
+                    <div className={`px-3.5 py-2.5 flex items-center justify-between gap-2 ${lvlTheme.headerGradient}`}>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`px-2 py-0.5 rounded-lg text-[11px] font-black shrink-0 ${lvlTheme.headerBadge}`}>
+                          المستوى {lvlIdx + 1}
+                        </span>
+                        <span className="font-black text-xs sm:text-sm truncate">
+                          {lvl.name}
+                        </span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-lg bg-black/25 text-white text-[11px] font-black shrink-0">
+                        {lvlParticipantsCount} متسابق
+                      </span>
+                    </div>
+                    <div className="p-3 space-y-2 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-slate-600 dark:text-slate-400">المقرر القرآني:</span>
+                        <span className={`px-2 py-0.5 rounded-lg font-black text-[11px] ${lvlTheme.accentBadge}`}>
+                          {formatJuzsOrSurahsDisplay(lvl.juzsOrSurahs) || 'غير محدد'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-1.5 pt-1 text-center">
+                        <div className="p-1.5 rounded-lg bg-white/90 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700">
+                          <span className="text-[10px] font-bold text-slate-500 block">المقاطع</span>
+                          <span className="font-black text-xs text-slate-900 dark:text-white">{lvl.segmentsCount}</span>
+                        </div>
+                        <div className="p-1.5 rounded-lg bg-white/90 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700">
+                          <span className="text-[10px] font-bold text-slate-500 block">الأسطر/مقطع</span>
+                          <span className="font-black text-xs text-slate-900 dark:text-white">{lvl.linesPerSegment || 7}</span>
+                        </div>
+                        <div className="p-1.5 rounded-lg bg-white/90 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700">
+                          <span className="text-[10px] font-bold text-slate-500 block">الدرجة العظمى</span>
+                          <span className="font-black text-xs text-slate-900 dark:text-white">{lvl.maxScore}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="max-w-xl space-y-6">
@@ -3155,8 +3369,53 @@ function LevelEditor({
         })()}
       </div>
 
-      <div className="grid gap-5 sm:gap-6">
-        {levels.map(level => {
+      {/* شريط التنقل السريع بين المستويات بألوانها المميزة لسهولة المتابعة في شاشة الهاتف والحاسوب */}
+      {levels.length > 0 && (
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-700 shadow-xs space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-200 flex items-center gap-2">
+              <Award size={17} className="text-amber-500 shrink-0" />
+              <span>دليل المستويات والانتقال السريع ({levels.length} مستويات — كل مستوى بإطار ولون مستقل):</span>
+            </span>
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+              اضغط على اسم أي مستوى للانتقال المباشر إلى إطاره
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {levels.map((lvl, idx) => {
+              const lvlTheme = getLevelVisualTheme(idx);
+              const countInLvl = (comp.participants || []).filter(
+                p => Number(p.levelId) === Number(lvl.id)
+              ).length;
+              return (
+                <button
+                  key={lvl.id}
+                  type="button"
+                  onClick={() => {
+                    const el = document.getElementById(`level-setting-card-${lvl.id}`);
+                    if (el) {
+                      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                  }}
+                  className={`min-h-[40px] px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-2 transition active:scale-95 cursor-pointer shadow-2xs ${lvlTheme.quickNavBtn}`}
+                >
+                  <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-black ${lvlTheme.headerGradient}`}>
+                    {idx + 1}
+                  </span>
+                  <span>{lvl.name}</span>
+                  <span className="px-1.5 py-0.5 rounded-md bg-white/80 dark:bg-slate-800 text-[10px] font-extrabold text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                    {countInLvl} متسابق
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="grid gap-6 sm:gap-8">
+        {levels.map((level, levelIdx) => {
+          const levelTheme = getLevelVisualTheme(levelIdx);
           const levelParticipants = (comp.participants || []).filter(
             p => Number(p.levelId) === Number(level.id)
           );
@@ -3168,53 +3427,86 @@ function LevelEditor({
 
           return (
             <div
+              id={`level-setting-card-${level.id}`}
               key={level.id}
-              className="border-2 border-slate-200 dark:border-slate-700 p-3 sm:p-5 rounded-2xl bg-slate-50/70 dark:bg-slate-800/50 space-y-4 shadow-xs"
+              className={`rounded-3xl overflow-hidden transition-all scroll-mt-4 ${levelTheme.outerFrame}`}
             >
-              <div className="flex flex-col sm:flex-row sm:items-end gap-2.5">
-                <div className="flex-1 min-w-0">
-                  <label className="text-xs text-slate-600 dark:text-slate-300 font-bold mb-1 block">
-                    اسم المستوى
-                  </label>
-                  <input
-                    type="text"
-                    value={level.name}
-                    onChange={e => updateLevel(level.id, { name: e.target.value })}
-                    className="w-full min-h-[46px] border border-slate-300 dark:border-slate-700 p-2.5 rounded-xl bg-white dark:bg-slate-900 font-black text-sm sm:text-base"
-                  />
+              {/* الشريط العلوي المميز للمستوى (رقم المستوى + اسم المستوى + ملخص سريع) */}
+              <div className={`px-4 py-3 sm:px-5 sm:py-3.5 flex flex-wrap items-center justify-between gap-2.5 ${levelTheme.headerGradient}`}>
+                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                  <span className={`px-3 py-1 rounded-xl text-xs sm:text-sm font-black shadow-xs shrink-0 ${levelTheme.headerBadge}`}>
+                    المستوى {levelIdx + 1}
+                  </span>
+                  <h4 className="font-black text-sm sm:text-base text-white truncate">
+                    {level.name || `المستوى ${levelIdx + 1}`}
+                  </h4>
+                  <span className="px-2.5 py-0.5 rounded-lg bg-white/15 text-amber-200 border border-white/20 text-[11px] font-bold">
+                    سمة اللون: {levelTheme.nameAr}
+                  </span>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => duplicateSingleLevel(level)}
-                    className="flex-1 sm:flex-initial min-h-[44px] px-3.5 text-amber-800 dark:text-amber-300 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 border border-amber-200 dark:border-amber-800/60 rounded-xl transition active:scale-95 flex items-center justify-center gap-1.5 shrink-0 cursor-pointer text-xs font-extrabold"
-                    title="نسخ إعدادات هذا المستوى إلى مستوى جديد للتعديل عليه"
-                  >
-                    <Copy size={16} />
-                    <span>نسخ المستوى</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDeleteConfirmLevel(level)}
-                    className="min-h-[44px] min-w-[44px] text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 border border-red-200 dark:border-red-900/50 p-2.5 rounded-xl transition active:scale-95 flex items-center justify-center shrink-0 cursor-pointer"
-                    title="حذف المستوى"
-                  >
-                    <Trash2 size={19} />
-                  </button>
+
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-black">
+                  <span className="px-2.5 py-1 rounded-lg bg-black/25 text-white border border-white/15">
+                    المقاطع: {level.segmentsCount}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-black/25 text-white border border-white/15">
+                    الأسطر: {level.linesPerSegment || 7}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-black/25 text-white border border-white/15">
+                    العظمى: {level.maxScore}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-white/20 text-white border border-white/25">
+                    المتسابقون: {levelParticipants.length}
+                  </span>
                 </div>
               </div>
 
-              <div className="space-y-3 bg-white dark:bg-slate-900 p-3.5 sm:p-4 rounded-xl border border-slate-200 dark:border-slate-700">
-                <div>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
-                    <label className="text-xs sm:text-sm text-slate-700 dark:text-slate-200 font-black block">
-                      تحديد الأجزاء أو السور داخل هذا المستوى
+              {/* محتوى بيانات المستوى داخل الإطار الملون */}
+              <div className="p-3.5 sm:p-5 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-end gap-2.5">
+                  <div className="flex-1 min-w-0">
+                    <label className="text-xs text-slate-700 dark:text-slate-200 font-black mb-1 block">
+                      اسم المستوى (المستوى رقم {levelIdx + 1})
                     </label>
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-100 dark:bg-emerald-950/80 text-emerald-900 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 text-xs font-black">
-                      <span>المقرر المحدد للمستوى:</span>
-                      <strong>{formatJuzsOrSurahsDisplay(level.juzsOrSurahs) || 'غير محدد'}</strong>
-                    </span>
+                    <input
+                      type="text"
+                      value={level.name}
+                      onChange={e => updateLevel(level.id, { name: e.target.value })}
+                      className={`w-full min-h-[46px] border-2 p-2.5 rounded-xl bg-white dark:bg-slate-900 font-black text-sm sm:text-base focus:outline-none focus:ring-2 ${levelTheme.inputFocusBorder}`}
+                    />
                   </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => duplicateSingleLevel(level)}
+                      className="flex-1 sm:flex-initial min-h-[44px] px-3.5 text-amber-900 dark:text-amber-300 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 border-2 border-amber-300 dark:border-amber-800/60 rounded-xl transition active:scale-95 flex items-center justify-center gap-1.5 shrink-0 cursor-pointer text-xs font-extrabold"
+                      title="نسخ إعدادات هذا المستوى إلى مستوى جديد للتعديل عليه"
+                    >
+                      <Copy size={16} />
+                      <span>نسخ المستوى</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteConfirmLevel(level)}
+                      className="min-h-[44px] min-w-[44px] text-red-600 bg-white dark:bg-slate-900 hover:bg-red-50 dark:hover:bg-red-950/50 border-2 border-red-200 dark:border-red-900/50 p-2.5 rounded-xl transition active:scale-95 flex items-center justify-center shrink-0 cursor-pointer"
+                      title="حذف المستوى"
+                    >
+                      <Trash2 size={19} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className={`space-y-3 bg-white dark:bg-slate-900 p-3.5 sm:p-4 rounded-2xl shadow-2xs ${levelTheme.innerBoxBorder}`}>
+                  <div>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+                      <label className="text-xs sm:text-sm text-slate-800 dark:text-slate-100 font-black block">
+                        تحديد الأجزاء أو السور داخل «{level.name}»
+                      </label>
+                      <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-black ${levelTheme.accentBadge}`}>
+                        <span>المقرر المحدد للمستوى:</span>
+                        <strong>{formatJuzsOrSurahsDisplay(level.juzsOrSurahs) || 'غير محدد'}</strong>
+                      </span>
+                    </div>
 
                   {(() => {
                     const isSpecificSurahs = level.juzsOrSurahs.startsWith('السور:');
@@ -4047,111 +4339,112 @@ function LevelEditor({
                 </div>
               </div>
 
-              {/* ==================== قسم إضافة متسابقي هذا المستوى (لصق متعدد الأسطر أو استيراد إكسل) ==================== */}
-              <div className="bg-emerald-50/70 dark:bg-slate-900/90 p-3.5 sm:p-4 rounded-xl border-2 border-emerald-200/80 dark:border-emerald-900/50 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <UserPlus className="w-5 h-5 text-emerald-700 dark:text-emerald-400 shrink-0" />
-                    <div>
-                      <h4 className="text-xs sm:text-sm font-black text-emerald-950 dark:text-emerald-300">
-                        إضافة المتسابقين في «{level.name}» (كل سطر اسم أو عبر إكسل)
-                      </h4>
-                      <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                        الصق قائمة الأسماء مباشرة (كل اسم في سطر مستقل) أو استورد ملف إكسل لهذا المستوى
-                      </p>
+                {/* ==================== قسم إضافة متسابقي هذا المستوى (لصق متعدد الأسطر أو استيراد إكسل) ==================== */}
+                <div className={`p-3.5 sm:p-4 rounded-2xl space-y-3 ${levelTheme.participantsBox}`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <UserPlus className="w-5 h-5 text-emerald-700 dark:text-emerald-400 shrink-0" />
+                      <div>
+                        <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white">
+                          إضافة المتسابقين في «{level.name}» (كل سطر اسم أو عبر إكسل)
+                        </h4>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                          الصق قائمة الأسماء مباشرة (كل اسم في سطر مستقل) أو استورد ملف إكسل لهذا المستوى
+                        </p>
+                      </div>
                     </div>
+
+                    {detectedLinesCount > 0 && (
+                      <span className="px-2.5 py-1 rounded-lg bg-emerald-700 text-white text-xs font-black self-start sm:self-auto">
+                        جاهز للإضافة: {detectedLinesCount} متسابق
+                      </span>
+                    )}
                   </div>
 
-                  {detectedLinesCount > 0 && (
-                    <span className="px-2.5 py-1 rounded-lg bg-emerald-700 text-white text-xs font-black self-start sm:self-auto">
-                      جاهز للإضافة: {detectedLinesCount} متسابق
-                    </span>
+                  <textarea
+                    rows={4}
+                    value={rawBulkText}
+                    onChange={e =>
+                      setBulkNamesByLevel(prev => ({
+                        ...prev,
+                        [level.id]: e.target.value,
+                      }))
+                    }
+                    placeholder={`الصق أو اكتب أسماء المتسابقين هنا (كل سطر اسم متسابق)...\nمثال:\nعبدالرحمن محمد أحمد\nعبدالله خالد سعيد\nأسامة علي حسن`}
+                    className={`w-full p-3 rounded-xl border-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold text-xs sm:text-sm focus:outline-none focus:ring-2 leading-relaxed ${levelTheme.inputFocusBorder}`}
+                  />
+
+                  <div className="flex flex-col sm:flex-row flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleAddBulkParticipantsToLevel(level)}
+                      className="w-full sm:w-auto min-h-[46px] px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition active:scale-95 cursor-pointer"
+                    >
+                      <Plus size={18} />
+                      <span>
+                        إضافة الأسماء لهذا المستوى
+                        {detectedLinesCount > 0 ? ` (${detectedLinesCount})` : ''}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTargetImportLevelId(level.id);
+                        excelInputRef.current?.click();
+                      }}
+                      className="w-full sm:w-auto min-h-[46px] px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-xs transition active:scale-95 cursor-pointer"
+                    >
+                      <FileSpreadsheet size={17} />
+                      <span>استيراد إكسل لهذا المستوى</span>
+                    </button>
+                  </div>
+
+                  {/* عرض المتسابقين المسجلين حالياً في هذا المستوى */}
+                  {levelParticipants.length > 0 && (
+                    <div className="pt-2.5 border-t border-slate-200/80 dark:border-slate-700">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-black text-slate-800 dark:text-slate-200">
+                          المتسابقون المسجلون في «{level.name}» ({levelParticipants.length}):
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1">
+                        {levelParticipants.map((p, idx) => (
+                          <span
+                            key={p.id}
+                            className="inline-flex items-center gap-1.5 pl-2 pr-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-slate-200 shadow-2xs"
+                          >
+                            <span className="text-emerald-700 dark:text-emerald-400 font-black">
+                              {idx + 1}.
+                            </span>
+                            <span>{p.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => setEditingLevelParticipant({ ...p })}
+                              className="w-5 h-5 rounded-full hover:bg-amber-100 dark:hover:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center transition cursor-pointer"
+                              title="تعديل بيانات المتسابق ومستواه"
+                            >
+                              <Edit size={12} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDeleteConfirmLevelParticipant({
+                                  id: p.id,
+                                  name: p.name,
+                                })
+                              }
+                              className="w-5 h-5 rounded-full hover:bg-red-100 text-red-500 flex items-center justify-center transition cursor-pointer"
+                              title="حذف المتسابق"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </div>
-
-                <textarea
-                  rows={4}
-                  value={rawBulkText}
-                  onChange={e =>
-                    setBulkNamesByLevel(prev => ({
-                      ...prev,
-                      [level.id]: e.target.value,
-                    }))
-                  }
-                  placeholder={`الصق أو اكتب أسماء المتسابقين هنا (كل سطر اسم متسابق)...\nمثال:\nعبدالرحمن محمد أحمد\nعبدالله خالد سعيد\nأسامة علي حسن`}
-                  className="w-full p-3 rounded-xl border border-emerald-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600 leading-relaxed"
-                />
-
-                <div className="flex flex-col sm:flex-row flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleAddBulkParticipantsToLevel(level)}
-                    className="w-full sm:w-auto min-h-[46px] px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition active:scale-95 cursor-pointer"
-                  >
-                    <Plus size={18} />
-                    <span>
-                      إضافة الأسماء لهذا المستوى
-                      {detectedLinesCount > 0 ? ` (${detectedLinesCount})` : ''}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTargetImportLevelId(level.id);
-                      excelInputRef.current?.click();
-                    }}
-                    className="w-full sm:w-auto min-h-[46px] px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-xs transition active:scale-95 cursor-pointer"
-                  >
-                    <FileSpreadsheet size={17} />
-                    <span>استيراد إكسل لهذا المستوى</span>
-                  </button>
-                </div>
-
-                {/* عرض المتسابقين المسجلين حالياً في هذا المستوى */}
-                {levelParticipants.length > 0 && (
-                  <div className="pt-2.5 border-t border-emerald-200/70 dark:border-slate-800">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-black text-emerald-900 dark:text-emerald-300">
-                        المتسابقون المسجلون في هذا المستوى ({levelParticipants.length}):
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1">
-                      {levelParticipants.map((p, idx) => (
-                        <span
-                          key={p.id}
-                          className="inline-flex items-center gap-1.5 pl-2 pr-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-emerald-200 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-slate-200 shadow-2xs"
-                        >
-                          <span className="text-emerald-700 dark:text-emerald-400 font-black">
-                            {idx + 1}.
-                          </span>
-                          <span>{p.name}</span>
-                          <button
-                            type="button"
-                            onClick={() => setEditingLevelParticipant({ ...p })}
-                            className="w-5 h-5 rounded-full hover:bg-amber-100 dark:hover:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center transition cursor-pointer"
-                            title="تعديل بيانات المتسابق ومستواه"
-                          >
-                            <Edit size={12} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setDeleteConfirmLevelParticipant({
-                                id: p.id,
-                                name: p.name,
-                              })
-                            }
-                            className="w-5 h-5 rounded-full hover:bg-red-100 text-red-500 flex items-center justify-center transition cursor-pointer"
-                            title="حذف المتسابق"
-                          >
-                            ×
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
           );
@@ -5157,8 +5450,9 @@ function CompetitionEvaluators({
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-              {(comp.levels || []).map(lvl => {
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {(comp.levels || []).map((lvl, lvlIdx) => {
+                const lvlTheme = getLevelVisualTheme(lvlIdx);
                 const levelEvaluators = (comp.evaluators || []).filter(ev => {
                   const info = getEvaluatorAssignedLevelsInfo(
                     ev,
@@ -5174,42 +5468,48 @@ function CompetitionEvaluators({
                 return (
                   <div
                     key={lvl.id}
-                    className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex flex-col justify-between gap-2 shadow-2xs"
+                    className={`rounded-2xl overflow-hidden flex flex-col justify-between ${lvlTheme.outerFrame}`}
                   >
-                    <div className="flex items-start justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
-                      <div>
-                        <span className="font-black text-xs sm:text-sm text-slate-900 dark:text-white block">
+                    <div className={`px-3.5 py-2.5 flex items-center justify-between gap-2 ${lvlTheme.headerGradient}`}>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black shrink-0 ${lvlTheme.headerBadge}`}>
+                          المستوى {lvlIdx + 1}
+                        </span>
+                        <span className="font-black text-xs sm:text-sm truncate">
                           {lvl.name}
                         </span>
-                        <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
-                          النطاق: {lvl.juzsOrSurahs}
-                        </span>
                       </div>
-                      <span className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-black shrink-0">
+                      <span className="px-2 py-0.5 rounded-lg bg-black/25 text-white text-[10px] font-black shrink-0">
                         {levelParticipantsCount} متسابق
                       </span>
                     </div>
 
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block mb-1">
-                        لجنة المقيمين في هذا المستوى ({levelEvaluators.length}):
-                      </span>
-                      {levelEvaluators.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {levelEvaluators.map(ev => (
-                            <span
-                              key={ev.id}
-                              className="px-2 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-950 text-emerald-900 dark:text-emerald-200 text-[11px] font-black border border-emerald-200 dark:border-emerald-800"
-                            >
-                              {ev.name}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400">
-                          ⚠️ لم يتم إسناد مقيم لهذا المستوى بعد
+                    <div className="p-3 space-y-2">
+                      <div className={`px-2.5 py-1 rounded-lg text-[11px] font-black ${lvlTheme.accentBadge}`}>
+                        المقرر: {formatJuzsOrSurahsDisplay(lvl.juzsOrSurahs)}
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                          لجنة المقيمين في هذا المستوى ({levelEvaluators.length}):
                         </span>
-                      )}
+                        {levelEvaluators.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {levelEvaluators.map(ev => (
+                              <span
+                                key={ev.id}
+                                className="px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 text-[11px] font-black border border-slate-300 dark:border-slate-700 shadow-2xs"
+                              >
+                                {ev.name}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400">
+                            ⚠️ لم يتم إسناد مقيم لهذا المستوى بعد
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
