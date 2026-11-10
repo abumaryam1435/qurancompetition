@@ -68,6 +68,7 @@ import ConfirmDeleteModal from '../ConfirmDeleteModal';
 import {
   createStyledWorkbook,
   createStyledSheetFromRows,
+  createComprehensiveMergedSheet,
   appendStyledSheet,
   writeStyledWorkbookFile,
   getLevelSheetTheme,
@@ -7322,7 +7323,7 @@ function CompetitionReports({
   <style>
     @page {
       size: A4 ${orientation};
-      margin: 6mm;
+      margin: 7mm;
     }
     *, *::before, *::after {
       box-sizing: border-box;
@@ -7361,12 +7362,21 @@ function CompetitionReports({
       border-collapse: collapse !important;
       page-break-inside: auto;
     }
-    tr {
+    thead {
+      display: table-header-group !important;
+    }
+    tfoot {
+      display: table-footer-group !important;
       page-break-inside: avoid !important;
       break-inside: avoid !important;
     }
-    thead {
-      display: table-header-group;
+    tr, tbody.pdf-avoid-break, .pdf-avoid-break {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+    h1, h2, h3, h4, h5 {
+      page-break-after: avoid !important;
+      break-after: avoid !important;
     }
   </style>
 </head>
@@ -7407,10 +7417,28 @@ function CompetitionReports({
         console.warn('Server PDF endpoint fallback to client canvas:', serverPdfErr);
       }
 
-      // المحرك الاحتياطي: html2canvas مع فرض اتجاه RTL ومنع تقطع الحروف العربية
+      // المحرك الاحتياطي: html2canvas مع التقطيع الذكي لصفحات PDF بحيث لا تنقطع أي خلية أو صف أو بطاقة بين صفحتين
       if (document.fonts && document.fonts.ready) {
         await document.fonts.ready;
       }
+
+      // حساب إحداثيات كافة الكتل الذرية (الصفوف، سجلات المتسابقين المدمجة، البطاقات، التوقيعات) لمنع قطعها بين صفحتين
+      const rootRect = el.getBoundingClientRect();
+      const domHeight = Math.max(1, el.offsetHeight || rootRect.height);
+      const atomicNodes = Array.from(
+        el.querySelectorAll(
+          'tbody.pdf-avoid-break, tr, tfoot, .pdf-avoid-break, .grid > div'
+        )
+      ) as HTMLElement[];
+      const domBlocks = atomicNodes
+        .map(node => {
+          const r = node.getBoundingClientRect();
+          return {
+            topRatio: Math.max(0, (r.top - rootRect.top) / domHeight),
+            bottomRatio: Math.min(1, (r.bottom - rootRect.top) / domHeight),
+          };
+        })
+        .filter(b => b.bottomRatio > b.topRatio);
 
       const origFillText = CanvasRenderingContext2D.prototype.fillText;
       CanvasRenderingContext2D.prototype.fillText = function (
@@ -7432,7 +7460,7 @@ function CompetitionReports({
           useCORS: true,
           logging: false,
           backgroundColor: '#ffffff',
-          windowWidth: 1160,
+          windowWidth: isLandscape ? 1320 : 1080,
           onclone: clonedDoc => {
             clonedDoc.documentElement.setAttribute('dir', 'rtl');
             clonedDoc.documentElement.setAttribute('lang', 'ar');
@@ -7456,7 +7484,6 @@ function CompetitionReports({
         CanvasRenderingContext2D.prototype.fillText = origFillText;
       }
 
-      const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF({
         orientation: isLandscape ? 'landscape' : 'portrait',
         unit: 'mm',
@@ -7464,24 +7491,82 @@ function CompetitionReports({
       });
 
       const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
       const pageHeight = pdf.internal.pageSize.getHeight();
+      const marginMm = 6;
+      const usableWidthMm = pdfWidth - marginMm * 2;
+      const usableHeightMm = pageHeight - marginMm * 2;
+      const pxPerMm = canvas.width / usableWidthMm;
+      const maxSliceHeightPx = Math.floor(usableHeightMm * pxPerMm);
 
-      let heightLeft = pdfHeight;
-      let position = 0;
+      const canvasBlocks = domBlocks.map(b => ({
+        topPx: Math.floor(b.topRatio * canvas.height),
+        bottomPx: Math.ceil(b.bottomRatio * canvas.height),
+      }));
 
-      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
-      heightLeft -= pageHeight;
+      let currentY = 0;
+      let pageIndex = 0;
 
-      while (heightLeft > 0) {
-        position = heightLeft - pdfHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
-        heightLeft -= pageHeight;
+      while (currentY < canvas.height - 4) {
+        let nextY = Math.min(canvas.height, currentY + maxSliceHeightPx);
+
+        if (nextY < canvas.height) {
+          // البحث عن أي صف أو سجل متسابق أو بطاقة يتقاطع مع خط القطع المقترح (nextY)
+          const crossingBlocks = canvasBlocks.filter(
+            b =>
+              b.topPx > currentY + 30 &&
+              b.topPx < nextY &&
+              b.bottomPx > nextY &&
+              b.bottomPx - b.topPx <= maxSliceHeightPx * 0.9
+          );
+
+          if (crossingBlocks.length > 0) {
+            const safeTopPx = Math.min(...crossingBlocks.map(b => b.topPx));
+            if (safeTopPx > currentY + 40) {
+              nextY = safeTopPx - 2;
+            }
+          }
+        }
+
+        const sliceHeightPx = Math.max(1, nextY - currentY);
+        const pageCanvas = document.createElement('canvas');
+        pageCanvas.width = canvas.width;
+        pageCanvas.height = sliceHeightPx;
+        const pageCtx = pageCanvas.getContext('2d');
+        if (pageCtx) {
+          pageCtx.fillStyle = '#ffffff';
+          pageCtx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+          pageCtx.drawImage(
+            canvas,
+            0,
+            currentY,
+            canvas.width,
+            sliceHeightPx,
+            0,
+            0,
+            canvas.width,
+            sliceHeightPx
+          );
+          const sliceImgData = pageCanvas.toDataURL('image/png');
+          if (pageIndex > 0) {
+            pdf.addPage();
+          }
+          const sliceHeightMm = sliceHeightPx / pxPerMm;
+          pdf.addImage(
+            sliceImgData,
+            'PNG',
+            marginMm,
+            marginMm,
+            usableWidthMm,
+            sliceHeightMm
+          );
+          pageIndex++;
+        }
+
+        currentY = nextY;
       }
 
       pdf.save(`${fileName}.pdf`);
-      context?.showToast('تم تصدير ملف الـ PDF الرسمي بنجاح!', 'success');
+      context?.showToast('تم تصدير ملف الـ PDF الرسمي المنسق بنجاح!', 'success');
     } catch (err) {
       console.error('PDF export error:', err);
       context?.showToast('جارِ فتح نافذة الطباعة الرسمية...', 'info');
@@ -7489,6 +7574,68 @@ function CompetitionReports({
     } finally {
       setIsExportingPdf(false);
     }
+  };
+
+  // تصدير ملف إكسل خاص بالجدول الشامل المدمج (صف مدمج لبيانات المتسابق + صفوف مقسمة للمقيمين + خلايا مدمجة للمتوسطات والدرجة النهائية)
+  const exportComprehensiveMergedExcel = () => {
+    const wb = createStyledWorkbook();
+    let sheetCounter = 1;
+
+    // 1. الورقة الرئيسية: الجدول الشامل المدمج لجميع المتسابقين
+    const wsMasterMerged = createComprehensiveMergedSheet(filteredResults, {
+      compName: comp.name,
+      titleBanner: `${comp.name} — الجدول الشامل المدمج لجميع المتسابقين وتفاصيل التقييمات والمتوسطات`,
+      subtitleBanner: `إجمالي المتسابقين: ${filteredResults.length} | كل متسابق في سجل موحد (خلايا مدمجة لبيانات المتسابق + صفوف مقسمة لكل مقيم + خلايا مدمجة للمتوسطات والدرجة النهائية)`,
+      getEvaluatorName,
+      formatJuzsDisplay: formatJuzsOrSurahsDisplay,
+    });
+    appendStyledSheet(
+      wb,
+      wsMasterMerged,
+      'الجدول الشامل المدمج (الكل)',
+      sheetCounter++
+    );
+
+    // 2. ورقة مدمجة مستقلة لكل مستوى من مستويات المسابقة
+    (comp.levels || []).forEach((lvl, lvlIdx) => {
+      const levelResults = allResults
+        .filter(r => Number(r.effectiveLevelId) === Number(lvl.id))
+        .sort((a, b) => {
+          if (a.rankInLevel !== null && b.rankInLevel !== null) {
+            return a.rankInLevel - b.rankInLevel;
+          }
+          if (a.rankInLevel !== null) return -1;
+          if (b.rankInLevel !== null) return 1;
+          if (a.isUnmemorized && !b.isUnmemorized) return 1;
+          if (!a.isUnmemorized && b.isUnmemorized) return -1;
+          return (a.participant.name || '').localeCompare(
+            b.participant.name || '',
+            'ar'
+          );
+        });
+
+      const wsLvlMerged = createComprehensiveMergedSheet(levelResults, {
+        compName: comp.name,
+        titleBanner: `${comp.name} — الجدول الشامل المدمج لـ ${lvl.name} (${formatJuzsOrSurahsDisplay(lvl.juzsOrSurahs)})`,
+        subtitleBanner: `عدد المتسابقين في المستوى: ${levelResults.length} | عدد المقاطع: ${lvl.segmentsCount} | الدرجة العظمى: ${lvl.maxScore}`,
+        maxSegmentsCount: Number(lvl.segmentsCount || 3),
+        getEvaluatorName,
+        formatJuzsDisplay: formatJuzsOrSurahsDisplay,
+      });
+
+      appendStyledSheet(
+        wb,
+        wsLvlMerged,
+        lvl.name || `المستوى ${lvlIdx + 1}`,
+        sheetCounter++
+      );
+    });
+
+    writeStyledWorkbookFile(wb, `الجدول_الشامل_المدمج_${comp.name}.xlsx`);
+    context?.showToast(
+      'تم تصدير ملف الإكسل للجدول الشامل المدمج (بخلايا مدمجة للمتسابق ومقسمة للمقيمين) بنجاح!',
+      'success'
+    );
   };
 
   // تصدير النتائج لملف إكسل احترافي ملون ومنسق بالكامل (RTL) مع تخصيص ورقة مستقلة لكل مستوى من مستويات المسابقة
@@ -7563,6 +7710,21 @@ function CompetitionReports({
 
     const wb = createStyledWorkbook();
     let sheetCounter = 1;
+
+    // 0. ورقة الجدول الشامل المدمج (بيانات المتسابق مدمجة + صفوف مقسمة للمقيمين + خلايا مدمجة للمتوسطات والدرجة النهائية)
+    const wsComprehensiveMerged = createComprehensiveMergedSheet(filteredResults, {
+      compName: comp.name,
+      titleBanner: `${comp.name} — الجدول الشامل المدمج لجميع المتسابقين وتفاصيل التقييمات والمتوسطات`,
+      subtitleBanner: `إجمالي المتسابقين: ${filteredResults.length} | كل متسابق في سجل موحد (خلايا مدمجة لبيانات المتسابق + صفوف مقسمة لكل مقيم + خلايا مدمجة للمتوسطات والدرجة النهائية)`,
+      getEvaluatorName,
+      formatJuzsDisplay: formatJuzsOrSurahsDisplay,
+    });
+    appendStyledSheet(
+      wb,
+      wsComprehensiveMerged,
+      'الجدول الشامل المدمج',
+      sheetCounter++
+    );
 
     // 1. إنشاء ورقة مستقلة وملونة لكل مستوى من مستويات المسابقة (بحسب طلب المستخدم: بيانات كل مستوى في ورقة من ورقات أكسل)
     const levelsToExport = comp.levels || [];
@@ -7752,7 +7914,7 @@ function CompetitionReports({
 
     writeStyledWorkbookFile(wb, `تقرير_نتائج_ومستويات_${comp.name}.xlsx`);
     context?.showToast(
-      `تم تصدير ملف الإكسل الملون والمنسق بنجاح (ورقة خاصة لكل مستوى من الـ ${levelsToExport.length} مستويات + الكشف الشامل والإحصائيات)!`,
+      `تم تصدير ملف الإكسل الملون والمنسق بنجاح (الجدول الشامل المدمج + ورقة خاصة لكل مستوى + الإحصائيات)!`,
       'success'
     );
   };
@@ -8027,7 +8189,7 @@ function CompetitionReports({
 
       {/* شريط اختيار نوع التقرير المطلوب وأزرار التصدير الاحترافية */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-100 dark:bg-slate-800 p-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 no-print">
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 w-full xl:w-auto">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5 w-full xl:w-auto">
           <button
             type="button"
             onClick={() => setReportSubTab('rankings')}
@@ -8039,6 +8201,19 @@ function CompetitionReports({
           >
             <Trophy size={16} className="text-amber-400 shrink-0" />
             <span>تقرير النتائج والأوائل</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setReportSubTab('comprehensive_merged')}
+            className={`min-h-[44px] px-3 py-2 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 transition cursor-pointer ${
+              reportSubTab === 'comprehensive_merged'
+                ? 'bg-[#09152C] text-amber-300 shadow-md border border-amber-400/50'
+                : 'bg-amber-50/80 dark:bg-slate-700/70 text-[#09152C] dark:text-amber-300 border border-amber-300/60 hover:bg-amber-100 dark:hover:bg-slate-700'
+            }`}
+          >
+            <FileSpreadsheet size={16} className="text-emerald-500 shrink-0" />
+            <span>الجدول الشامل المدمج</span>
           </button>
 
           <button
@@ -8083,7 +8258,7 @@ function CompetitionReports({
           <button
             type="button"
             onClick={() => setReportSubTab('certificate')}
-            className={`min-h-[44px] px-3 py-2 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 transition cursor-pointer col-span-2 sm:col-span-1 ${
+            className={`min-h-[44px] px-3 py-2 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 transition cursor-pointer ${
               reportSubTab === 'certificate'
                 ? 'bg-[#09152C] text-amber-300 shadow-md border border-amber-400/50'
                 : 'text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -8124,11 +8299,19 @@ function CompetitionReports({
 
           <button
             type="button"
-            onClick={exportExcel}
+            onClick={
+              reportSubTab === 'comprehensive_merged'
+                ? exportComprehensiveMergedExcel
+                : exportExcel
+            }
             className="min-h-[42px] px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs sm:text-sm flex items-center gap-1.5 transition cursor-pointer shadow-sm"
           >
             <FileSpreadsheet size={16} />
-            <span>تصدير Excel الشامل</span>
+            <span>
+              {reportSubTab === 'comprehensive_merged'
+                ? 'تصدير الجدول المدمج Excel'
+                : 'تصدير Excel الشامل'}
+            </span>
           </button>
 
           <button
@@ -8148,6 +8331,12 @@ function CompetitionReports({
                 exportToPdf(
                   'official-report-rankings-container',
                   `تقرير_نتائج_وأوائل_${comp.name}`,
+                  true
+                );
+              } else if (reportSubTab === 'comprehensive_merged') {
+                exportToPdf(
+                  'official-report-comprehensive-merged-container',
+                  `الجدول_الشامل_المدمج_${comp.name}`,
                   true
                 );
               } else if (reportSubTab === 'evaluator_averages') {
@@ -8965,7 +9154,7 @@ function CompetitionReports({
           </div>
 
           {/* خانة الاعتماد والتوقيعات الرسمية في أسفل التقرير */}
-          <div className="pt-8 mt-8 border-t-2 border-amber-400/60 grid grid-cols-3 gap-4 text-center text-xs sm:text-sm font-black text-slate-900 dark:text-slate-200">
+          <div className="pdf-avoid-break pt-8 mt-8 border-t-2 border-amber-400/60 grid grid-cols-3 gap-4 text-center text-xs sm:text-sm font-black text-slate-900 dark:text-slate-200">
             <div className="p-3 rounded-2xl bg-slate-50/80 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
               <p className="text-[#09152C] dark:text-amber-300">
                 لجنة التحكيم والتقييم
@@ -8987,6 +9176,694 @@ function CompetitionReports({
                 مدير إدارة الأوقاف والشؤون الدينية
               </p>
               <p className="mt-8 text-slate-400 font-bold">
+                التوقيع والختم: ..........................
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================ 1-ب. تبويب الجدول الشامل المدمج (جميع بيانات المتسابق مدمجة + صفوف مقسمة للمقيمين + خلايا مدمجة للمتوسطات والدرجة النهائية) ================ */}
+      {reportSubTab === 'comprehensive_merged' && (
+        <div
+          id="official-report-comprehensive-merged-container"
+          dir="rtl"
+          style={{
+            letterSpacing: '0px',
+            fontFamily: "'Tajawal', 'Cairo', 'Amiri', sans-serif",
+          }}
+          className="bg-white dark:bg-slate-900 p-4 sm:p-7 rounded-3xl border-2 border-amber-300/80 dark:border-slate-800 shadow-xl space-y-5"
+        >
+          <OfficialReportHeader
+            seasonText={comp.seasonText}
+            compName={comp.name}
+            reportTitle="التقرير الجدولي الشامل المدمج لجميع المتسابقين والتقييمات"
+            reportSubtitle="سجل شامل موحد لكل متسابق: بيانات المتسابق (خلايا مدمجة) • تقييمات كل مقيم (خلايا مقسمة: كل مقيم في صف) • المتوسطات والدرجة النهائية المعتمدة (خلايا مدمجة)"
+            metaStats={reportHeaderStats}
+          />
+
+          {/* شريط التحكم والتصدير الخاص بالجدول الشامل المدمج */}
+          <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-3 bg-slate-50 dark:bg-slate-800/70 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 no-print">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs font-black text-slate-700 dark:text-slate-200 ml-1">
+                نطاق العرض:
+              </span>
+              {[
+                {
+                  id: 'available',
+                  label: `النتائج المتوفرة المرصودة (${evaluatedStudentsCount})`,
+                },
+                {
+                  id: 'all',
+                  label: `جميع المتسابقين (${baseFilteredResults.length})`,
+                },
+                {
+                  id: 'multi_evaluated',
+                  label: `تقييم مشترك أكثر من مقيم (${multiEvaluatedCount})`,
+                },
+                {
+                  id: 'memorized',
+                  label: `الحافظون المتقنون (${memorizedStudentsCount})`,
+                },
+              ].map(btn => (
+                <button
+                  key={btn.id}
+                  type="button"
+                  onClick={() => setEvalStatusFilter(btn.id as any)}
+                  className={`min-h-[36px] px-3 py-1.5 rounded-xl font-black text-xs transition cursor-pointer ${
+                    effectiveStatusFilter === btn.id
+                      ? 'bg-[#09152C] text-amber-300 shadow-xs'
+                      : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700'
+                  }`}
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={sortOrder}
+                onChange={e => setSortOrder(e.target.value as any)}
+                className="min-h-[38px] px-3 border border-slate-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-900 text-xs font-bold"
+              >
+                <option value="score_desc">ترتيب: الدرجة (من الأعلى للأقل)</option>
+                <option value="score_asc">ترتيب: الدرجة (من الأقل للأعلى)</option>
+                <option value="name">ترتيب: الاسم الكامل (أبجدي)</option>
+                <option value="level">ترتيب: مستوى المشاركة</option>
+                <option value="wilayat">ترتيب: الولاية</option>
+                <option value="request_num">ترتيب: رقم الطلب</option>
+              </select>
+
+              <button
+                type="button"
+                onClick={exportComprehensiveMergedExcel}
+                className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <FileSpreadsheet size={15} />
+                <span>تصدير الجدول الشامل المدمج (Excel)</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isExportingPdf}
+                onClick={() =>
+                  exportToPdf(
+                    'official-report-comprehensive-merged-container',
+                    `الجدول_الشامل_المدمج_${comp.name}`,
+                    true
+                  )
+                }
+                className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#09152C] hover:bg-[#163363] text-amber-300 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Download size={15} />
+                <span>تصدير الجدول الشامل المدمج (PDF)</span>
+              </button>
+            </div>
+          </div>
+
+          {/* دليل الألوان وتقسيم الخانات في الجدول المدمج */}
+          <div className="flex flex-wrap items-center gap-3 px-3.5 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs font-bold">
+            <span className="font-black text-slate-700 dark:text-slate-200">
+              هيكل السجل الواحد لكل متسابق:
+            </span>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#09152C] text-amber-300 text-[11px] font-black">
+              1. بيانات المتسابق الكاملة (خلايا مدمجة عمودياً)
+            </span>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-100 text-sky-900 border border-sky-300 text-[11px] font-black">
+              2. بيانات التقييم لكل مقيم (خلايا مقسمة — كل مقيم في صف مستقل)
+            </span>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900 border border-emerald-300 text-[11px] font-black">
+              3. المتوسطات والدرجة النهائية والتقدير (خلايا مدمجة عمودياً)
+            </span>
+          </div>
+
+          {/* الجدول الشامل المدمج */}
+          {(() => {
+            const maxSegs = Math.max(
+              1,
+              ...(comp.levels || []).map(l => Number(l.segmentsCount || 3)),
+              ...filteredResults.map(r => Number(r.segmentsCount || 3))
+            );
+
+            return (
+              <div className="border-2 border-[#09152C]/40 dark:border-slate-700 rounded-2xl overflow-hidden bg-white dark:bg-slate-900 shadow-md">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-right text-[11px] border-collapse">
+                    <thead>
+                      {/* الصف الأول: المجموعات الثلاث */}
+                      <tr className="text-white font-black text-xs border-b border-amber-400">
+                        <th
+                          colSpan={13}
+                          className="p-2.5 text-center bg-[#09152C] text-amber-300 border-l-2 border-amber-400"
+                        >
+                          أولاً: بيانات المتسابق الأساسية والمقرر القرآني (خلايا مدمجة لكل متسابق)
+                        </th>
+                        <th
+                          colSpan={4 + maxSegs}
+                          className="p-2.5 text-center bg-[#1D4ED8] text-white border-l-2 border-amber-400"
+                        >
+                          ثانياً: بيانات التقييم التفصيلية لكل مقيم (خلايا مقسمة — كل مقيم في صف مستقل)
+                        </th>
+                        <th
+                          colSpan={7 + maxSegs}
+                          className="p-2.5 text-center bg-[#064E3B] text-amber-200"
+                        >
+                          ثالثاً: خلاصة المتوسطات والدرجة النهائية المعتمدة (خلايا مدمجة لكل متسابق)
+                        </th>
+                      </tr>
+
+                      {/* الصف الثاني: أسماء الأعمدة */}
+                      <tr className="font-black text-[10px] sm:text-[11px] text-white border-b-2 border-[#09152C]">
+                        {/* أعمدة بيانات المتسابق (13 عموداً) */}
+                        <th className="p-2 text-center bg-[#1E293B] border-l border-white/15 w-9">
+                          م
+                        </th>
+                        <th className="p-2 text-center bg-[#1E293B] border-l border-white/15 w-14">
+                          المركز
+                        </th>
+                        <th className="p-2 text-center bg-[#1E293B] border-l border-white/15 w-12">
+                          العام
+                        </th>
+                        <th className="p-2 text-center bg-[#1E293B] border-l border-white/15 w-16">
+                          رقم الطلب
+                        </th>
+                        <th className="p-2 text-right bg-[#1E293B] border-l border-white/15 min-w-[140px]">
+                          الاسم الكامل
+                        </th>
+                        <th className="p-2 text-center bg-[#1E293B] border-l border-white/15 w-20">
+                          الرقم المدني
+                        </th>
+                        <th className="p-2 text-center bg-[#1E293B] border-l border-white/15 w-20">
+                          رقم الهاتف
+                        </th>
+                        <th className="p-2 text-center bg-[#1E293B] border-l border-white/15 w-12">
+                          الجنس
+                        </th>
+                        <th className="p-2 text-center bg-[#1E293B] border-l border-white/15 w-16">
+                          الولاية
+                        </th>
+                        <th className="p-2 text-right bg-[#1E293B] border-l border-white/15 min-w-[105px]">
+                          مستوى المشاركة
+                        </th>
+                        <th className="p-2 text-right bg-[#1E293B] border-l border-white/15 min-w-[110px]">
+                          المقرر / الأجزاء
+                        </th>
+                        <th className="p-2 text-center bg-[#1E293B] border-l border-white/15 w-20">
+                          تاريخ التسجيل
+                        </th>
+                        <th className="p-2 text-center bg-[#1E293B] border-l-2 border-amber-400 w-12">
+                          العظمى
+                        </th>
+
+                        {/* أعمدة تقييمات كل مقيم المقسمة */}
+                        <th className="p-2 text-right bg-[#1E40AF] border-l border-white/15 min-w-[125px] text-amber-200">
+                          المقيم المعتمد
+                        </th>
+                        {Array.from({ length: maxSegs }, (_, sIdx) => (
+                          <th
+                            key={`ev-seg-h-${sIdx}`}
+                            className="p-1.5 text-center bg-[#1E40AF] border-l border-white/15 w-11"
+                          >
+                            م{sIdx + 1}
+                          </th>
+                        ))}
+                        <th className="p-2 text-center bg-[#1E40AF] border-l border-white/15 w-14">
+                          خصم المقيم
+                        </th>
+                        <th className="p-2 text-center bg-[#1E3A8A] border-l border-white/15 w-16 text-amber-200">
+                          درجة المقيم
+                        </th>
+                        <th className="p-2 text-right bg-[#1E40AF] border-l-2 border-amber-400 min-w-[110px]">
+                          ملاحظات المقيم
+                        </th>
+
+                        {/* أعمدة المتوسطات والدرجة النهائية المدمجة */}
+                        {Array.from({ length: maxSegs }, (_, sIdx) => (
+                          <th
+                            key={`avg-seg-h-${sIdx}`}
+                            className="p-1.5 text-center bg-[#047857] border-l border-white/15 w-12"
+                          >
+                            متوسط م{sIdx + 1}
+                          </th>
+                        ))}
+                        <th className="p-2 text-center bg-[#047857] border-l border-white/15 w-14">
+                          أعلى/أدنى
+                        </th>
+                        <th className="p-2 text-center bg-[#047857] border-l border-white/15 w-12">
+                          الفارق
+                        </th>
+                        <th className="p-2 text-center bg-[#047857] border-l border-white/15 w-14">
+                          متوسط الخصم
+                        </th>
+                        <th className="p-2 text-center bg-[#065F46] border-l border-white/15 w-20 text-amber-300">
+                          الدرجة النهائية
+                        </th>
+                        <th className="p-2 text-center bg-[#047857] border-l border-white/15 w-16">
+                          النسبة
+                        </th>
+                        <th className="p-2 text-center bg-[#047857] w-28">
+                          التقدير العام
+                        </th>
+                      </tr>
+                    </thead>
+
+                    {filteredResults.map((r, sIdx) => {
+                      const evals = r.evaluations.length > 0 ? r.evaluations : [null];
+                      const spanCount = evals.length;
+                      const isTop3 =
+                        r.rankInLevel !== null &&
+                        r.rankInLevel <= 3 &&
+                        !r.isUnmemorized;
+
+                      const studentMergedBg = r.isUnmemorized
+                        ? 'bg-rose-50/70 dark:bg-rose-950/20'
+                        : isTop3
+                        ? 'bg-amber-50/60 dark:bg-amber-950/20'
+                        : sIdx % 2 === 0
+                        ? 'bg-white dark:bg-slate-900'
+                        : 'bg-slate-50/90 dark:bg-slate-800/40';
+
+                      const summaryMergedBg = r.isUnmemorized
+                        ? 'bg-rose-50/80 dark:bg-rose-950/30'
+                        : sIdx % 2 === 0
+                        ? 'bg-emerald-50/60 dark:bg-emerald-950/20'
+                        : 'bg-emerald-100/40 dark:bg-emerald-950/30';
+
+                      return (
+                        <tbody
+                          key={r.participant.id}
+                          className="pdf-avoid-break border-b-2 border-[#09152C] dark:border-slate-600 font-bold"
+                          style={{
+                            pageBreakInside: 'avoid',
+                            breakInside: 'avoid',
+                          }}
+                        >
+                          {evals.map((ev, evIdx) => {
+                            const evRowBg =
+                              evIdx % 2 === 0
+                                ? 'bg-sky-50/80 dark:bg-sky-950/25'
+                                : 'bg-blue-100/60 dark:bg-blue-950/40';
+
+                            const evScore = ev
+                              ? ev.isUnmemorized
+                                ? 0
+                                : Number(ev.totalScore ?? 0)
+                              : null;
+                            const evDeduction =
+                              ev && evScore !== null
+                                ? ev.isUnmemorized
+                                  ? r.maxScore
+                                  : Math.max(
+                                      0,
+                                      Number((r.maxScore - evScore).toFixed(2))
+                                    )
+                                : null;
+
+                            return (
+                              <tr
+                                key={`${r.participant.id}-ev-${evIdx}`}
+                                className="border-b border-sky-200 dark:border-slate-700"
+                              >
+                                {/* 1. خلايا بيانات المتسابق المدمجة (تظهر في الصف الأول للمتسابق وتمتد بعدد المقيمين) */}
+                                {evIdx === 0 && (
+                                  <>
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2 text-center align-middle border-l border-slate-300 dark:border-slate-700 font-black text-slate-500 ${studentMergedBg}`}
+                                    >
+                                      {sIdx + 1}
+                                    </td>
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2 text-center align-middle border-l border-slate-300 dark:border-slate-700 font-black ${studentMergedBg}`}
+                                    >
+                                      {r.isUnmemorized ? (
+                                        <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px]">
+                                          غير حافظ
+                                        </span>
+                                      ) : r.rankInLevel !== null ? (
+                                        <span
+                                          className={`inline-flex items-center justify-center min-w-[26px] px-1.5 py-0.5 rounded-lg text-[11px] font-black ${
+                                            r.rankInLevel === 1
+                                              ? 'bg-amber-400 text-[#09152C]'
+                                              : r.rankInLevel === 2
+                                              ? 'bg-slate-300 text-slate-900'
+                                              : r.rankInLevel === 3
+                                              ? 'bg-amber-700 text-white'
+                                              : 'bg-slate-200/80 dark:bg-slate-700 text-slate-800 dark:text-slate-200'
+                                          }`}
+                                        >
+                                          {r.rankInLevel === 1
+                                            ? '1 🥇'
+                                            : r.rankInLevel === 2
+                                            ? '2 🥈'
+                                            : r.rankInLevel === 3
+                                            ? '3 🥉'
+                                            : r.rankInLevel}
+                                        </span>
+                                      ) : (
+                                        <span className="text-slate-400">-</span>
+                                      )}
+                                    </td>
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2 text-center align-middle border-l border-slate-300 dark:border-slate-700 font-black text-slate-600 dark:text-slate-400 ${studentMergedBg}`}
+                                    >
+                                      {r.overallRank !== null && !r.isUnmemorized
+                                        ? r.overallRank
+                                        : '-'}
+                                    </td>
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2 text-center align-middle border-l border-slate-300 dark:border-slate-700 font-mono text-[10px] text-slate-700 dark:text-slate-300 ${studentMergedBg}`}
+                                    >
+                                      {r.participant.requestNumber || '-'}
+                                    </td>
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2.5 text-right align-middle border-l border-slate-300 dark:border-slate-700 font-black text-slate-900 dark:text-white text-xs ${studentMergedBg}`}
+                                    >
+                                      {r.participant.name}
+                                    </td>
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2 text-center align-middle border-l border-slate-300 dark:border-slate-700 font-mono text-[10px] text-slate-700 dark:text-slate-300 ${studentMergedBg}`}
+                                    >
+                                      {r.participant.civilId || '-'}
+                                    </td>
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2 text-center align-middle border-l border-slate-300 dark:border-slate-700 font-mono text-[10px] text-slate-700 dark:text-slate-300 ${studentMergedBg}`}
+                                    >
+                                      {r.participant.phone || '-'}
+                                    </td>
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2 text-center align-middle border-l border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 ${studentMergedBg}`}
+                                    >
+                                      {r.participant.gender || '-'}
+                                    </td>
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2 text-center align-middle border-l border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 ${studentMergedBg}`}
+                                    >
+                                      {r.participant.wilayat || '-'}
+                                    </td>
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2 text-right align-middle border-l border-slate-300 dark:border-slate-700 font-black text-indigo-950 dark:text-indigo-200 ${studentMergedBg}`}
+                                    >
+                                      {r.level?.name || '-'}
+                                    </td>
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2 text-right align-middle border-l border-slate-300 dark:border-slate-700 font-bold text-emerald-800 dark:text-emerald-300 text-[10px] ${studentMergedBg}`}
+                                    >
+                                      {formatJuzsOrSurahsDisplay(
+                                        r.participant.juzsOrSurahs ||
+                                          r.level?.juzsOrSurahs ||
+                                          ''
+                                      )}
+                                    </td>
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2 text-center align-middle border-l border-slate-300 dark:border-slate-700 text-[10px] text-slate-600 dark:text-slate-400 ${studentMergedBg}`}
+                                    >
+                                      {r.participant.registrationDate
+                                        ? r.participant.registrationDate.split(' ')[0]
+                                        : '-'}
+                                    </td>
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2 text-center align-middle border-l-2 border-[#09152C] font-black text-slate-700 dark:text-slate-300 ${studentMergedBg}`}
+                                    >
+                                      {r.maxScore}
+                                    </td>
+                                  </>
+                                )}
+
+                                {/* 2. خلايا التقييم المقسمة لكل مقيم (كل مقيم في صف مستقل) */}
+                                <td
+                                  className={`p-2 text-right align-middle border-l border-sky-200 dark:border-slate-700 font-black text-blue-950 dark:text-sky-200 ${evRowBg}`}
+                                >
+                                  {ev ? (
+                                    <div className="flex items-center justify-between gap-1">
+                                      <span>
+                                        {getEvaluatorName(
+                                          ev.evaluatorId,
+                                          ev.evaluatorName
+                                        )}
+                                      </span>
+                                      {spanCount > 1 && (
+                                        <span className="px-1.5 py-0.2 rounded bg-blue-900/10 text-[9px] text-blue-900 dark:text-sky-300">
+                                          مقيم {evIdx + 1}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="text-slate-400">
+                                      بانتظار التقييم
+                                    </span>
+                                  )}
+                                </td>
+
+                                {Array.from({ length: maxSegs }, (_, segIdx) => {
+                                  if (segIdx >= (r.segmentsCount || maxSegs)) {
+                                    return (
+                                      <td
+                                        key={`ev-seg-${segIdx}`}
+                                        className={`p-1.5 text-center align-middle border-l border-sky-200 dark:border-slate-700 text-slate-300 ${evRowBg}`}
+                                      >
+                                        —
+                                      </td>
+                                    );
+                                  }
+                                  const foundSeg = ev
+                                    ? (ev.segments || []).find(
+                                        (s: any, i: number) =>
+                                          Number(s.segmentNumber || i + 1) ===
+                                          segIdx + 1
+                                      )
+                                    : null;
+                                  return (
+                                    <td
+                                      key={`ev-seg-${segIdx}`}
+                                      className={`p-1.5 text-center align-middle border-l border-sky-200 dark:border-slate-700 font-black text-slate-800 dark:text-slate-100 ${evRowBg}`}
+                                    >
+                                      {ev ? (
+                                        ev.isUnmemorized ||
+                                        foundSeg?.isUnmemorized ? (
+                                          <span className="text-red-600 text-[10px]">
+                                            0
+                                          </span>
+                                        ) : foundSeg ? (
+                                          foundSeg.score
+                                        ) : (
+                                          '-'
+                                        )
+                                      ) : (
+                                        '-'
+                                      )}
+                                    </td>
+                                  );
+                                })}
+
+                                <td
+                                  className={`p-2 text-center align-middle border-l border-sky-200 dark:border-slate-700 font-black text-rose-700 dark:text-rose-400 ${evRowBg}`}
+                                >
+                                  {evDeduction !== null ? evDeduction : '-'}
+                                </td>
+
+                                <td
+                                  className={`p-2 text-center align-middle border-l border-sky-200 dark:border-slate-700 font-black text-xs bg-sky-200/50 dark:bg-sky-900/40 text-[#09152C] dark:text-amber-300`}
+                                >
+                                  {ev ? (
+                                    ev.isUnmemorized ? (
+                                      <span className="text-red-600 text-[10px]">
+                                        غير حافظ (0)
+                                      </span>
+                                    ) : (
+                                      ev.totalScore
+                                    )
+                                  ) : (
+                                    <span className="text-slate-400">-</span>
+                                  )}
+                                </td>
+
+                                <td
+                                  className={`p-2 text-right align-middle border-l-2 border-[#09152C] text-[10px] text-slate-600 dark:text-slate-300 ${evRowBg}`}
+                                >
+                                  {ev?.notes ? ev.notes : '-'}
+                                </td>
+
+                                {/* 3. خلايا المتوسطات والدرجة النهائية المدمجة (تظهر في الصف الأول للمتسابق وتمتد بعدد المقيمين) */}
+                                {evIdx === 0 && (
+                                  <>
+                                    {Array.from(
+                                      { length: maxSegs },
+                                      (_, segIdx) => {
+                                        if (
+                                          segIdx >= (r.segmentsCount || maxSegs)
+                                        ) {
+                                          return (
+                                            <td
+                                              key={`avg-seg-${segIdx}`}
+                                              rowSpan={spanCount}
+                                              className={`p-1.5 text-center align-middle border-l border-emerald-200 dark:border-slate-700 text-slate-300 ${summaryMergedBg}`}
+                                            >
+                                              —
+                                            </td>
+                                          );
+                                        }
+                                        const avgVal = r.segmentAverages[segIdx];
+                                        return (
+                                          <td
+                                            key={`avg-seg-${segIdx}`}
+                                            rowSpan={spanCount}
+                                            className={`p-1.5 text-center align-middle border-l border-emerald-200 dark:border-slate-700 font-black text-emerald-950 dark:text-emerald-200 ${summaryMergedBg}`}
+                                          >
+                                            {r.isUnmemorized
+                                              ? 0
+                                              : avgVal !== null &&
+                                                avgVal !== undefined
+                                              ? avgVal
+                                              : '-'}
+                                          </td>
+                                        );
+                                      }
+                                    )}
+
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2 text-center align-middle border-l border-emerald-200 dark:border-slate-700 text-[10px] font-black ${summaryMergedBg}`}
+                                    >
+                                      {r.highestEvalScore !== null &&
+                                      r.lowestEvalScore !== null ? (
+                                        <div>
+                                          <span className="text-emerald-700 dark:text-emerald-300">
+                                            {r.highestEvalScore}
+                                          </span>
+                                          <span className="text-slate-400 mx-0.5">
+                                            /
+                                          </span>
+                                          <span className="text-amber-700 dark:text-amber-300">
+                                            {r.lowestEvalScore}
+                                          </span>
+                                        </div>
+                                      ) : (
+                                        '-'
+                                      )}
+                                    </td>
+
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2 text-center align-middle border-l border-emerald-200 dark:border-slate-700 font-black ${summaryMergedBg}`}
+                                    >
+                                      {r.evaluationsCount > 1 ? (
+                                        <span
+                                          className={
+                                            r.evalSpread > 5
+                                              ? 'text-red-600'
+                                              : 'text-slate-700 dark:text-slate-300'
+                                          }
+                                        >
+                                          {r.evalSpread}
+                                        </span>
+                                      ) : (
+                                        '-'
+                                      )}
+                                    </td>
+
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2 text-center align-middle border-l border-emerald-200 dark:border-slate-700 font-black text-rose-700 dark:text-rose-400 ${summaryMergedBg}`}
+                                    >
+                                      {r.isUnmemorized
+                                        ? r.maxScore
+                                        : r.totalDeductions !== null
+                                        ? r.totalDeductions
+                                        : '-'}
+                                    </td>
+
+                                    <td
+                                      rowSpan={spanCount}
+                                      className="p-2.5 text-center align-middle border-l border-emerald-300 dark:border-slate-700 bg-amber-100/80 dark:bg-amber-950/40 font-black text-sm text-[#09152C] dark:text-amber-300"
+                                    >
+                                      {r.isUnmemorized ? (
+                                        <span className="text-red-600 text-xs">
+                                          0
+                                        </span>
+                                      ) : r.averageScore !== null ? (
+                                        r.averageScore
+                                      ) : (
+                                        '-'
+                                      )}
+                                    </td>
+
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2 text-center align-middle border-l border-emerald-200 dark:border-slate-700 font-black text-emerald-900 dark:text-emerald-300 ${summaryMergedBg}`}
+                                    >
+                                      {r.percentage !== null && !r.isUnmemorized
+                                        ? `${r.percentage}%`
+                                        : '-'}
+                                    </td>
+
+                                    <td
+                                      rowSpan={spanCount}
+                                      className={`p-2 text-center align-middle ${summaryMergedBg}`}
+                                    >
+                                      <span
+                                        className={`inline-block px-2 py-0.5 rounded-xl border text-[10px] font-black ${r.gradeInfo.badgeClass}`}
+                                      >
+                                        {r.gradeInfo.label}
+                                      </span>
+                                    </td>
+                                  </>
+                                )}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      );
+                    })}
+
+                    {filteredResults.length === 0 && (
+                      <tbody>
+                        <tr>
+                          <td
+                            colSpan={24 + maxSegs * 2}
+                            className="p-8 text-center text-slate-500 font-black text-sm"
+                          >
+                            لا توجد بيانات مطابقة للبحث أو الفلترة الحالية
+                          </td>
+                        </tr>
+                      </tbody>
+                    )}
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* التوقيعات الرسمية */}
+          <div className="pdf-avoid-break pt-8 mt-6 border-t-2 border-amber-400/60 grid grid-cols-3 gap-4 text-center text-xs sm:text-sm font-black text-slate-900 dark:text-slate-200">
+            <div className="p-3 rounded-2xl bg-slate-50/80 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
+              <p>لجنة التقييم والتحكيم</p>
+              <p className="mt-7 text-slate-400 font-bold">
+                التوقيع: ..........................
+              </p>
+            </div>
+            <div className="p-3 rounded-2xl bg-slate-50/80 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
+              <p>رئيس لجنة المسابقة</p>
+              <p className="mt-7 text-slate-400 font-bold">
+                التوقيع: ..........................
+              </p>
+            </div>
+            <div className="p-3 rounded-2xl bg-slate-50/80 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
+              <p>يعتمد / مدير الإدارة</p>
+              <p className="mt-7 text-slate-400 font-bold">
                 التوقيع والختم: ..........................
               </p>
             </div>

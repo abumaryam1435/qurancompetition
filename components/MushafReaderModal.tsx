@@ -562,10 +562,10 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                       type="button"
                       onClick={onClose}
                       className="px-2 sm:px-2.5 py-0.5 min-h-[26px] sm:min-h-[30px] rounded-lg bg-red-600 hover:bg-red-700 text-white text-[10px] sm:text-xs font-black shadow-2xs transition active:scale-95 flex items-center justify-center gap-1 border border-red-500 shrink-0"
-                      title="إغلاق المصحف"
+                      title="رجوع"
                     >
-                      <span>✕</span>
-                      <span>إغلاق</span>
+                      <span>↩</span>
+                      <span>رجوع</span>
                     </button>
                   </div>
                 </div>
@@ -578,7 +578,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
             showControls ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0 pointer-events-none'
           }`}>
             <div className="overflow-hidden">
-              <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-teal-950 text-white px-2.5 sm:px-4 py-1.5 sm:py-2 flex items-center justify-between shadow-md border-b border-emerald-800/60">
+              <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-teal-900 text-white px-2.5 sm:px-4 py-1.5 sm:py-2 flex items-center justify-between shadow-md border-b border-emerald-800/60">
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <span className="text-base sm:text-lg flex-shrink-0">📖</span>
               <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-wrap">
@@ -608,7 +608,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                           </span>
                         )}
                         {isPrevWeek && !isNew && (
-                          <span className="px-1.5 py-0.5 rounded bg-[#8B4513] text-amber-100 text-[10px] font-black">
+                          <span className="px-1.5 py-0.5 rounded bg-[#8B4513] text-amber-100 text-10px font-black">
                             سابق
                           </span>
                         )}
@@ -679,9 +679,9 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                 type="button" 
                 onClick={onClose} 
                 className="px-3 py-1.5 rounded-lg bg-red-600/90 hover:bg-red-600 text-white transition text-sm font-black shadow-lg shadow-red-900/20 flex items-center justify-center gap-1 border border-red-500 backdrop-blur-sm active:scale-95"
-                title="إغلاق المصحف"
+                title="رجوع"
               >
-                <span>✕</span> <span>إغلاق</span>
+                <span>↩</span> <span>رجوع</span>
               </button>
             </div>
           </div>
@@ -703,10 +703,11 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
             <button 
               type="button" 
               onClick={onClose} 
-              className="w-8 h-8 rounded-full bg-red-600/90 hover:bg-red-600 text-white font-bold flex items-center justify-center shadow-lg border border-red-400 active:scale-95 transition pointer-events-auto"
-              title="إغلاق المصحف"
+              className="px-2.5 h-8 rounded-full bg-red-600/90 hover:bg-red-600 text-white text-xs font-black flex items-center justify-center gap-1 shadow-lg border border-red-400 active:scale-95 transition pointer-events-auto"
+              title="رجوع"
             >
-              ✕
+              <span>↩</span>
+              <span>رجوع</span>
             </button>
           </div>
         )}
