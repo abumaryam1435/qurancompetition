@@ -73,6 +73,7 @@ import {
   writeStyledWorkbookFile,
   getLevelSheetTheme,
 } from '../../utils/excelStyledExport';
+import { exportComprehensiveWorkbookStylePdf } from '../../utils/comprehensivePdfExport';
 
 const inlinedImageCache = new Map<string, string>();
 import MultiSelectFilterDropdown from './MultiSelectFilterDropdown';
@@ -7576,27 +7577,47 @@ function CompetitionReports({
     }
   };
 
-  // تصدير ملف إكسل خاص بالجدول الشامل المدمج (صف مدمج لبيانات المتسابق + صفوف مقسمة للمقيمين + خلايا مدمجة للمتوسطات والدرجة النهائية)
+  // تصدير ملف PDF أفقي (Landscape) للجدول الشامل المدمج بنفس ترتيب أوراق الإكسل (كل مستوى/قسم في صفحات خاصة مستقلة)
+  const handleExportComprehensivePdf = async () => {
+    if (isExportingPdf) return;
+    setIsExportingPdf(true);
+    context?.showToast(
+      'جاري تجهيز ملف الـ PDF الأفقي الشامل (كل قسم ومستوى في صفحات خاصة بنفس ترتيب الإكسل)...',
+      'info'
+    );
+    try {
+      await exportComprehensiveWorkbookStylePdf(
+        {
+          comp,
+          allResults,
+          filteredResults,
+          baseFilteredResults,
+          wilayatOptions: filterOptionsMap.wilayats,
+          genderOptions: filterOptionsMap.genders,
+          getEvaluatorName,
+          formatJuzsDisplay: formatJuzsOrSurahsDisplay,
+        },
+        `الجدول_الشامل_المدمج_${comp.name}`
+      );
+      context?.showToast(
+        'تم تصدير ملف الـ PDF الأفقي الشامل (كل قسم في صفحات خاصة بنفس ترتيب الإكسل) بنجاح!',
+        'success'
+      );
+    } catch (err) {
+      console.error('Comprehensive PDF export error:', err);
+      context?.showToast('جارِ فتح نافذة الطباعة الرسمية...', 'info');
+      window.print();
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
+  // تصدير ملف إكسل خاص بالجدول الشامل المدمج (بنفس ترتيب الأقسام: ورقة لكل مستوى ثم الجدول الشامل العام ثم الإحصائيات)
   const exportComprehensiveMergedExcel = () => {
     const wb = createStyledWorkbook();
     let sheetCounter = 1;
 
-    // 1. الورقة الرئيسية: الجدول الشامل المدمج لجميع المتسابقين
-    const wsMasterMerged = createComprehensiveMergedSheet(filteredResults, {
-      compName: comp.name,
-      titleBanner: `${comp.name} — الجدول الشامل المدمج لجميع المتسابقين وتفاصيل التقييمات والمتوسطات`,
-      subtitleBanner: `إجمالي المتسابقين: ${filteredResults.length} | كل متسابق في سجل موحد (خلايا مدمجة لبيانات المتسابق + صفوف مقسمة لكل مقيم + خلايا مدمجة للمتوسطات والدرجة النهائية)`,
-      getEvaluatorName,
-      formatJuzsDisplay: formatJuzsOrSurahsDisplay,
-    });
-    appendStyledSheet(
-      wb,
-      wsMasterMerged,
-      'الجدول الشامل المدمج (الكل)',
-      sheetCounter++
-    );
-
-    // 2. ورقة مدمجة مستقلة لكل مستوى من مستويات المسابقة
+    // 1. ورقة مدمجة مستقلة لكل مستوى من مستويات المسابقة (بنفس ترتيب صفحات الـ PDF)
     (comp.levels || []).forEach((lvl, lvlIdx) => {
       const levelResults = allResults
         .filter(r => Number(r.effectiveLevelId) === Number(lvl.id))
@@ -7631,9 +7652,119 @@ function CompetitionReports({
       );
     });
 
+    // 2. ورقة الجدول الشامل المدمج العام (جميع المستويات)
+    const wsMasterMerged = createComprehensiveMergedSheet(filteredResults, {
+      compName: comp.name,
+      titleBanner: `${comp.name} — الجدول الشامل المدمج العام لجميع المتسابقين وتفاصيل التقييمات والمتوسطات`,
+      subtitleBanner: `إجمالي المتسابقين: ${filteredResults.length} | كل متسابق في سجل موحد (خلايا مدمجة لبيانات المتسابق + صفوف مقسمة لكل مقيم + خلايا مدمجة للمتوسطات والدرجة النهائية)`,
+      getEvaluatorName,
+      formatJuzsDisplay: formatJuzsOrSurahsDisplay,
+    });
+    appendStyledSheet(
+      wb,
+      wsMasterMerged,
+      'الجدول الشامل المدمج (الكل)',
+      sheetCounter++
+    );
+
+    // 3. ورقة الإحصائيات التفصيلية للمستويات والولايات والجنس
+    const summaryRows: Record<string, any>[] = [];
+    (comp.levels || []).forEach(lvl => {
+      const lvlItems = baseFilteredResults.filter(
+        r => Number(r.effectiveLevelId) === Number(lvl.id)
+      );
+      const lvlEval = lvlItems.filter(
+        r => r.averageScore !== null && !r.isUnmemorized
+      );
+      const avg =
+        lvlEval.length > 0
+          ? Number(
+              (
+                lvlEval.reduce((s, x) => s + (x.averageScore || 0), 0) /
+                lvlEval.length
+              ).toFixed(2)
+            )
+          : '-';
+      summaryRows.push({
+        'التصنيف الإحصائي': 'حسب مستوى المشاركة',
+        الفئة: lvl.name,
+        'إجمالي المسجلين': lvlItems.length,
+        'تم تقييمهم (حافظون)': lvlEval.length,
+        'غير حافظين': lvlItems.filter(x => x.isUnmemorized).length,
+        'بانتظار التقييم': lvlItems.filter(x => x.evaluationsCount === 0).length,
+        'متوسط الدرجات': avg,
+      });
+    });
+
+    filterOptionsMap.wilayats.forEach(wOpt => {
+      const wItems = baseFilteredResults.filter(
+        r => (r.participant.wilayat || 'غير محدد').trim() === wOpt.value
+      );
+      const wEval = wItems.filter(
+        r => r.averageScore !== null && !r.isUnmemorized
+      );
+      const avg =
+        wEval.length > 0
+          ? Number(
+              (
+                wEval.reduce((s, x) => s + (x.averageScore || 0), 0) /
+                wEval.length
+              ).toFixed(2)
+            )
+          : '-';
+      summaryRows.push({
+        'التصنيف الإحصائي': 'حسب الولاية',
+        الفئة: wOpt.label,
+        'إجمالي المسجلين': wItems.length,
+        'تم تقييمهم (حافظون)': wEval.length,
+        'غير حافظين': wItems.filter(x => x.isUnmemorized).length,
+        'بانتظار التقييم': wItems.filter(x => x.evaluationsCount === 0).length,
+        'متوسط الدرجات': avg,
+      });
+    });
+
+    filterOptionsMap.genders.forEach(gOpt => {
+      const gItems = baseFilteredResults.filter(
+        r => (r.participant.gender || 'غير محدد').trim() === gOpt.value
+      );
+      const gEval = gItems.filter(
+        r => r.averageScore !== null && !r.isUnmemorized
+      );
+      const avg =
+        gEval.length > 0
+          ? Number(
+              (
+                gEval.reduce((s, x) => s + (x.averageScore || 0), 0) /
+                gEval.length
+              ).toFixed(2)
+            )
+          : '-';
+      summaryRows.push({
+        'التصنيف الإحصائي': 'حسب الجنس',
+        الفئة: gOpt.label,
+        'إجمالي المسجلين': gItems.length,
+        'تم تقييمهم (حافظون)': gEval.length,
+        'غير حافظين': gItems.filter(x => x.isUnmemorized).length,
+        'بانتظار التقييم': gItems.filter(x => x.evaluationsCount === 0).length,
+        'متوسط الدرجات': avg,
+      });
+    });
+
+    const wsSummary = createStyledSheetFromRows(summaryRows, {
+      titleBanner: `${comp.name} — الإحصائيات التفصيلية للمستويات والولايات والجنس`,
+      colWidths: [24, 28, 18, 20, 16, 18, 18],
+      theme: getLevelSheetTheme(2),
+    });
+    appendStyledSheet(
+      wb,
+      wsSummary,
+      'إحصائيات المستويات والولايات',
+      sheetCounter++
+    );
+
     writeStyledWorkbookFile(wb, `الجدول_الشامل_المدمج_${comp.name}.xlsx`);
     context?.showToast(
-      'تم تصدير ملف الإكسل للجدول الشامل المدمج (بخلايا مدمجة للمتسابق ومقسمة للمقيمين) بنجاح!',
+      'تم تصدير ملف الإكسل للجدول الشامل المدمج (ورقة لكل مستوى + الشامل العام + الإحصائيات) بنجاح!',
       'success'
     );
   };
@@ -8334,11 +8465,7 @@ function CompetitionReports({
                   true
                 );
               } else if (reportSubTab === 'comprehensive_merged') {
-                exportToPdf(
-                  'official-report-comprehensive-merged-container',
-                  `الجدول_الشامل_المدمج_${comp.name}`,
-                  true
-                );
+                handleExportComprehensivePdf();
               } else if (reportSubTab === 'evaluator_averages') {
                 exportToPdf(
                   'official-report-evaluator-avg-container',
@@ -8370,6 +8497,8 @@ function CompetitionReports({
             <span>
               {isExportingPdf
                 ? 'جاري تجهيز الـ PDF...'
+                : reportSubTab === 'comprehensive_merged'
+                ? 'تصدير الجدول الشامل PDF (أفقي لكل قسم)'
                 : 'تصدير التقرير PDF بجودة عالية'}
             </span>
           </button>
@@ -9267,17 +9396,15 @@ function CompetitionReports({
               <button
                 type="button"
                 disabled={isExportingPdf}
-                onClick={() =>
-                  exportToPdf(
-                    'official-report-comprehensive-merged-container',
-                    `الجدول_الشامل_المدمج_${comp.name}`,
-                    true
-                  )
-                }
-                className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#09152C] hover:bg-[#163363] text-amber-300 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
+                onClick={handleExportComprehensivePdf}
+                className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#09152C] hover:bg-[#163363] text-amber-300 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-60"
               >
                 <Download size={15} />
-                <span>تصدير الجدول الشامل المدمج (PDF)</span>
+                <span>
+                  {isExportingPdf
+                    ? 'جاري تجهيز الـ PDF الأفقي...'
+                    : 'تصدير الجدول الشامل PDF (أفقي — كل قسم في صفحات خاصة)'}
+                </span>
               </button>
             </div>
           </div>

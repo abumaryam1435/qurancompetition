@@ -249,8 +249,10 @@ async function startServer() {
       const browser = await getBrowser();
       page = await browser.newPage();
 
+      const targetWidthPx = orientation === "landscape" ? 1090 : 760;
+
       await page.setViewport({
-        width: orientation === "landscape" ? 1123 : 794,
+        width: targetWidthPx,
         height: orientation === "landscape" ? 794 : 1123,
         deviceScaleFactor: 2,
       });
@@ -258,18 +260,47 @@ async function startServer() {
       // Fast DOM load since styles & images are already inlined by the client
       await page.setContent(html, { waitUntil: "domcontentloaded", timeout: 8000 });
 
-      // Wait briefly (max 500ms) for fonts if any are still decoding
+      // Wait briefly (max 500ms) for fonts if any are still decoding, and auto-fit wide tables so no columns are cut off
       try {
-        await page.evaluate(async () => {
+        await page.evaluate(async (printableWidth: number) => {
           if (document.fonts) {
             await Promise.race([
               document.fonts.ready,
               new Promise(resolve => setTimeout(resolve, 500))
             ]);
           }
-        });
+
+          // Remove any horizontal clipping on wrappers
+          document.querySelectorAll('*').forEach(el => {
+            const h = el as HTMLElement;
+            const cs = window.getComputedStyle(h);
+            if (
+              cs.overflowX === 'auto' ||
+              cs.overflowX === 'scroll' ||
+              cs.overflowX === 'hidden' ||
+              cs.overflow === 'hidden'
+            ) {
+              h.style.overflow = 'visible';
+              h.style.overflowX = 'visible';
+            }
+          });
+
+          // Measure widest table or container and auto-zoom if wider than A4 printable width
+          const tables = Array.from(document.querySelectorAll('table'));
+          let maxW = document.documentElement.scrollWidth || printableWidth;
+          for (const t of tables) {
+            if (t.scrollWidth > maxW) {
+              maxW = t.scrollWidth;
+            }
+          }
+
+          if (maxW > printableWidth) {
+            const zoomFactor = Math.max(0.42, (printableWidth - 12) / maxW);
+            (document.body.style as any).zoom = String(zoomFactor);
+          }
+        }, targetWidthPx);
       } catch {
-        // ignore font wait error
+        // ignore font/zoom evaluation error
       }
 
       await page.emulateMediaType('print');
@@ -279,10 +310,10 @@ async function startServer() {
         printBackground: true,
         preferCSSPageSize: true,
         margin: {
-          top: "4mm",
-          right: "4mm",
-          bottom: "4mm",
-          left: "4mm",
+          top: "5mm",
+          right: "5mm",
+          bottom: "5mm",
+          left: "5mm",
         },
         timeout: 20000
       });
@@ -322,8 +353,6 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
-    // Pre-warm headless browser in background so the first PDF export is instant
-    getBrowser().catch(err => console.warn("Pre-warm browser warning:", err?.message || err));
   });
 }
 
