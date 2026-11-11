@@ -2625,6 +2625,7 @@ function LevelEditor({
   const [deleteConfirmLevel, setDeleteConfirmLevel] = useState<CompetitionLevel | null>(null);
   const [deleteConfirmError, setDeleteConfirmError] = useState<CompetitionErrorType | null>(null);
   const [deleteConfirmLevelParticipant, setDeleteConfirmLevelParticipant] = useState<{ id: number; name: string } | null>(null);
+  const [deleteConfirmLevelAllParticipants, setDeleteConfirmLevelAllParticipants] = useState<CompetitionLevel | null>(null);
   const [editingLevelParticipant, setEditingLevelParticipant] = useState<CompetitionParticipant | null>(null);
   const [editingDeductions, setEditingDeductions] = useState<Record<string, string>>({});
   const [newCategoryName, setNewCategoryName] = useState<string>('');
@@ -2864,7 +2865,8 @@ function LevelEditor({
     onUpdate({
       ...comp,
       levels,
-      participants: (comp.participants || []).filter(p => p.id !== participantId),
+      participants: (comp.participants || []).filter(p => Number(p.id) !== Number(participantId)),
+      evaluations: (comp.evaluations || []).filter(e => Number(e.participantId) !== Number(participantId)),
     });
   };
 
@@ -4403,10 +4405,19 @@ function LevelEditor({
                   {/* عرض المتسابقين المسجلين حالياً في هذا المستوى */}
                   {levelParticipants.length > 0 && (
                     <div className="pt-2.5 border-t border-slate-200/80 dark:border-slate-700">
-                      <div className="flex items-center justify-between mb-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                         <span className="text-xs font-black text-slate-800 dark:text-slate-200">
                           المتسابقون المسجلون في «{level.name}» ({levelParticipants.length}):
                         </span>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirmLevelAllParticipants(level)}
+                          className="px-2.5 py-1 rounded-lg bg-red-50 hover:bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800/60 text-[11px] font-black transition active:scale-95 flex items-center gap-1 cursor-pointer"
+                          title={`حذف جميع متسابقي ${level.name}`}
+                        >
+                          <Trash2 size={13} className="shrink-0" />
+                          <span>حذف جميع متسابقي هذا المستوى ({levelParticipants.length})</span>
+                        </button>
                       </div>
                       <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1">
                         {levelParticipants.map((p, idx) => (
@@ -4509,16 +4520,68 @@ function LevelEditor({
       <ConfirmDeleteModal
         isOpen={!!deleteConfirmLevelParticipant}
         title="تأكيد حذف المتسابق من هذا المستوى"
-        message="هل أنت متأكد من إزالة هذا المتسابق؟"
+        message="هل أنت متأكد من حذف هذا المتسابق؟ سيتم حذف بياناته وأي درجات أو تقييمات مرصودة له نهائياً."
         itemTitle={deleteConfirmLevelParticipant?.name}
-        confirmLabel="نعم، إزالة المتسابق"
+        confirmLabel="نعم، حذف المتسابق"
+        cancelLabel="إلغاء"
+        isDangerous={true}
         onConfirm={() => {
           if (deleteConfirmLevelParticipant) {
+            const pName = deleteConfirmLevelParticipant.name;
             handleRemoveParticipantFromLevel(deleteConfirmLevelParticipant.id);
             setDeleteConfirmLevelParticipant(null);
+            context?.showToast(`تم حذف المتسابق «${pName}» من هذا المستوى بنجاح`, 'info');
           }
         }}
         onClose={() => setDeleteConfirmLevelParticipant(null)}
+      />
+
+      {/* تأكيد حذف جميع متسابقي هذا المستوى */}
+      <ConfirmDeleteModal
+        isOpen={!!deleteConfirmLevelAllParticipants}
+        title="تأكيد حذف جميع متسابقي هذا المستوى"
+        message={
+          deleteConfirmLevelAllParticipants
+            ? `تحذير: هل أنت متأكد من حذف جميع المتسابقين المسجلين في «${deleteConfirmLevelAllParticipants.name}» (${
+                (comp.participants || []).filter(
+                  p => Number(p.levelId) === Number(deleteConfirmLevelAllParticipants.id)
+                ).length
+              } متسابق)؟ سيتم حذف بياناتهم وكافة التقييمات التابعة لهم في هذا المستوى نهائياً.`
+            : ''
+        }
+        itemTitle={deleteConfirmLevelAllParticipants?.name}
+        confirmLabel="نعم، حذف جميع المتسابقين في هذا المستوى"
+        cancelLabel="إلغاء"
+        isDangerous={true}
+        onConfirm={() => {
+          if (deleteConfirmLevelAllParticipants) {
+            const targetLvlId = Number(deleteConfirmLevelAllParticipants.id);
+            const levelParticipantsToRemove = (comp.participants || []).filter(
+              p => Number(p.levelId) === targetLvlId
+            );
+            const removedIds = new Set(levelParticipantsToRemove.map(p => Number(p.id)));
+            const updatedParticipants = (comp.participants || []).filter(
+              p => Number(p.levelId) !== targetLvlId
+            );
+            const updatedEvaluations = (comp.evaluations || []).filter(
+              e => !removedIds.has(Number(e.participantId))
+            );
+            onUpdate({
+              ...comp,
+              levels,
+              participants: updatedParticipants,
+              evaluations: updatedEvaluations,
+            });
+            const lvlName = deleteConfirmLevelAllParticipants.name;
+            const count = levelParticipantsToRemove.length;
+            setDeleteConfirmLevelAllParticipants(null);
+            context?.showToast(
+              `تم حذف جميع المتسابقين (${count} متسابق) من «${lvlName}» بنجاح!`,
+              'info'
+            );
+          }
+        }}
+        onClose={() => setDeleteConfirmLevelAllParticipants(null)}
       />
 
       {/* نافذة تعديل بيانات المتسابق من داخل المستوى (اختيار المستوى من قائمة مستويات المسابقة) */}
@@ -5861,6 +5924,7 @@ function CompetitionParticipants({
   const [namesText, setNamesText] = useState('');
   const [levelId, setLevelId] = useState<number>(comp.levels[0]?.id || 0);
   const [deleteConfirmParticipant, setDeleteConfirmParticipant] = useState<CompetitionParticipant | null>(null);
+  const [showDeleteAllParticipantsModal, setShowDeleteAllParticipantsModal] = useState<boolean>(false);
   const [editingParticipant, setEditingParticipant] = useState<CompetitionParticipant | null>(null);
 
   // فلاتر التصفية المتعددة لحقول المشاركين
@@ -6190,7 +6254,7 @@ function CompetitionParticipants({
             </span>
           </button>
 
-          <div className="grid grid-cols-2 sm:flex gap-2">
+          <div className="grid grid-cols-2 sm:flex flex-wrap gap-2">
             <button
               type="button"
               onClick={handleExportTemplate}
@@ -6208,6 +6272,17 @@ function CompetitionParticipants({
               <Upload size={16} className="shrink-0" />
               <span>استيراد إكسل وتفعيل المستويات</span>
             </button>
+            {allParticipants.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowDeleteAllParticipantsModal(true)}
+                className="col-span-2 sm:col-span-1 min-h-[46px] bg-red-50 hover:bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800 px-4 py-2.5 rounded-xl font-black flex items-center justify-center gap-1.5 text-xs sm:text-sm transition active:scale-95 cursor-pointer shadow-2xs"
+                title="حذف جميع المشتركين من هذه المسابقة"
+              >
+                <Trash2 size={16} className="shrink-0 text-red-600 dark:text-red-400" />
+                <span>حذف جميع المشتركين ({allParticipants.length})</span>
+              </button>
+            )}
             <input
               type="file"
               accept=".xlsx, .xls"
@@ -6229,22 +6304,33 @@ function CompetitionParticipants({
                 أدوات التصفية المتعددة للمشاركين ({filteredParticipantsList.length} من {allParticipants.length})
               </span>
             </div>
-            {hasActiveParticipantFilters && (
+            <div className="flex flex-wrap items-center gap-2">
+              {hasActiveParticipantFilters && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedLevelsFilter([]);
+                    setSelectedWilayatsFilter([]);
+                    setSelectedGendersFilter([]);
+                    setSelectedNamesFilter([]);
+                    setSelectedReqNumsFilter([]);
+                    setSelectedCivilIdsFilter([]);
+                  }}
+                  className="px-3 py-1 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 text-xs font-black cursor-pointer"
+                >
+                  إلغاء جميع الفلاتر (عرض الكل)
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => {
-                  setSelectedLevelsFilter([]);
-                  setSelectedWilayatsFilter([]);
-                  setSelectedGendersFilter([]);
-                  setSelectedNamesFilter([]);
-                  setSelectedReqNumsFilter([]);
-                  setSelectedCivilIdsFilter([]);
-                }}
-                className="px-3 py-1 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-black cursor-pointer"
+                onClick={() => setShowDeleteAllParticipantsModal(true)}
+                className="px-3 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800 text-xs font-black flex items-center gap-1.5 cursor-pointer transition active:scale-95 shadow-2xs"
+                title="حذف جميع المشتركين من المسابقة"
               >
-                إلغاء جميع الفلاتر (عرض الكل)
+                <Trash2 size={14} className="shrink-0 text-red-600 dark:text-red-400" />
+                <span>حذف جميع المشتركين ({allParticipants.length})</span>
               </button>
-            )}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-2">
@@ -6721,28 +6807,53 @@ function CompetitionParticipants({
         </div>
       )}
 
-      {/* نافذة تأكيد حذف المتسابق */}
+      {/* نافذة تأكيد حذف المتسابق الفردي */}
       <ConfirmDeleteModal
         isOpen={!!deleteConfirmParticipant}
         title="تأكيد حذف المتسابق"
-        message="هل أنت متأكد من حذف هذا المتسابق من المسابقة؟ سيتم حذف بياناته وأي تقييمات مرصودة له."
+        message="هل أنت متأكد من حذف هذا المتسابق من المسابقة؟ سيتم حذف بياناته وأي تقييمات مرصودة له نهائياً."
         itemTitle={deleteConfirmParticipant?.name}
         confirmLabel="نعم، حذف المتسابق"
+        cancelLabel="إلغاء"
+        isDangerous={true}
         onConfirm={() => {
           if (deleteConfirmParticipant) {
+            const pName = deleteConfirmParticipant.name;
             onUpdate({
               ...comp,
               participants: (comp.participants || []).filter(
-                x => x.id !== deleteConfirmParticipant.id
+                x => Number(x.id) !== Number(deleteConfirmParticipant.id)
               ),
               evaluations: (comp.evaluations || []).filter(
                 e => Number(e.participantId) !== Number(deleteConfirmParticipant.id)
               ),
             });
             setDeleteConfirmParticipant(null);
+            context?.showToast(`تم حذف المتسابق «${pName}» بنجاح`, 'info');
           }
         }}
         onClose={() => setDeleteConfirmParticipant(null)}
+      />
+
+      {/* نافذة تأكيد حذف جميع المتسابقين في المسابقة */}
+      <ConfirmDeleteModal
+        isOpen={showDeleteAllParticipantsModal}
+        title="تأكيد حذف جميع المتسابقين في المسابقة"
+        message={`تحذير هام: هل أنت متأكد من حذف جميع المتسابقين (${allParticipants.length} متسابق) من مسابقة «${comp.name}»؟ سيتم حذف جميع بياناتهم وسجلات التقييمات الخاصة بهم نهائياً ولا يمكن التراجع عن هذه العملية.`}
+        confirmLabel={`نعم، حذف جميع المتسابقين (${allParticipants.length})`}
+        cancelLabel="إلغاء"
+        isDangerous={true}
+        onConfirm={() => {
+          const count = allParticipants.length;
+          onUpdate({
+            ...comp,
+            participants: [],
+            evaluations: [],
+          });
+          setShowDeleteAllParticipantsModal(false);
+          context?.showToast(`تم حذف جميع المتسابقين (${count} متسابق) من المسابقة بنجاح!`, 'info');
+        }}
+        onClose={() => setShowDeleteAllParticipantsModal(false)}
       />
     </div>
   );

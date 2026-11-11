@@ -561,7 +561,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
                     <button
                       type="button"
                       onClick={onClose}
-                      className="px-2 sm:px-2.5 py-0.5 min-h-[26px] sm:min-h-[30px] rounded-lg bg-red-600 hover:bg-red-700 text-white text-[10px] sm:text-xs font-black shadow-2xs transition active:scale-95 flex items-center justify-center gap-1 border border-red-500 shrink-0"
+                      className="px-2 sm:px-2.5 py-0.5 min-h-[26px] sm:min-h-[30px] rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[10px] sm:text-xs font-black shadow-2xs transition active:scale-95 flex items-center justify-center gap-1 border border-blue-500 shrink-0"
                       title="رجوع"
                     >
                       <span>↩</span>
@@ -678,7 +678,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
               <button 
                 type="button" 
                 onClick={onClose} 
-                className="px-3 py-1.5 rounded-lg bg-red-600/90 hover:bg-red-600 text-white transition text-sm font-black shadow-lg shadow-red-900/20 flex items-center justify-center gap-1 border border-red-500 backdrop-blur-sm active:scale-95"
+                className="px-3 py-1.5 rounded-lg bg-blue-600/90 hover:bg-blue-600 text-white transition text-sm font-black shadow-lg shadow-blue-900/20 flex items-center justify-center gap-1 border border-blue-500 backdrop-blur-sm active:scale-95"
                 title="رجوع"
               >
                 <span>↩</span> <span>رجوع</span>
@@ -703,7 +703,7 @@ export const MushafReaderModal: React.FC<MushafReaderModalProps> = ({
             <button 
               type="button" 
               onClick={onClose} 
-              className="px-2.5 h-8 rounded-full bg-red-600/90 hover:bg-red-600 text-white text-xs font-black flex items-center justify-center gap-1 shadow-lg border border-red-400 active:scale-95 transition pointer-events-auto"
+              className="px-2.5 h-8 rounded-full bg-blue-600/90 hover:bg-blue-600 text-white text-xs font-black flex items-center justify-center gap-1 shadow-lg border border-blue-400 active:scale-95 transition pointer-events-auto"
               title="رجوع"
             >
               <span>↩</span>
