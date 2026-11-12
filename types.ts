@@ -35,6 +35,12 @@ export interface CompetitionErrorType {
   color?: ErrorCategoryColorKey;
 }
 
+export interface CompetitionCommittee {
+  id: number;
+  name: string;
+  evaluatorIds: number[];
+}
+
 export interface CompetitionLevel {
   id: number;
   name: string;
@@ -47,6 +53,7 @@ export interface CompetitionLevel {
   errors: CompetitionErrorType[];
   errorCategories?: CompetitionErrorCategory[];
   maxScore: number;
+  committees?: CompetitionCommittee[];
 }
 
 export interface CompetitionEvaluator {
@@ -69,6 +76,7 @@ export interface CompetitionParticipant {
   id: number;
   name: string;
   levelId: number;
+  committeeId?: number;
   juzsOrSurahs?: string;
   isUnmemorized?: boolean;
   passageSeed?: number;

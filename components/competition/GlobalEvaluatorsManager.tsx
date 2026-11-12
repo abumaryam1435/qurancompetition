@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ConfirmDeleteModal from '../ConfirmDeleteModal';
+import { compareArabicNames } from '../../utils/juzUtils';
 
 export const GlobalEvaluatorsManager: React.FC = () => {
   const context = useContext(AppContext);
@@ -62,14 +63,17 @@ export const GlobalEvaluatorsManager: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const filteredEvaluators = useMemo(() => {
-    if (!searchTerm.trim()) return globalEvaluators;
-    const term = searchTerm.toLowerCase().trim();
-    return globalEvaluators.filter(
-      e =>
-        e.name.toLowerCase().includes(term) ||
-        e.pin.toLowerCase().includes(term) ||
-        (e.notes || '').toLowerCase().includes(term)
-    );
+    const baseList = !searchTerm.trim()
+      ? [...globalEvaluators]
+      : globalEvaluators.filter(e => {
+          const term = searchTerm.toLowerCase().trim();
+          return (
+            e.name.toLowerCase().includes(term) ||
+            e.pin.toLowerCase().includes(term) ||
+            (e.notes || '').toLowerCase().includes(term)
+          );
+        });
+    return baseList.sort((a, b) => compareArabicNames(a.name, b.name));
   }, [globalEvaluators, searchTerm]);
 
   // توليد كلمة مرور عشوائية بأرقام فقط (4 أرقام)

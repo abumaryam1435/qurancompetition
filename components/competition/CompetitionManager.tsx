@@ -3,6 +3,7 @@ import { AppContext } from '../../App';
 import {
   Competition,
   CompetitionLevel,
+  CompetitionCommittee,
   CompetitionEvaluator,
   CompetitionParticipant,
   CompetitionErrorCategory,
@@ -63,6 +64,12 @@ import {
   formatJuzsOrSurahsDisplay,
   isUnspecifiedJuzCount,
   extractJuzCount,
+  compareArabicNames,
+  sortByArabicName,
+  getArabicCommitteeOrdinalName,
+  resolveLevelCommittees,
+  resolveParticipantCommitteeId,
+  distributeParticipantsAlphabeticallyAcrossCommittees,
 } from '../../utils/juzUtils';
 import ConfirmDeleteModal from '../ConfirmDeleteModal';
 import {
@@ -96,6 +103,12 @@ const deepCloneLevels = (sourceLevels: CompetitionLevel[]): CompetitionLevel[] =
   return (sourceLevels || []).map((lvl, idx) => ({
     ...lvl,
     id: lvl.id || idx + 1,
+    committees: lvl.committees
+      ? lvl.committees.map(c => ({
+          ...c,
+          evaluatorIds: [...(c.evaluatorIds || [])],
+        }))
+      : undefined,
     errorCategories: lvl.errorCategories
       ? lvl.errorCategories.map(cat => ({ ...cat }))
       : DEFAULT_ERROR_CATEGORIES.map(cat => ({ ...cat })),
@@ -753,8 +766,8 @@ function exportCompetitionSetupExcel(
   showToast?: (msg: string, type?: 'success' | 'error' | 'info') => void
 ) {
   const levels = comp.levels || [];
-  const evaluators = comp.evaluators || [];
-  const participants = comp.participants || [];
+  const evaluators = sortByArabicName(comp.evaluators || []);
+  const participants = sortByArabicName(comp.participants || []);
   const compCategories = resolveCompetitionErrorCategories(comp);
   const compErrors = resolveCompetitionErrors(comp);
 
@@ -974,8 +987,8 @@ async function exportCompetitionSetupPDF(
   showToast?: (msg: string, type?: 'success' | 'error' | 'info') => void
 ) {
   const levels = comp.levels || [];
-  const evaluators = comp.evaluators || [];
-  const participants = comp.participants || [];
+  const evaluators = sortByArabicName(comp.evaluators || []);
+  const participants = sortByArabicName(comp.participants || []);
   const compCategories = resolveCompetitionErrorCategories(comp);
   const compErrors = resolveCompetitionErrors(comp);
 
@@ -2200,7 +2213,7 @@ function CompetitionSettings({
 
           {(comp.evaluators || []).length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {(comp.evaluators || []).map((ev, idx) => {
+              {sortByArabicName(comp.evaluators || []).map((ev, idx) => {
                 const info = getEvaluatorAssignedLevelsInfo(
                   ev,
                   comp.levels || [],
@@ -2630,6 +2643,8 @@ function LevelEditor({
   const [editingDeductions, setEditingDeductions] = useState<Record<string, string>>({});
   const [newCategoryName, setNewCategoryName] = useState<string>('');
   const [newCategoryColor, setNewCategoryColor] = useState<ErrorCategoryColorKey>('amber');
+  const [activeCommitteeByLevel, setActiveCommitteeByLevel] = useState<Record<number, number>>({});
+  const [selectedParticipantIdsByLevel, setSelectedParticipantIdsByLevel] = useState<Record<number, number[]>>({});
   const excelInputRef = useRef<HTMLInputElement>(null);
   const context = useContext(AppContext);
 
@@ -2641,6 +2656,8 @@ function LevelEditor({
     setCompErrorCategories(resolveCompetitionErrorCategories(comp));
     setCompErrors(resolveCompetitionErrors(comp));
     setEditingDeductions({});
+    setActiveCommitteeByLevel({});
+    setSelectedParticipantIdsByLevel({});
   }, [comp.id]);
 
   // مزامنة إعدادات أزرار الخصم الموحدة للمسابقة مع جميع مستوياتها
@@ -2826,6 +2843,151 @@ function LevelEditor({
     });
   };
 
+  // دوال إدارة اللجان المتعددة داخل كل مستوى
+  const handleAddCommitteeToLevel = (level: CompetitionLevel) => {
+    const currentCommittees = resolveLevelCommittees(level, comp.evaluators || []);
+    const nextCommitteeId =
+      currentCommittees.reduce((maxId, c) => Math.max(maxId, Number(c.id) || 0), 0) + 1;
+    const newCommittee: CompetitionCommittee = {
+      id: nextCommitteeId,
+      name: getArabicCommitteeOrdinalName(currentCommittees.length),
+      evaluatorIds: [],
+    };
+    const updatedCommittees = [...currentCommittees, newCommittee];
+    const nextLevels = levels.map(l =>
+      Number(l.id) === Number(level.id) ? { ...l, committees: updatedCommittees } : l
+    );
+    setLevels(nextLevels);
+    setActiveCommitteeByLevel(prev => ({ ...prev, [level.id]: newCommittee.id }));
+    onUpdate({
+      ...comp,
+      levels: nextLevels,
+    });
+  };
+
+  const handleRemoveCommitteeFromLevel = (level: CompetitionLevel, committeeId: number) => {
+    const currentCommittees = resolveLevelCommittees(level, comp.evaluators || []);
+    if (currentCommittees.length <= 1) return;
+    const remainingCommittees = currentCommittees
+      .filter(c => Number(c.id) !== Number(committeeId))
+      .map((c, idx) => ({
+        ...c,
+        name: getArabicCommitteeOrdinalName(idx),
+      }));
+    const fallbackCommitteeId = remainingCommittees[0]?.id || 1;
+    const nextLevels = levels.map(l =>
+      Number(l.id) === Number(level.id) ? { ...l, committees: remainingCommittees } : l
+    );
+    const updatedParticipants = (comp.participants || []).map(p => {
+      if (
+        Number(p.levelId) === Number(level.id) &&
+        Number(p.committeeId) === Number(committeeId)
+      ) {
+        return { ...p, committeeId: fallbackCommitteeId };
+      }
+      return p;
+    });
+    setLevels(nextLevels);
+    setActiveCommitteeByLevel(prev => ({ ...prev, [level.id]: fallbackCommitteeId }));
+    setSelectedParticipantIdsByLevel(prev => ({ ...prev, [level.id]: [] }));
+    onUpdate({
+      ...comp,
+      levels: nextLevels,
+      participants: updatedParticipants,
+    });
+  };
+
+  const handleToggleEvaluatorInCommittee = (
+    level: CompetitionLevel,
+    committeeId: number,
+    evaluatorId: number
+  ) => {
+    const currentCommittees = resolveLevelCommittees(level, comp.evaluators || []);
+    const updatedCommittees = currentCommittees.map(c => {
+      if (Number(c.id) !== Number(committeeId)) return c;
+      const exists = (c.evaluatorIds || []).map(Number).includes(Number(evaluatorId));
+      const nextIds = exists
+        ? (c.evaluatorIds || []).filter(id => Number(id) !== Number(evaluatorId))
+        : [...(c.evaluatorIds || []), Number(evaluatorId)];
+      return { ...c, evaluatorIds: nextIds };
+    });
+    const nextLevels = levels.map(l =>
+      Number(l.id) === Number(level.id) ? { ...l, committees: updatedCommittees } : l
+    );
+    const updatedEvaluators = (comp.evaluators || []).map(ev => {
+      if (Number(ev.id) !== Number(evaluatorId)) return ev;
+      if (!ev.levelIds || ev.levelIds.length === 0) return ev;
+      if (!ev.levelIds.map(Number).includes(Number(level.id))) {
+        return { ...ev, levelIds: [...ev.levelIds, Number(level.id)] };
+      }
+      return ev;
+    });
+    setLevels(nextLevels);
+    onUpdate({
+      ...comp,
+      levels: nextLevels,
+      evaluators: updatedEvaluators,
+    });
+  };
+
+  const handleAutoDistributeLevelParticipants = (level: CompetitionLevel) => {
+    const currentCommittees = resolveLevelCommittees(level, comp.evaluators || []);
+    if (currentCommittees.length === 0) return;
+    const updatedParticipants = distributeParticipantsAlphabeticallyAcrossCommittees(
+      comp.participants || [],
+      level.id,
+      currentCommittees
+    );
+    const nextLevels = levels.map(l =>
+      Number(l.id) === Number(level.id) ? { ...l, committees: currentCommittees } : l
+    );
+    setLevels(nextLevels);
+    setSelectedParticipantIdsByLevel(prev => ({ ...prev, [level.id]: [] }));
+    onUpdate({
+      ...comp,
+      levels: nextLevels,
+      participants: updatedParticipants,
+    });
+    context?.showToast(
+      `تم تقسيم وتوزيع المتسابقين بالتساوي هجائياً على (${currentCommittees.length}) لجان`,
+      'success'
+    );
+  };
+
+  const handleMoveSelectedParticipantsToCommittee = (
+    level: CompetitionLevel,
+    targetCommitteeId: number
+  ) => {
+    const selectedIds = selectedParticipantIdsByLevel[level.id] || [];
+    if (selectedIds.length === 0) return;
+    const selectedSet = new Set(selectedIds.map(Number));
+    const currentCommittees = resolveLevelCommittees(level, comp.evaluators || []);
+    const targetComm = currentCommittees.find(
+      c => Number(c.id) === Number(targetCommitteeId)
+    );
+    const updatedParticipants = (comp.participants || []).map(p => {
+      if (Number(p.levelId) === Number(level.id) && selectedSet.has(Number(p.id))) {
+        return { ...p, committeeId: Number(targetCommitteeId) };
+      }
+      return p;
+    });
+    const nextLevels = levels.map(l =>
+      Number(l.id) === Number(level.id) ? { ...l, committees: currentCommittees } : l
+    );
+    setLevels(nextLevels);
+    setSelectedParticipantIdsByLevel(prev => ({ ...prev, [level.id]: [] }));
+    setActiveCommitteeByLevel(prev => ({ ...prev, [level.id]: Number(targetCommitteeId) }));
+    onUpdate({
+      ...comp,
+      levels: nextLevels,
+      participants: updatedParticipants,
+    });
+    context?.showToast(
+      `تم نقل (${selectedIds.length}) متسابق إلى ${targetComm?.name || 'اللجنة المحددة'}`,
+      'success'
+    );
+  };
+
   // إضافة متسابقين دفعة واحدة (لصق أو كتابة متعددة الأسطر) لمستوى محدد
   const handleAddBulkParticipantsToLevel = (level: CompetitionLevel) => {
     const rawText = bulkNamesByLevel[level.id] || '';
@@ -2839,11 +3001,15 @@ function LevelEditor({
       return;
     }
 
+    const currentCommittees = resolveLevelCommittees(level, comp.evaluators || []);
+    const targetCommId =
+      activeCommitteeByLevel[level.id] || currentCommittees[0]?.id || 1;
     const baseTime = Date.now();
     const newParticipants: CompetitionParticipant[] = lines.map((pName, idx) => ({
       id: baseTime + idx,
       name: pName,
       levelId: level.id,
+      committeeId: targetCommId,
       juzsOrSurahs: level.juzsOrSurahs,
     }));
 
@@ -4341,121 +4507,405 @@ function LevelEditor({
                 </div>
               </div>
 
-                {/* ==================== قسم إضافة متسابقي هذا المستوى (لصق متعدد الأسطر أو استيراد إكسل) ==================== */}
-                <div className={`p-3.5 sm:p-4 rounded-2xl space-y-3 ${levelTheme.participantsBox}`}>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <UserPlus className="w-5 h-5 text-emerald-700 dark:text-emerald-400 shrink-0" />
-                      <div>
-                        <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white">
-                          إضافة المتسابقين في «{level.name}» (كل سطر اسم أو عبر إكسل)
-                        </h4>
-                        <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                          الصق قائمة الأسماء مباشرة (كل اسم في سطر مستقل) أو استورد ملف إكسل لهذا المستوى
-                        </p>
+                {/* ==================== قسم اللجان وإضافة وتوزيع المتسابقين داخل هذا المستوى ==================== */}
+                {(() => {
+                  const levelCommittees = resolveLevelCommittees(
+                    level,
+                    comp.evaluators || []
+                  );
+                  const activeCommitteeId =
+                    levelCommittees.some(
+                      c => Number(c.id) === Number(activeCommitteeByLevel[level.id])
+                    )
+                      ? Number(activeCommitteeByLevel[level.id])
+                      : Number(levelCommittees[0]?.id || 1);
+                  const activeCommittee =
+                    levelCommittees.find(
+                      c => Number(c.id) === Number(activeCommitteeId)
+                    ) || levelCommittees[0];
+
+                  const sortedLevelEvaluators = sortByArabicName(comp.evaluators || []);
+                  const sortedLevelParticipants = sortByArabicName(levelParticipants);
+
+                  const activeCommitteeParticipants = sortedLevelParticipants.filter(
+                    p =>
+                      Number(resolveParticipantCommitteeId(p, levelCommittees)) ===
+                      Number(activeCommittee?.id || 1)
+                  );
+
+                  const selectedIdsInLevel = (
+                    selectedParticipantIdsByLevel[level.id] || []
+                  ).filter(id =>
+                    activeCommitteeParticipants.some(p => Number(p.id) === Number(id))
+                  );
+
+                  const isAllActiveCommitteeSelected =
+                    activeCommitteeParticipants.length > 0 &&
+                    selectedIdsInLevel.length === activeCommitteeParticipants.length;
+
+                  const otherCommitteesInLevel = levelCommittees.filter(
+                    c => Number(c.id) !== Number(activeCommittee?.id)
+                  );
+
+                  return (
+                    <div className={`p-3.5 sm:p-4 rounded-2xl space-y-3.5 ${levelTheme.participantsBox}`}>
+                      {/* 1. شريط اللجان داخل المستوى + زر إضافة لجنة + زر التقسيم التلقائي بالتساوي */}
+                      <div className="bg-white dark:bg-slate-900 p-3 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-3 shadow-2xs">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {levelCommittees.map(comm => {
+                              const isSelectedComm =
+                                Number(comm.id) === Number(activeCommittee?.id);
+                              const commPartCount = sortedLevelParticipants.filter(
+                                p =>
+                                  Number(
+                                    resolveParticipantCommitteeId(p, levelCommittees)
+                                  ) === Number(comm.id)
+                              ).length;
+
+                              return (
+                                <div
+                                  key={comm.id}
+                                  className={`inline-flex items-center rounded-xl border text-xs font-black transition ${
+                                    isSelectedComm
+                                      ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-200'
+                                  }`}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setActiveCommitteeByLevel(prev => ({
+                                        ...prev,
+                                        [level.id]: comm.id,
+                                      }));
+                                      setSelectedParticipantIdsByLevel(prev => ({
+                                        ...prev,
+                                        [level.id]: [],
+                                      }));
+                                    }}
+                                    className="px-3 py-2 flex items-center gap-1.5 cursor-pointer"
+                                  >
+                                    <span>{comm.name}</span>
+                                    <span
+                                      className={`px-1.5 py-0.5 rounded-md text-[10px] font-black ${
+                                        isSelectedComm
+                                          ? 'bg-black/25 text-white'
+                                          : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300'
+                                      }`}
+                                    >
+                                      {commPartCount}
+                                    </span>
+                                  </button>
+                                  {levelCommittees.length > 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleRemoveCommitteeFromLevel(level, comm.id)
+                                      }
+                                      className={`pl-2 pr-1 py-2 text-xs hover:opacity-80 cursor-pointer ${
+                                        isSelectedComm
+                                          ? 'text-red-200'
+                                          : 'text-red-500'
+                                      }`}
+                                      title={`حذف ${comm.name}`}
+                                    >
+                                      ×
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
+
+                            <button
+                              type="button"
+                              onClick={() => handleAddCommitteeToLevel(level)}
+                              className="min-h-[36px] px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-200 border border-indigo-300 dark:border-indigo-800 text-xs font-black flex items-center gap-1 transition active:scale-95 cursor-pointer"
+                            >
+                              <Plus size={14} />
+                              <span>إضافة لجنة</span>
+                            </button>
+                          </div>
+
+                          {levelCommittees.length > 1 && sortedLevelParticipants.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleAutoDistributeLevelParticipants(level)}
+                              className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black flex items-center gap-1.5 transition active:scale-95 cursor-pointer shadow-xs"
+                            >
+                              <ArrowUpDown size={14} />
+                              <span>
+                                تقسيم تلقائي بالتساوي ({levelCommittees.length} لجان)
+                              </span>
+                            </button>
+                          )}
+                        </div>
+
+                        {/* المقيمون في اللجنة النشطة (مرتبون هجائياً) */}
+                        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
+                          <span className="text-[11px] font-black text-slate-700 dark:text-slate-300 block">
+                            مقيمو {activeCommittee?.name}:
+                          </span>
+                          {sortedLevelEvaluators.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {sortedLevelEvaluators.map(ev => {
+                                const isAssignedToComm = (
+                                  activeCommittee?.evaluatorIds || []
+                                )
+                                  .map(Number)
+                                  .includes(Number(ev.id));
+                                return (
+                                  <button
+                                    key={ev.id}
+                                    type="button"
+                                    onClick={() =>
+                                      handleToggleEvaluatorInCommittee(
+                                        level,
+                                        activeCommittee.id,
+                                        ev.id
+                                      )
+                                    }
+                                    className={`px-2.5 py-1 rounded-xl text-xs font-black flex items-center gap-1 transition active:scale-95 cursor-pointer border ${
+                                      isAssignedToComm
+                                        ? 'bg-emerald-700 text-white border-emerald-700 shadow-2xs'
+                                        : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'
+                                    }`}
+                                  >
+                                    <Check
+                                      size={12}
+                                      className={
+                                        isAssignedToComm ? 'opacity-100' : 'opacity-25'
+                                      }
+                                    />
+                                    <span>{ev.name}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <span className="text-[11px] font-bold text-slate-400 block">
+                              لا يوجد مقيمون مضافون للمسابقة بعد
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
 
-                    {detectedLinesCount > 0 && (
-                      <span className="px-2.5 py-1 rounded-lg bg-emerald-700 text-white text-xs font-black self-start sm:self-auto">
-                        جاهز للإضافة: {detectedLinesCount} متسابق
-                      </span>
-                    )}
-                  </div>
+                      {/* 2. إضافة متسابقي هذا المستوى */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <UserPlus className="w-5 h-5 text-emerald-700 dark:text-emerald-400 shrink-0" />
+                          <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white">
+                            إضافة المتسابقين في «{level.name}» ({activeCommittee?.name})
+                          </h4>
+                        </div>
 
-                  <textarea
-                    rows={4}
-                    value={rawBulkText}
-                    onChange={e =>
-                      setBulkNamesByLevel(prev => ({
-                        ...prev,
-                        [level.id]: e.target.value,
-                      }))
-                    }
-                    placeholder={`الصق أو اكتب أسماء المتسابقين هنا (كل سطر اسم متسابق)...\nمثال:\nعبدالرحمن محمد أحمد\nعبدالله خالد سعيد\nأسامة علي حسن`}
-                    className={`w-full p-3 rounded-xl border-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold text-xs sm:text-sm focus:outline-none focus:ring-2 leading-relaxed ${levelTheme.inputFocusBorder}`}
-                  />
+                        {detectedLinesCount > 0 && (
+                          <span className="px-2.5 py-1 rounded-lg bg-emerald-700 text-white text-xs font-black self-start sm:self-auto">
+                            جاهز للإضافة: {detectedLinesCount} متسابق
+                          </span>
+                        )}
+                      </div>
 
-                  <div className="flex flex-col sm:flex-row flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleAddBulkParticipantsToLevel(level)}
-                      className="w-full sm:w-auto min-h-[46px] px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition active:scale-95 cursor-pointer"
-                    >
-                      <Plus size={18} />
-                      <span>
-                        إضافة الأسماء لهذا المستوى
-                        {detectedLinesCount > 0 ? ` (${detectedLinesCount})` : ''}
-                      </span>
-                    </button>
+                      <textarea
+                        rows={3}
+                        value={rawBulkText}
+                        onChange={e =>
+                          setBulkNamesByLevel(prev => ({
+                            ...prev,
+                            [level.id]: e.target.value,
+                          }))
+                        }
+                        placeholder={`الصق أو اكتب أسماء المتسابقين هنا (كل سطر اسم متسابق)...`}
+                        className={`w-full p-3 rounded-xl border-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold text-xs sm:text-sm focus:outline-none focus:ring-2 leading-relaxed ${levelTheme.inputFocusBorder}`}
+                      />
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTargetImportLevelId(level.id);
-                        excelInputRef.current?.click();
-                      }}
-                      className="w-full sm:w-auto min-h-[46px] px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-xs transition active:scale-95 cursor-pointer"
-                    >
-                      <FileSpreadsheet size={17} />
-                      <span>استيراد إكسل لهذا المستوى</span>
-                    </button>
-                  </div>
-
-                  {/* عرض المتسابقين المسجلين حالياً في هذا المستوى */}
-                  {levelParticipants.length > 0 && (
-                    <div className="pt-2.5 border-t border-slate-200/80 dark:border-slate-700">
-                      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                        <span className="text-xs font-black text-slate-800 dark:text-slate-200">
-                          المتسابقون المسجلون في «{level.name}» ({levelParticipants.length}):
-                        </span>
+                      <div className="flex flex-col sm:flex-row flex-wrap gap-2">
                         <button
                           type="button"
-                          onClick={() => setDeleteConfirmLevelAllParticipants(level)}
-                          className="px-2.5 py-1 rounded-lg bg-red-50 hover:bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800/60 text-[11px] font-black transition active:scale-95 flex items-center gap-1 cursor-pointer"
-                          title={`حذف جميع متسابقي ${level.name}`}
+                          onClick={() => handleAddBulkParticipantsToLevel(level)}
+                          className="w-full sm:w-auto min-h-[44px] px-5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition active:scale-95 cursor-pointer"
                         >
-                          <Trash2 size={13} className="shrink-0" />
-                          <span>حذف جميع متسابقي هذا المستوى ({levelParticipants.length})</span>
+                          <Plus size={18} />
+                          <span>
+                            إضافة الأسماء
+                            {detectedLinesCount > 0 ? ` (${detectedLinesCount})` : ''}
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTargetImportLevelId(level.id);
+                            excelInputRef.current?.click();
+                          }}
+                          className="w-full sm:w-auto min-h-[44px] px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-xs transition active:scale-95 cursor-pointer"
+                        >
+                          <FileSpreadsheet size={17} />
+                          <span>استيراد إكسل لهذا المستوى</span>
                         </button>
                       </div>
-                      <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1">
-                        {levelParticipants.map((p, idx) => (
-                          <span
-                            key={p.id}
-                            className="inline-flex items-center gap-1.5 pl-2 pr-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-slate-200 shadow-2xs"
-                          >
-                            <span className="text-emerald-700 dark:text-emerald-400 font-black">
-                              {idx + 1}.
+
+                      {/* 3. عرض المتسابقين في اللجنة النشطة مرتبين هجائياً مع التحديد والنقل الجماعي */}
+                      {sortedLevelParticipants.length > 0 && (
+                        <div className="pt-2.5 border-t border-slate-200/80 dark:border-slate-700 space-y-2.5">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-xs font-black text-slate-800 dark:text-slate-200">
+                              {levelCommittees.length > 1
+                                ? `متسابقو ${activeCommittee?.name} (${activeCommitteeParticipants.length} من ${sortedLevelParticipants.length}):`
+                                : `المتسابقون في «${level.name}» (${sortedLevelParticipants.length}):`}
                             </span>
-                            <span>{p.name}</span>
-                            <button
-                              type="button"
-                              onClick={() => setEditingLevelParticipant({ ...p })}
-                              className="w-5 h-5 rounded-full hover:bg-amber-100 dark:hover:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center transition cursor-pointer"
-                              title="تعديل بيانات المتسابق ومستواه"
-                            >
-                              <Edit size={12} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setDeleteConfirmLevelParticipant({
-                                  id: p.id,
-                                  name: p.name,
-                                })
-                              }
-                              className="w-5 h-5 rounded-full hover:bg-red-100 text-red-500 flex items-center justify-center transition cursor-pointer"
-                              title="حذف المتسابق"
-                            >
-                              ×
-                            </button>
-                          </span>
-                        ))}
-                      </div>
+
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {levelCommittees.length > 1 &&
+                                activeCommitteeParticipants.length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (isAllActiveCommitteeSelected) {
+                                        setSelectedParticipantIdsByLevel(prev => ({
+                                          ...prev,
+                                          [level.id]: [],
+                                        }));
+                                      } else {
+                                        setSelectedParticipantIdsByLevel(prev => ({
+                                          ...prev,
+                                          [level.id]: activeCommitteeParticipants.map(
+                                            p => p.id
+                                          ),
+                                        }));
+                                      }
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 text-[11px] font-black cursor-pointer"
+                                  >
+                                    {isAllActiveCommitteeSelected
+                                      ? 'إلغاء التحديد'
+                                      : 'تحديد الكل'}
+                                  </button>
+                                )}
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDeleteConfirmLevelAllParticipants(level)
+                                }
+                                className="px-2.5 py-1 rounded-lg bg-red-50 hover:bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800/60 text-[11px] font-black transition active:scale-95 flex items-center gap-1 cursor-pointer"
+                                title={`حذف جميع متسابقي ${level.name}`}
+                              >
+                                <Trash2 size={13} className="shrink-0" />
+                                <span>
+                                  حذف جميع متسابقي هذا المستوى ({sortedLevelParticipants.length})
+                                </span>
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* شريط النقل الجماعي للمتسابقين المحددين إلى لجنة أخرى داخل المستوى */}
+                          {levelCommittees.length > 1 && selectedIdsInLevel.length > 0 && (
+                            <div className="p-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-300 dark:border-indigo-800 flex flex-wrap items-center justify-between gap-2">
+                              <span className="text-xs font-black text-indigo-950 dark:text-indigo-200">
+                                نقل المحددين ({selectedIdsInLevel.length}) إلى:
+                              </span>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {otherCommitteesInLevel.map(targetComm => (
+                                  <button
+                                    key={targetComm.id}
+                                    type="button"
+                                    onClick={() =>
+                                      handleMoveSelectedParticipantsToCommittee(
+                                        level,
+                                        targetComm.id
+                                      )
+                                    }
+                                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black transition active:scale-95 cursor-pointer shadow-2xs"
+                                  >
+                                    {targetComm.name}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {activeCommitteeParticipants.length > 0 ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-1.5 max-h-60 overflow-y-auto p-1">
+                              {activeCommitteeParticipants.map((p, idx) => {
+                                const isChecked = selectedIdsInLevel.includes(p.id);
+                                return (
+                                  <div
+                                    key={p.id}
+                                    onClick={() => {
+                                      if (levelCommittees.length <= 1) return;
+                                      setSelectedParticipantIdsByLevel(prev => {
+                                        const cur = prev[level.id] || [];
+                                        const next = cur.includes(p.id)
+                                          ? cur.filter(id => id !== p.id)
+                                          : [...cur, p.id];
+                                        return { ...prev, [level.id]: next };
+                                      });
+                                    }}
+                                    className={`flex items-center justify-between gap-1.5 px-2.5 py-2 rounded-xl border text-xs font-bold transition ${
+                                      levelCommittees.length > 1 ? 'cursor-pointer' : ''
+                                    } ${
+                                      isChecked
+                                        ? 'bg-indigo-50/90 dark:bg-indigo-950/50 border-indigo-500 text-indigo-950 dark:text-indigo-100'
+                                        : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                      {levelCommittees.length > 1 && (
+                                        <input
+                                          type="checkbox"
+                                          checked={isChecked}
+                                          onChange={() => {}}
+                                          className="w-4 h-4 rounded accent-indigo-600 shrink-0 cursor-pointer"
+                                        />
+                                      )}
+                                      <span className="text-emerald-700 dark:text-emerald-400 font-black shrink-0">
+                                        {idx + 1}.
+                                      </span>
+                                      <span className="truncate">{p.name}</span>
+                                    </div>
+                                    <div
+                                      className="flex items-center gap-1 shrink-0"
+                                      onClick={e => e.stopPropagation()}
+                                    >
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setEditingLevelParticipant({ ...p })
+                                        }
+                                        className="w-6 h-6 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center transition cursor-pointer"
+                                        title="تعديل"
+                                      >
+                                        <Edit size={12} />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setDeleteConfirmLevelParticipant({
+                                            id: p.id,
+                                            name: p.name,
+                                          })
+                                        }
+                                        className="w-6 h-6 rounded-lg hover:bg-red-100 text-red-500 flex items-center justify-center transition cursor-pointer"
+                                        title="حذف"
+                                      >
+                                        ×
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="p-3 rounded-xl bg-white/70 dark:bg-slate-900/50 border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs font-bold text-slate-500">
+                              لا يوجد متسابقون في {activeCommittee?.name} حالياً
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
+                  );
+                })()}
               </div>
             </div>
           );
@@ -4747,7 +5197,14 @@ function CompetitionEvaluators({
   onOpenEvaluatorsPage?: () => void;
 }) {
   const context = useContext(AppContext);
-  const globalEvaluators = context?.globalEvaluators || [];
+  const globalEvaluators = React.useMemo(
+    () => sortByArabicName(context?.globalEvaluators || []),
+    [context?.globalEvaluators]
+  );
+  const sortedCompEvaluators = React.useMemo(
+    () => sortByArabicName(comp.evaluators || []),
+    [comp.evaluators]
+  );
 
   const [selectedGlobalId, setSelectedGlobalId] = useState<string>('');
   const [selectedLevels, setSelectedLevels] = useState<number[]>([]);
@@ -5151,7 +5608,7 @@ function CompetitionEvaluators({
 
         {/* Mobile Cards for Evaluators */}
         <div className="md:hidden space-y-2.5">
-          {(comp.evaluators || []).map((ev, idx) => {
+          {sortedCompEvaluators.map((ev, idx) => {
             const info = getEvaluatorAssignedLevelsInfo(
               ev,
               comp.levels || [],
@@ -5340,7 +5797,7 @@ function CompetitionEvaluators({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {(comp.evaluators || []).map((ev, idx) => {
+              {sortedCompEvaluators.map((ev, idx) => {
                 const info = getEvaluatorAssignedLevelsInfo(
                   ev,
                   comp.levels || [],
@@ -5516,7 +5973,7 @@ function CompetitionEvaluators({
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {(comp.levels || []).map((lvl, lvlIdx) => {
                 const lvlTheme = getLevelVisualTheme(lvlIdx);
-                const levelEvaluators = (comp.evaluators || []).filter(ev => {
+                const levelEvaluators = sortedCompEvaluators.filter(ev => {
                   const info = getEvaluatorAssignedLevelsInfo(
                     ev,
                     comp.levels || [],
@@ -6059,7 +6516,10 @@ function CompetitionParticipants({
     reader.readAsBinaryString(file);
   };
 
-  const allParticipants = comp.participants || [];
+  const allParticipants = React.useMemo(
+    () => sortByArabicName(comp.participants || []),
+    [comp.participants]
+  );
 
   // خيارات الفلاتر المتعددة للمشاركين
   const levelOptions = React.useMemo(
@@ -7129,7 +7589,7 @@ function CompetitionReports({
         });
       }
     });
-    return list;
+    return sortByArabicName(list);
   }, [comp.evaluators, comp.evaluations]);
 
   // تجميع كافة المشاركين + استرجاع أي تقييمات متوفرة حتى لو اختلف معرف المشارك أو المستوى لضمان ظهور جميع النتائج المتوفرة
@@ -7148,7 +7608,7 @@ function CompetitionReports({
         });
       }
     });
-    return baseList;
+    return sortByArabicName(baseList);
   }, [comp.participants, comp.evaluations, comp.levels]);
 
   // حساب نتائج كل طالب (جميع التقييمات المتوفرة من كل مقيم + المتوسط + متوسط كل مقطع + الترتيب على المستوى والترتيب العام)
@@ -7567,15 +8027,15 @@ function CompetitionReports({
     })
     .sort((a, b) => {
       if (sortOrder === 'name') {
-        return a.participant.name.localeCompare(b.participant.name, 'ar');
+        return compareArabicNames(a.participant.name, b.participant.name);
       }
       if (sortOrder === 'level') {
-        return (a.level?.name || '').localeCompare(b.level?.name || '', 'ar');
+        return compareArabicNames(a.level?.name || '', b.level?.name || '');
       }
       if (sortOrder === 'wilayat') {
-        return (a.participant.wilayat || '').localeCompare(
-          b.participant.wilayat || '',
-          'ar'
+        return compareArabicNames(
+          a.participant.wilayat || '',
+          b.participant.wilayat || ''
         );
       }
       if (sortOrder === 'request_num') {
@@ -7590,7 +8050,10 @@ function CompetitionReports({
         if (!a.isUnmemorized && b.isUnmemorized) return 1;
         if (a.averageScore === null) return 1;
         if (b.averageScore === null) return -1;
-        return (a.averageScore || 0) - (b.averageScore || 0);
+        return (
+          (a.averageScore || 0) - (b.averageScore || 0) ||
+          compareArabicNames(a.participant.name, b.participant.name)
+        );
       }
       // الافتراضي score_desc: النتائج المتوفرة للحافظين بالأعلى مرتبة تنازلياً، ثم غير الحافظين، ثم من لم يُقيّم
       if (a.evaluationsCount > 0 && b.evaluationsCount === 0) return -1;
@@ -7598,11 +8061,14 @@ function CompetitionReports({
       if (a.isUnmemorized && !b.isUnmemorized) return 1;
       if (!a.isUnmemorized && b.isUnmemorized) return -1;
       if (a.averageScore === null && b.averageScore === null) {
-        return a.participant.name.localeCompare(b.participant.name, 'ar');
+        return compareArabicNames(a.participant.name, b.participant.name);
       }
       if (a.averageScore === null) return 1;
       if (b.averageScore === null) return -1;
-      return (b.averageScore || 0) - (a.averageScore || 0);
+      return (
+        (b.averageScore || 0) - (a.averageScore || 0) ||
+        compareArabicNames(a.participant.name, b.participant.name)
+      );
     });
 
   // نتائج تبويب "ملخص متوسطات المقيمين"

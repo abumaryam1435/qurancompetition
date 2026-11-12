@@ -1,6 +1,10 @@
 import {
+  CompetitionCommittee,
   CompetitionErrorCategory,
   CompetitionErrorType,
+  CompetitionEvaluator,
+  CompetitionLevel,
+  CompetitionParticipant,
   ErrorCategoryColorKey,
 } from '../types';
 
@@ -466,6 +470,158 @@ export function getErrorColorStyle(
 ): ErrorCategoryColorStyle {
   const key = resolveErrorColorKey(err, categories);
   return ERROR_CATEGORY_COLOR_STYLES[key] || ERROR_CATEGORY_COLOR_STYLES.rose;
+}
+
+/**
+ * تطبيع النص العربي للمقارنة الهجائية الدقيقة (توحيد الألف وإزالة التشكيل والمد)
+ */
+export function normalizeArabicForSort(text: string | undefined | null): string {
+  if (!text) return '';
+  return String(text)
+    .trim()
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, '')
+    .replace(/[أإآٱ]/g, 'ا')
+    .replace(/ؤ/g, 'و')
+    .replace(/ئ/g, 'ي')
+    .replace(/ى/g, 'ي')
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * مقارنة اسمين حسب الترتيب الهجائي العربي
+ */
+export function compareArabicNames(
+  a: string | undefined | null,
+  b: string | undefined | null
+): number {
+  const normA = normalizeArabicForSort(a);
+  const normB = normalizeArabicForSort(b);
+  const cmp = normA.localeCompare(normB, 'ar', {
+    sensitivity: 'base',
+    numeric: true,
+  });
+  if (cmp !== 0) return cmp;
+  return String(a || '').localeCompare(String(b || ''), 'ar', { numeric: true });
+}
+
+/**
+ * ترتيب مصفوفة عناصر تحتوي على حقل name حسب الترتيب الهجائي العربي
+ */
+export function sortByArabicName<T extends { name?: string }>(items: T[]): T[] {
+  return [...(items || [])].sort((a, b) => compareArabicNames(a?.name, b?.name));
+}
+
+const COMMITTEE_ORDINAL_NAMES = [
+  'اللجنة الأولى',
+  'اللجنة الثانية',
+  'اللجنة الثالثة',
+  'اللجنة الرابعة',
+  'اللجنة الخامسة',
+  'اللجنة السادسة',
+  'اللجنة السابعة',
+  'اللجنة الثامنة',
+  'اللجنة التاسعة',
+  'اللجنة العاشرة',
+];
+
+export function getArabicCommitteeOrdinalName(index: number): string {
+  return COMMITTEE_ORDINAL_NAMES[index] || `اللجنة ${index + 1}`;
+}
+
+/**
+ * استرجاع لجان المستوى (افتراضياً اللجنة الأولى دائماً موجودة وتضم مقيمي المستوى إذا لم تكن هناك لجان مخصصة)
+ */
+export function resolveLevelCommittees(
+  level: Pick<CompetitionLevel, 'id' | 'committees'> | undefined,
+  allEvaluators?: CompetitionEvaluator[]
+): CompetitionCommittee[] {
+  const levelId = Number(level?.id || 1);
+  const levelEvalIds = (allEvaluators || [])
+    .filter(ev => {
+      const assigned = ev.levelIds || [];
+      return assigned.length === 0 || assigned.some(id => Number(id) === levelId);
+    })
+    .map(ev => Number(ev.id));
+
+  const rawCommittees = Array.isArray(level?.committees) ? level!.committees! : [];
+  if (rawCommittees.length === 0) {
+    return [
+      {
+        id: 1,
+        name: 'اللجنة الأولى',
+        evaluatorIds: levelEvalIds,
+      },
+    ];
+  }
+
+  return rawCommittees.map((c, idx) => ({
+    id: Number(c.id || idx + 1),
+    name: (c.name || '').trim() || getArabicCommitteeOrdinalName(idx),
+    evaluatorIds: Array.isArray(c.evaluatorIds)
+      ? c.evaluatorIds.map(id => Number(id))
+      : idx === 0
+      ? levelEvalIds
+      : [],
+  }));
+}
+
+/**
+ * معرفة اللجنة الفعلية التي ينتمي إليها المتسابق داخل المستوى (افتراضياً اللجنة الأولى)
+ */
+export function resolveParticipantCommitteeId(
+  participant: Pick<CompetitionParticipant, 'committeeId'>,
+  committees: CompetitionCommittee[]
+): number {
+  const firstId = Number(committees[0]?.id || 1);
+  if (!participant?.committeeId) return firstId;
+  const matched = committees.find(c => Number(c.id) === Number(participant.committeeId));
+  return matched ? Number(matched.id) : firstId;
+}
+
+/**
+ * توزيع متسابقي مستوى معين تلقائياً بالتساوي على اللجان الموجودة في ذلك المستوى حسب الترتيب الهجائي
+ */
+export function distributeParticipantsAlphabeticallyAcrossCommittees(
+  allParticipants: CompetitionParticipant[],
+  levelId: number,
+  committees: CompetitionCommittee[]
+): CompetitionParticipant[] {
+  const resolvedCommittees =
+    committees.length > 0 ? committees : [{ id: 1, name: 'اللجنة الأولى', evaluatorIds: [] }];
+  const k = resolvedCommittees.length;
+
+  const levelParticipantsSorted = sortByArabicName(
+    (allParticipants || []).filter(p => Number(p.levelId) === Number(levelId))
+  );
+
+  const total = levelParticipantsSorted.length;
+  const baseCount = Math.floor(total / k);
+  const remainder = total % k;
+
+  const assignedCommitteeByParticipantId = new Map<number, number>();
+  let cursor = 0;
+
+  for (let cIdx = 0; cIdx < k; cIdx++) {
+    const countForThisCommittee = baseCount + (cIdx < remainder ? 1 : 0);
+    const committeeId = Number(resolvedCommittees[cIdx].id);
+    for (let i = 0; i < countForThisCommittee && cursor < total; i++, cursor++) {
+      assignedCommitteeByParticipantId.set(
+        Number(levelParticipantsSorted[cursor].id),
+        committeeId
+      );
+    }
+  }
+
+  return (allParticipants || []).map(p => {
+    if (Number(p.levelId) !== Number(levelId)) return p;
+    const nextCommitteeId =
+      assignedCommitteeByParticipantId.get(Number(p.id)) ||
+      Number(resolvedCommittees[0].id);
+    return {
+      ...p,
+      committeeId: nextCommitteeId,
+    };
+  });
 }
 
 

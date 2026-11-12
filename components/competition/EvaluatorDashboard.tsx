@@ -18,7 +18,12 @@ import {
 } from 'lucide-react';
 import ParticipantEvaluation from './ParticipantEvaluation';
 import { Logo, AwqafBadge } from '../Logo';
-import { formatJuzsOrSurahsDisplay } from '../../utils/juzUtils';
+import {
+  formatJuzsOrSurahsDisplay,
+  compareArabicNames,
+  resolveLevelCommittees,
+  resolveParticipantCommitteeId,
+} from '../../utils/juzUtils';
 import {
   getParticipantLocalDraftStatus,
   getPendingCloudEvaluationsForEvaluator,
@@ -179,26 +184,47 @@ export default function EvaluatorDashboard({
   // المستويات المسندة لهذا المقيم
   const assignedLevels = useMemo(() => {
     const allLevels = comp.levels || [];
-    if (!evaluator.levelIds || evaluator.levelIds.length === 0) {
-      return allLevels;
-    }
-    const allowedSet = new Set(evaluator.levelIds.map(id => Number(id)));
-    return allLevels.filter(l => allowedSet.has(Number(l.id)));
-  }, [comp.levels, evaluator.levelIds]);
-
-  const allParticipants = comp.participants || [];
-
-  // جميع الطلاب الذين يقعون ضمن مستويات هذا المقيم
-  const myLevelParticipants = useMemo(() => {
     const allowedSet =
       evaluator.levelIds && evaluator.levelIds.length > 0
         ? new Set(evaluator.levelIds.map(id => Number(id)))
         : null;
 
-    return allParticipants.filter(
-      p => !allowedSet || allowedSet.has(Number(p.levelId))
-    );
-  }, [allParticipants, evaluator.levelIds]);
+    return allLevels.filter(l => {
+      const inCommittee = (l.committees || []).some(c =>
+        (c.evaluatorIds || []).map(Number).includes(Number(evaluator.id))
+      );
+      if (inCommittee) return true;
+      if (!allowedSet) return true;
+      return allowedSet.has(Number(l.id));
+    });
+  }, [comp.levels, evaluator.levelIds, evaluator.id]);
+
+  const allParticipants = comp.participants || [];
+
+  // جميع الطلاب الذين يقعون ضمن مستويات ولجان هذا المقيم مرتبين هجائياً
+  const myLevelParticipants = useMemo(() => {
+    const assignedLevelIds = new Set(assignedLevels.map(l => Number(l.id)));
+
+    return allParticipants
+      .filter(p => {
+        if (!assignedLevelIds.has(Number(p.levelId))) return false;
+        const lvl = (comp.levels || []).find(
+          l => Number(l.id) === Number(p.levelId)
+        );
+        const committees = resolveLevelCommittees(lvl, comp.evaluators || []);
+        if (committees.length > 1) {
+          const myCommittees = committees.filter(c =>
+            (c.evaluatorIds || []).map(Number).includes(Number(evaluator.id))
+          );
+          if (myCommittees.length > 0) {
+            const pCommId = resolveParticipantCommitteeId(p, committees);
+            return myCommittees.some(c => Number(c.id) === Number(pCommId));
+          }
+        }
+        return true;
+      })
+      .sort((a, b) => compareArabicNames(a.name, b.name));
+  }, [allParticipants, assignedLevels, comp.levels, comp.evaluators, evaluator.id]);
 
   // خريطة حالة التقييم المحفوظ محلياً (غير المعتمد بعد) لكل متسابق
   const participantDraftMap = useMemo(() => {
@@ -646,6 +672,17 @@ export default function EvaluatorDashboard({
               const level = (comp.levels || []).find(
                 l => Number(l.id) === Number(p.levelId)
               );
+              const levelCommittees = resolveLevelCommittees(
+                level,
+                comp.evaluators || []
+              );
+              const pCommitteeId = resolveParticipantCommitteeId(
+                p,
+                levelCommittees
+              );
+              const pCommittee = levelCommittees.find(
+                c => Number(c.id) === Number(pCommitteeId)
+              );
 
               // تقييم هذا المقيم تحديداً لهذا الطالب
               const myEval = (comp.evaluations || []).find(
@@ -723,9 +760,16 @@ export default function EvaluatorDashboard({
                       )}
                     </div>
 
-                    <span className="block text-xs sm:text-sm font-bold text-emerald-800 dark:text-emerald-300 leading-snug break-words whitespace-normal pr-6">
-                      {level?.name || 'مستوى عام'}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5 pr-6">
+                      <span className="text-xs sm:text-sm font-bold text-emerald-800 dark:text-emerald-300 leading-snug break-words whitespace-normal">
+                        {level?.name || 'مستوى عام'}
+                      </span>
+                      {levelCommittees.length > 1 && pCommittee && (
+                        <span className="px-2 py-0.5 rounded-lg bg-indigo-100 dark:bg-indigo-950/70 text-indigo-800 dark:text-indigo-200 text-[10px] font-black border border-indigo-200 dark:border-indigo-800">
+                          {pCommittee.name}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* 2. شريط النتيجة وحالة الاعتماد في سطر مستقل مريح بعرض البطاقة */}

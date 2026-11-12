@@ -10,6 +10,7 @@ import { safeLocalStorage } from '../utils/storage';
 import Logo, { AwqafBadge } from './Logo';
 import MobileInstallModal from './MobileInstallModal';
 import { usePWAInstall } from '../utils/usePWAInstall';
+import { compareArabicNames } from '../utils/juzUtils';
 import { Download, Smartphone, Trophy, ShieldCheck, Search, ArrowRight, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 
 const REMEMBERED_EVALUATOR_PINS_KEY = 'competitionRememberedEvaluatorPins';
@@ -90,7 +91,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
         });
       }
     });
-    return list;
+    return list.sort((a, b) => compareArabicNames(a.name, b.name));
   }, [context?.competitions]);
 
   const hasInactiveCompetitions = useMemo(() => {
