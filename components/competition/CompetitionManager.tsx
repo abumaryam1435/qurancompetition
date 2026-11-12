@@ -2645,8 +2645,16 @@ function LevelEditor({
   const [newCategoryColor, setNewCategoryColor] = useState<ErrorCategoryColorKey>('amber');
   const [activeCommitteeByLevel, setActiveCommitteeByLevel] = useState<Record<number, number>>({});
   const [selectedParticipantIdsByLevel, setSelectedParticipantIdsByLevel] = useState<Record<number, number[]>>({});
+  const [showAddEvalInCommitteeByLevel, setShowAddEvalInCommitteeByLevel] = useState<Record<number, boolean>>({});
+  const [selectedGlobalEvalForCommitteeByLevel, setSelectedGlobalEvalForCommitteeByLevel] = useState<Record<number, string>>({});
+  const [newEvalNameByLevel, setNewEvalNameByLevel] = useState<Record<number, string>>({});
+  const [newEvalPinByLevel, setNewEvalPinByLevel] = useState<Record<number, string>>({});
   const excelInputRef = useRef<HTMLInputElement>(null);
   const context = useContext(AppContext);
+  const sortedGlobalEvaluators = React.useMemo(
+    () => sortByArabicName(context?.globalEvaluators || []),
+    [context?.globalEvaluators]
+  );
 
   const otherCompetitions = (allCompetitions || []).filter(c => c.id !== comp.id);
 
@@ -2658,6 +2666,7 @@ function LevelEditor({
     setEditingDeductions({});
     setActiveCommitteeByLevel({});
     setSelectedParticipantIdsByLevel({});
+    setShowAddEvalInCommitteeByLevel({});
   }, [comp.id]);
 
   // مزامنة إعدادات أزرار الخصم الموحدة للمسابقة مع جميع مستوياتها
@@ -2928,6 +2937,159 @@ function LevelEditor({
       levels: nextLevels,
       evaluators: updatedEvaluators,
     });
+  };
+
+  const handleAddGlobalEvaluatorToCommittee = (
+    level: CompetitionLevel,
+    committeeId: number
+  ) => {
+    const selectedGlobalIdStr = selectedGlobalEvalForCommitteeByLevel[level.id] || '';
+    const gEval = sortedGlobalEvaluators.find(
+      g => String(g.id) === String(selectedGlobalIdStr)
+    );
+    if (!gEval) {
+      context?.showToast('يرجى اختيار مقيم من القائمة أولاً', 'error');
+      return;
+    }
+
+    const currentCompEvaluators = [...(comp.evaluators || [])];
+    const existingIdx = currentCompEvaluators.findIndex(
+      e => e.name.trim().toLowerCase() === gEval.name.trim().toLowerCase()
+    );
+
+    let targetCompEvalId: number;
+    if (existingIdx >= 0) {
+      const existingEv = currentCompEvaluators[existingIdx];
+      targetCompEvalId = Number(existingEv.id);
+      const curLvlIds = existingEv.levelIds || [];
+      if (curLvlIds.length > 0 && !curLvlIds.map(Number).includes(Number(level.id))) {
+        currentCompEvaluators[existingIdx] = {
+          ...existingEv,
+          levelIds: [...curLvlIds, Number(level.id)],
+        };
+      }
+    } else {
+      targetCompEvalId = Date.now();
+      currentCompEvaluators.push({
+        id: targetCompEvalId,
+        name: gEval.name.trim(),
+        pin: gEval.pin,
+        levelIds: [Number(level.id)],
+      });
+    }
+
+    const currentCommittees = resolveLevelCommittees(level, currentCompEvaluators);
+    const updatedCommittees = currentCommittees.map(c => {
+      if (Number(c.id) !== Number(committeeId)) return c;
+      const exists = (c.evaluatorIds || [])
+        .map(Number)
+        .includes(Number(targetCompEvalId));
+      return exists
+        ? c
+        : { ...c, evaluatorIds: [...(c.evaluatorIds || []), Number(targetCompEvalId)] };
+    });
+
+    const nextLevels = levels.map(l =>
+      Number(l.id) === Number(level.id) ? { ...l, committees: updatedCommittees } : l
+    );
+
+    setLevels(nextLevels);
+    setSelectedGlobalEvalForCommitteeByLevel(prev => ({ ...prev, [level.id]: '' }));
+    onUpdate({
+      ...comp,
+      levels: nextLevels,
+      evaluators: currentCompEvaluators,
+    });
+    const commObj = updatedCommittees.find(c => Number(c.id) === Number(committeeId));
+    context?.showToast(
+      `تمت إضافة المقيم «${gEval.name}» إلى ${commObj?.name || 'اللجنة'} في «${level.name}»`,
+      'success'
+    );
+  };
+
+  const handleCreateAndAddNewEvaluatorToCommittee = (
+    level: CompetitionLevel,
+    committeeId: number
+  ) => {
+    const rawName = (newEvalNameByLevel[level.id] || '').trim();
+    if (!rawName) {
+      context?.showToast('يرجى كتابة اسم المقيم أولاً', 'error');
+      return;
+    }
+    const rawPin =
+      (newEvalPinByLevel[level.id] || '').trim() ||
+      String(Math.floor(1000 + Math.random() * 9000));
+
+    // إضافة للسجل العام للمقيمين إذا لم يكن موجوداً
+    const existingInGlobal = (context?.globalEvaluators || []).find(
+      g => g.name.trim().toLowerCase() === rawName.toLowerCase()
+    );
+    const effectivePin = existingInGlobal ? existingInGlobal.pin : rawPin;
+    if (!existingInGlobal && context?.updateGlobalEvaluators) {
+      context.updateGlobalEvaluators([
+        ...(context.globalEvaluators || []),
+        {
+          id: Date.now() + 1,
+          name: rawName,
+          pin: effectivePin,
+        },
+      ]);
+    }
+
+    const currentCompEvaluators = [...(comp.evaluators || [])];
+    const existingIdx = currentCompEvaluators.findIndex(
+      e => e.name.trim().toLowerCase() === rawName.toLowerCase()
+    );
+
+    let targetCompEvalId: number;
+    if (existingIdx >= 0) {
+      const existingEv = currentCompEvaluators[existingIdx];
+      targetCompEvalId = Number(existingEv.id);
+      const curLvlIds = existingEv.levelIds || [];
+      if (curLvlIds.length > 0 && !curLvlIds.map(Number).includes(Number(level.id))) {
+        currentCompEvaluators[existingIdx] = {
+          ...existingEv,
+          levelIds: [...curLvlIds, Number(level.id)],
+        };
+      }
+    } else {
+      targetCompEvalId = Date.now();
+      currentCompEvaluators.push({
+        id: targetCompEvalId,
+        name: rawName,
+        pin: effectivePin,
+        levelIds: [Number(level.id)],
+      });
+    }
+
+    const currentCommittees = resolveLevelCommittees(level, currentCompEvaluators);
+    const updatedCommittees = currentCommittees.map(c => {
+      if (Number(c.id) !== Number(committeeId)) return c;
+      const exists = (c.evaluatorIds || [])
+        .map(Number)
+        .includes(Number(targetCompEvalId));
+      return exists
+        ? c
+        : { ...c, evaluatorIds: [...(c.evaluatorIds || []), Number(targetCompEvalId)] };
+    });
+
+    const nextLevels = levels.map(l =>
+      Number(l.id) === Number(level.id) ? { ...l, committees: updatedCommittees } : l
+    );
+
+    setLevels(nextLevels);
+    setNewEvalNameByLevel(prev => ({ ...prev, [level.id]: '' }));
+    setNewEvalPinByLevel(prev => ({ ...prev, [level.id]: '' }));
+    onUpdate({
+      ...comp,
+      levels: nextLevels,
+      evaluators: currentCompEvaluators,
+    });
+    const commObj = updatedCommittees.find(c => Number(c.id) === Number(committeeId));
+    context?.showToast(
+      `تمت إضافة المقيم «${rawName}» إلى ${commObj?.name || 'اللجنة'} في «${level.name}»`,
+      'success'
+    );
   };
 
   const handleAutoDistributeLevelParticipants = (level: CompetitionLevel) => {
@@ -4641,11 +4803,115 @@ function LevelEditor({
                           )}
                         </div>
 
-                        {/* المقيمون في اللجنة النشطة (مرتبون هجائياً) */}
-                        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
-                          <span className="text-[11px] font-black text-slate-700 dark:text-slate-300 block">
-                            مقيمو {activeCommittee?.name}:
-                          </span>
+                        {/* المقيمون في اللجنة النشطة (مرتبون هجائياً) + زر إضافة المقيمين في اللجنة */}
+                        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-[11px] sm:text-xs font-black text-slate-700 dark:text-slate-300">
+                              مقيمو {activeCommittee?.name} ({(activeCommittee?.evaluatorIds || []).length}):
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setShowAddEvalInCommitteeByLevel(prev => ({
+                                  ...prev,
+                                  [level.id]: !prev[level.id],
+                                }))
+                              }
+                              className="min-h-[34px] px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5 transition active:scale-95 cursor-pointer shadow-2xs"
+                            >
+                              <UserPlus size={14} />
+                              <span>
+                                {showAddEvalInCommitteeByLevel[level.id]
+                                  ? 'إغلاق إضافة المقيمين'
+                                  : `إضافة مقيمين في ${activeCommittee?.name}`}
+                              </span>
+                            </button>
+                          </div>
+
+                          {showAddEvalInCommitteeByLevel[level.id] && (
+                            <div className="p-3 rounded-xl bg-emerald-50/70 dark:bg-slate-800/80 border border-emerald-200 dark:border-slate-700 space-y-2.5">
+                              {/* اختيار من قائمة المقيمين المعتمدين */}
+                              {sortedGlobalEvaluators.length > 0 && (
+                                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                                  <select
+                                    value={selectedGlobalEvalForCommitteeByLevel[level.id] || ''}
+                                    onChange={e =>
+                                      setSelectedGlobalEvalForCommitteeByLevel(prev => ({
+                                        ...prev,
+                                        [level.id]: e.target.value,
+                                      }))
+                                    }
+                                    className="flex-1 min-h-[40px] border border-emerald-300 dark:border-slate-600 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 font-bold text-xs text-slate-900 dark:text-white"
+                                  >
+                                    <option value="">
+                                      -- اختر مقيماً لإضافته في {activeCommittee?.name} --
+                                    </option>
+                                    {sortedGlobalEvaluators.map(ge => (
+                                      <option key={ge.id} value={ge.id}>
+                                        {ge.name} (رمز الدخول: {ge.pin})
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <button
+                                    type="button"
+                                    disabled={!selectedGlobalEvalForCommitteeByLevel[level.id]}
+                                    onClick={() =>
+                                      handleAddGlobalEvaluatorToCommittee(
+                                        level,
+                                        activeCommittee.id
+                                      )
+                                    }
+                                    className="min-h-[40px] px-4 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-45 text-white text-xs font-black flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer shrink-0"
+                                  >
+                                    <Plus size={15} />
+                                    <span>إضافة في {activeCommittee?.name}</span>
+                                  </button>
+                                </div>
+                              )}
+
+                              {/* إضافة مقيم جديد مباشرة إلى اللجنة */}
+                              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1.5 border-t border-emerald-200/60 dark:border-slate-700">
+                                <input
+                                  type="text"
+                                  value={newEvalNameByLevel[level.id] || ''}
+                                  onChange={e =>
+                                    setNewEvalNameByLevel(prev => ({
+                                      ...prev,
+                                      [level.id]: e.target.value,
+                                    }))
+                                  }
+                                  placeholder="اسم مقيم جديد..."
+                                  className="flex-1 min-h-[40px] border border-slate-300 dark:border-slate-600 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 font-bold text-xs text-slate-900 dark:text-white"
+                                />
+                                <input
+                                  type="text"
+                                  value={newEvalPinByLevel[level.id] || ''}
+                                  onChange={e =>
+                                    setNewEvalPinByLevel(prev => ({
+                                      ...prev,
+                                      [level.id]: e.target.value,
+                                    }))
+                                  }
+                                  placeholder="رمز الدخول (اختياري)"
+                                  className="sm:w-36 min-h-[40px] border border-slate-300 dark:border-slate-600 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 font-mono font-bold text-xs text-slate-900 dark:text-white"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleCreateAndAddNewEvaluatorToCommittee(
+                                      level,
+                                      activeCommittee.id
+                                    )
+                                  }
+                                  className="min-h-[40px] px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer shrink-0"
+                                >
+                                  <UserPlus size={14} />
+                                  <span>إضافة مقيم جديد للجنة</span>
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
                           {sortedLevelEvaluators.length > 0 ? (
                             <div className="flex flex-wrap gap-1.5">
                               {sortedLevelEvaluators.map(ev => {
@@ -5207,9 +5473,18 @@ function CompetitionEvaluators({
   );
 
   const [selectedGlobalId, setSelectedGlobalId] = useState<string>('');
+  const [showNewDirectEvalForm, setShowNewDirectEvalForm] = useState<boolean>(false);
+  const [newDirectEvalName, setNewDirectEvalName] = useState<string>('');
+  const [newDirectEvalPin, setNewDirectEvalPin] = useState<string>('');
   const [selectedLevels, setSelectedLevels] = useState<number[]>([]);
+  const [selectedCommitteesByLevel, setSelectedCommitteesByLevel] = useState<
+    Record<number, number[]>
+  >({});
   const [deleteConfirmEval, setDeleteConfirmEval] = useState<CompetitionEvaluator | null>(null);
   const [editingEval, setEditingEval] = useState<CompetitionEvaluator | null>(null);
+  const [editingEvalCommitteesByLevel, setEditingEvalCommitteesByLevel] = useState<
+    Record<number, number[]>
+  >({});
   const [showGlobalModal, setShowGlobalModal] = useState(false);
   const [selectedGlobalIds, setSelectedGlobalIds] = useState<number[]>([]);
 
@@ -5223,17 +5498,101 @@ function CompetitionEvaluators({
       )
     : false;
 
+  // استخراج اللجان الحالية لمقيم معين في كافة المستويات
+  const buildEvaluatorCommitteesMap = (evaluatorId?: number): Record<number, number[]> => {
+    const map: Record<number, number[]> = {};
+    (comp.levels || []).forEach(lvl => {
+      const comms = resolveLevelCommittees(lvl, comp.evaluators || []);
+      const firstCommId = Number(comms[0]?.id || 1);
+      if (!evaluatorId) {
+        map[lvl.id] = [firstCommId];
+        return;
+      }
+      const matchedIds = comms
+        .filter(c => (c.evaluatorIds || []).map(Number).includes(Number(evaluatorId)))
+        .map(c => Number(c.id));
+      map[lvl.id] = matchedIds.length > 0 ? matchedIds : [firstCommId];
+    });
+    return map;
+  };
+
+  // إضافة لجنة جديدة داخل مستوى معين مباشرة من تبويب المقيمين
+  const handleAddCommitteeInEvaluatorsTab = (lvl: CompetitionLevel) => {
+    const currentCommittees = resolveLevelCommittees(lvl, comp.evaluators || []);
+    const nextCommitteeId =
+      currentCommittees.reduce((maxId, c) => Math.max(maxId, Number(c.id) || 0), 0) + 1;
+    const newCommittee: CompetitionCommittee = {
+      id: nextCommitteeId,
+      name: getArabicCommitteeOrdinalName(currentCommittees.length),
+      evaluatorIds: [],
+    };
+    const updatedCommittees = [...currentCommittees, newCommittee];
+    const nextLevels = (comp.levels || []).map(l =>
+      Number(l.id) === Number(lvl.id) ? { ...l, committees: updatedCommittees } : l
+    );
+    setSelectedCommitteesByLevel(prev => ({
+      ...prev,
+      [lvl.id]: [newCommittee.id],
+    }));
+    onUpdate({
+      ...comp,
+      levels: nextLevels,
+    });
+  };
+
+  // تبديل انتماء مقيم للجنة معينة داخل مستوى معين مباشرة
+  const handleToggleEvaluatorCommitteeInLevel = (
+    ev: CompetitionEvaluator,
+    lvl: CompetitionLevel,
+    committeeId: number
+  ) => {
+    const currentCommittees = resolveLevelCommittees(lvl, comp.evaluators || []);
+    const updatedCommittees = currentCommittees.map(c => {
+      if (Number(c.id) !== Number(committeeId)) return c;
+      const exists = (c.evaluatorIds || []).map(Number).includes(Number(ev.id));
+      const nextIds = exists
+        ? (c.evaluatorIds || []).filter(id => Number(id) !== Number(ev.id))
+        : [...(c.evaluatorIds || []), Number(ev.id)];
+      return { ...c, evaluatorIds: nextIds };
+    });
+
+    const nextLevels = (comp.levels || []).map(l =>
+      Number(l.id) === Number(lvl.id) ? { ...l, committees: updatedCommittees } : l
+    );
+
+    const isStillInAnyCommittee = updatedCommittees.some(c =>
+      (c.evaluatorIds || []).map(Number).includes(Number(ev.id))
+    );
+
+    const updatedEvaluators = (comp.evaluators || []).map(item => {
+      if (Number(item.id) !== Number(ev.id)) return item;
+      const allIds = (comp.levels || []).map(l => l.id);
+      const currentIds =
+        item.levelIds && item.levelIds.length > 0 ? item.levelIds : allIds;
+      if (isStillInAnyCommittee && !currentIds.map(Number).includes(Number(lvl.id))) {
+        return { ...item, levelIds: [...currentIds, Number(lvl.id)] };
+      }
+      return item;
+    });
+
+    onUpdate({
+      ...comp,
+      levels: nextLevels,
+      evaluators: updatedEvaluators,
+    });
+  };
+
   // عند اختيار مقيم معتمد من القائمة المنسدلة
   const handleSelectGlobalEvaluator = (idStr: string) => {
     setSelectedGlobalId(idStr);
     if (!idStr) {
       setSelectedLevels([]);
+      setSelectedCommitteesByLevel({});
       return;
     }
 
     const found = globalEvaluators.find(g => String(g.id) === idStr);
     if (found) {
-      // للتحقق مما إذا كان المقيم مضافاً سابقاً للتعرف على مستوياته المسندة
       const existingInComp = (comp.evaluators || []).find(
         e => e.name.trim().toLowerCase() === found.name.trim().toLowerCase()
       );
@@ -5241,15 +5600,16 @@ function CompetitionEvaluators({
       if (existingInComp && existingInComp.levelIds && existingInComp.levelIds.length > 0) {
         setSelectedLevels(existingInComp.levelIds);
       } else {
-        // بالافتراضي تحديد كافة المستويات
         setSelectedLevels((comp.levels || []).map(l => l.id));
       }
+      setSelectedCommitteesByLevel(buildEvaluatorCommitteesMap(existingInComp?.id));
     }
   };
 
   const handleAssignFromDropdown = () => {
-    if (!selectedGlobalEvaluator) {
-      context?.showToast('الرجاء اختيار مقيم من القائمة المنسدلة أولاً', 'error');
+    const isDirectNew = showNewDirectEvalForm && newDirectEvalName.trim().length > 0;
+    if (!selectedGlobalEvaluator && !isDirectNew) {
+      context?.showToast('الرجاء اختيار مقيم من القائمة أو كتابة اسم مقيم جديد', 'error');
       return;
     }
 
@@ -5258,43 +5618,99 @@ function CompetitionEvaluators({
         ? selectedLevels
         : (comp.levels || []).map(l => l.id);
 
-    const existingIndex = (comp.evaluators || []).findIndex(
-      e =>
-        e.name.trim().toLowerCase() ===
-        selectedGlobalEvaluator.name.trim().toLowerCase()
-    );
+    let targetName = '';
+    let targetPin = '';
 
-    if (existingIndex >= 0) {
-      // تحديث المستويات المسندة للمقيم في المسابقة
-      const updated = [...(comp.evaluators || [])];
-      updated[existingIndex] = {
-        ...updated[existingIndex],
-        pin: selectedGlobalEvaluator.pin,
-        levelIds: assignedLevelIds,
-      };
-      onUpdate({ ...comp, evaluators: updated });
-      context?.showToast(
-        `تم تحديث المستويات المسندة للمقيم (${selectedGlobalEvaluator.name}) في المسابقة بنجاح!`,
-        'success'
+    if (isDirectNew) {
+      targetName = newDirectEvalName.trim();
+      const existingGlobal = (context?.globalEvaluators || []).find(
+        g => g.name.trim().toLowerCase() === targetName.toLowerCase()
       );
-    } else {
-      // اختيار وإسناد المقيم للمسابقة من القائمة
-      const newEval: CompetitionEvaluator = {
-        id: Date.now(),
-        name: selectedGlobalEvaluator.name.trim(),
-        pin: selectedGlobalEvaluator.pin,
-        levelIds: assignedLevelIds,
-      };
-      onUpdate({ ...comp, evaluators: [...(comp.evaluators || []), newEval] });
-      context?.showToast(
-        `تم اختيار المقيم (${selectedGlobalEvaluator.name}) وإدراجه في المسابقة بالمستويات المحددة!`,
-        'success'
-      );
+      targetPin =
+        existingGlobal?.pin ||
+        newDirectEvalPin.trim() ||
+        String(Math.floor(1000 + Math.random() * 9000));
+
+      if (!existingGlobal && context?.updateGlobalEvaluators) {
+        context.updateGlobalEvaluators([
+          ...(context.globalEvaluators || []),
+          {
+            id: Date.now() + 1,
+            name: targetName,
+            pin: targetPin,
+          },
+        ]);
+      }
+    } else if (selectedGlobalEvaluator) {
+      targetName = selectedGlobalEvaluator.name.trim();
+      targetPin = selectedGlobalEvaluator.pin;
     }
 
-    // إعادة ضبط الاختيار
+    const existingIndex = (comp.evaluators || []).findIndex(
+      e => e.name.trim().toLowerCase() === targetName.toLowerCase()
+    );
+
+    let targetCompEvalId: number;
+    const updatedEvaluators = [...(comp.evaluators || [])];
+
+    if (existingIndex >= 0) {
+      targetCompEvalId = Number(updatedEvaluators[existingIndex].id);
+      updatedEvaluators[existingIndex] = {
+        ...updatedEvaluators[existingIndex],
+        pin: targetPin,
+        levelIds: assignedLevelIds,
+      };
+    } else {
+      targetCompEvalId = Date.now();
+      updatedEvaluators.push({
+        id: targetCompEvalId,
+        name: targetName,
+        pin: targetPin,
+        levelIds: assignedLevelIds,
+      });
+    }
+
+    // تحديث اللجان داخل كل مستوى بناءً على المستويات واللجان المحددة للمقيم
+    const updatedLevels = (comp.levels || []).map(lvl => {
+      const currentCommittees = resolveLevelCommittees(lvl, updatedEvaluators);
+      const isLvlAssigned = assignedLevelIds.map(Number).includes(Number(lvl.id));
+      const chosenCommIds =
+        selectedCommitteesByLevel[lvl.id] && selectedCommitteesByLevel[lvl.id].length > 0
+          ? selectedCommitteesByLevel[lvl.id].map(Number)
+          : [Number(currentCommittees[0]?.id || 1)];
+
+      const nextCommittees = currentCommittees.map(c => {
+        const filtered = (c.evaluatorIds || []).filter(
+          id => Number(id) !== Number(targetCompEvalId)
+        );
+        if (isLvlAssigned && chosenCommIds.includes(Number(c.id))) {
+          return { ...c, evaluatorIds: [...filtered, Number(targetCompEvalId)] };
+        }
+        return { ...c, evaluatorIds: filtered };
+      });
+
+      return { ...lvl, committees: nextCommittees };
+    });
+
+    onUpdate({
+      ...comp,
+      evaluators: updatedEvaluators,
+      levels: updatedLevels,
+    });
+
+    context?.showToast(
+      existingIndex >= 0
+        ? `تم تحديث المستويات واللجان للمقيم (${targetName}) بنجاح!`
+        : `تمت إضافة المقيم (${targetName}) وتحديد المستوى واللجنة بنجاح!`,
+      'success'
+    );
+
     setSelectedGlobalId('');
+    setNewDirectEvalName('');
+    setNewDirectEvalPin('');
+    setShowNewDirectEvalForm(false);
     setSelectedLevels([]);
+    setSelectedCommitteesByLevel({});
   };
 
   // استيراد المحددين من القائمة العامة للمسابقة الحالية
@@ -5309,37 +5725,89 @@ function CompetitionEvaluators({
 
     let addedCount = 0;
     const nextList = [...currentList];
+    const newlyAddedEvalIds: number[] = [];
 
     selectedGlobalIds.forEach(id => {
       const gEval = globalEvaluators.find(g => g.id === id);
       if (!gEval) return;
       if (!nextList.some(e => e.name.trim().toLowerCase() === gEval.name.trim().toLowerCase())) {
+        const newId = Date.now() + Math.floor(Math.random() * 10000);
         nextList.push({
-          id: Date.now() + Math.floor(Math.random() * 10000),
+          id: newId,
           name: gEval.name,
           pin: gEval.pin,
           levelIds: defaultLevelIds,
         });
+        newlyAddedEvalIds.push(newId);
         addedCount++;
       }
     });
 
-    onUpdate({ ...comp, evaluators: nextList });
+    const updatedLevels = (comp.levels || []).map(lvl => {
+      const comms = resolveLevelCommittees(lvl, nextList);
+      const firstCommId = Number(comms[0]?.id || 1);
+      const nextComms = comms.map(c => {
+        if (Number(c.id) !== firstCommId) return c;
+        const merged = Array.from(
+          new Set([...(c.evaluatorIds || []).map(Number), ...newlyAddedEvalIds])
+        );
+        return { ...c, evaluatorIds: merged };
+      });
+      return { ...lvl, committees: nextComms };
+    });
+
+    onUpdate({ ...comp, evaluators: nextList, levels: updatedLevels });
     setShowGlobalModal(false);
     setSelectedGlobalIds([]);
     context?.showToast(`تم اختيار وإدراج (${addedCount}) مقيم من القائمة إلى هذه المسابقة!`, 'success');
+  };
+
+  const handleOpenEditEvalModal = (ev: CompetitionEvaluator) => {
+    const allIds = (comp.levels || []).map(l => l.id);
+    const assignedIds =
+      ev.levelIds && ev.levelIds.length > 0 ? ev.levelIds : allIds;
+    setEditingEval({ ...ev, levelIds: assignedIds });
+    setEditingEvalCommitteesByLevel(buildEvaluatorCommitteesMap(ev.id));
   };
 
   const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingEval) return;
 
-    const updated = (comp.evaluators || []).map(ev =>
-      ev.id === editingEval.id ? editingEval : ev
+    const assignedLevelIds =
+      editingEval.levelIds && editingEval.levelIds.length > 0
+        ? editingEval.levelIds
+        : (comp.levels || []).map(l => l.id);
+
+    const updatedEvaluators = (comp.evaluators || []).map(ev =>
+      ev.id === editingEval.id ? { ...editingEval, levelIds: assignedLevelIds } : ev
     );
-    onUpdate({ ...comp, evaluators: updated });
+
+    const updatedLevels = (comp.levels || []).map(lvl => {
+      const currentCommittees = resolveLevelCommittees(lvl, updatedEvaluators);
+      const isLvlAssigned = assignedLevelIds.map(Number).includes(Number(lvl.id));
+      const chosenCommIds =
+        editingEvalCommitteesByLevel[lvl.id] &&
+        editingEvalCommitteesByLevel[lvl.id].length > 0
+          ? editingEvalCommitteesByLevel[lvl.id].map(Number)
+          : [Number(currentCommittees[0]?.id || 1)];
+
+      const nextCommittees = currentCommittees.map(c => {
+        const filtered = (c.evaluatorIds || []).filter(
+          id => Number(id) !== Number(editingEval.id)
+        );
+        if (isLvlAssigned && chosenCommIds.includes(Number(c.id))) {
+          return { ...c, evaluatorIds: [...filtered, Number(editingEval.id)] };
+        }
+        return { ...c, evaluatorIds: filtered };
+      });
+
+      return { ...lvl, committees: nextCommittees };
+    });
+
+    onUpdate({ ...comp, evaluators: updatedEvaluators, levels: updatedLevels });
     setEditingEval(null);
-    context?.showToast('تم تحديث المستويات المسندة للمقيم بنجاح!', 'success');
+    context?.showToast('تم تحديث المستويات واللجان المسندة للمقيم بنجاح!', 'success');
   };
 
   const handleQuickToggleEditAllowedLevel = (ev: CompetitionEvaluator, lvlId: number) => {
@@ -5379,20 +5847,36 @@ function CompetitionEvaluators({
 
   return (
     <div className="space-y-5 sm:space-y-6">
-      {/* بطاقة اختيار المقيمين للمسابقة من القائمة فقط */}
+      {/* بطاقة إضافة واختيار المقيمين للمسابقة مع تحديد المستوى واللجنة */}
       <div className="bg-slate-50 dark:bg-slate-800/60 p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h4 className="font-black text-sm sm:text-base text-emerald-950 dark:text-emerald-300 flex items-center gap-2">
               <UserCheck size={18} className="text-emerald-600 dark:text-emerald-400" />
-              <span>اختيار المقيمين للمسابقة وتحديد المستويات المسندة لهم</span>
+              <span>إضافة المقيمين للمسابقة وتحديد المستوى واللجنة</span>
             </h4>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              اختر المقيم من قائمة المقيمين المعتمدين فقط ثم حدد المستويات التي سيحكّمها (إضافة مقيمين جدد تتم من صفحة المقيمين فقط).
-            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                const nextState = !showNewDirectEvalForm;
+                setShowNewDirectEvalForm(nextState);
+                if (nextState) {
+                  setSelectedGlobalId('');
+                  if (selectedLevels.length === 0) {
+                    setSelectedLevels((comp.levels || []).map(l => l.id));
+                    setSelectedCommitteesByLevel(buildEvaluatorCommitteesMap());
+                  }
+                }
+              }}
+              className="min-h-[42px] px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-black transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+            >
+              <UserPlus size={16} />
+              <span>{showNewDirectEvalForm ? 'الاختيار من القائمة' : 'إضافة مقيم جديد'}</span>
+            </button>
+
             <button
               type="button"
               onClick={() => {
@@ -5410,97 +5894,123 @@ function CompetitionEvaluators({
                 type="button"
                 onClick={onOpenEvaluatorsPage}
                 className="min-h-[42px] px-3.5 py-2 rounded-xl bg-white hover:bg-emerald-50 dark:bg-slate-900 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 text-xs font-black transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
-                title="الانتقال إلى صفحة المقيمين المعتمدين لإضافة مقيمين جدد"
+                title="الانتقال إلى صفحة المقيمين المعتمدين"
               >
                 <UserPlus size={15} />
-                <span>إدارة وإضافة المقيمين (صفحة المقيمين)</span>
+                <span>صفحة المقيمين</span>
               </button>
             )}
           </div>
         </div>
 
-        {/* 1. القائمة المنسدلة لاختيار المقيمين المعتمدين فقط */}
+        {/* 1. اختيار مقيم من القائمة أو كتابة اسم مقيم جديد */}
         <div className="p-3.5 sm:p-4 rounded-2xl bg-emerald-50/60 dark:bg-slate-900/80 border border-emerald-200 dark:border-slate-700 space-y-3">
-          <label className="block text-xs sm:text-sm font-black text-emerald-950 dark:text-emerald-300">
-            اختر المقيم من قائمة المقيمين المعتمدين:
-          </label>
-          <select
-            value={selectedGlobalId}
-            onChange={e => handleSelectGlobalEvaluator(e.target.value)}
-            className="w-full min-h-[48px] border-2 border-emerald-300 dark:border-slate-700 p-3 rounded-xl bg-white dark:bg-slate-800 font-bold text-xs sm:text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-600"
-          >
-            <option value="">-- اختر مقيماً من القائمة المنسدلة --</option>
-            {globalEvaluators.map(ge => {
-              const existingEv = (comp.evaluators || []).find(
-                e => e.name.trim().toLowerCase() === ge.name.trim().toLowerCase()
-              );
-              const existingLevelsInfo = existingEv
-                ? getEvaluatorAssignedLevelsInfo(
-                    existingEv,
-                    comp.levels || [],
-                    comp.participants || []
-                  )
-                : null;
-              return (
-                <option key={ge.id} value={ge.id}>
-                  {ge.name} (رمز الدخول: {ge.pin})
-                  {existingLevelsInfo
-                    ? ` - [مشارك في: ${existingLevelsInfo.assignedLevelNames.join('، ') || 'كافة المستويات'}]`
-                    : ''}
-                </option>
-              );
-            })}
-          </select>
-
-          {selectedGlobalEvaluator && (
-            <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-white dark:bg-slate-800 border border-emerald-200 dark:border-slate-700">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
-                  المقيم المختار:
-                </span>
-                <span className="text-sm font-black text-emerald-950 dark:text-white">
-                  {selectedGlobalEvaluator.name}
-                </span>
-                {isSelectedAlreadyInComp && (
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[11px] font-black">
-                    مضاف مسبقاً (سيتم تحديث مستوياته)
-                  </span>
-                )}
+          {showNewDirectEvalForm ? (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-black text-emerald-950 dark:text-emerald-300 mb-1">
+                  اسم المقيم الجديد:
+                </label>
+                <input
+                  type="text"
+                  value={newDirectEvalName}
+                  onChange={e => setNewDirectEvalName(e.target.value)}
+                  placeholder="أدخل اسم المقيم..."
+                  className="w-full min-h-[46px] border-2 border-emerald-300 dark:border-slate-700 p-2.5 rounded-xl bg-white dark:bg-slate-800 font-bold text-xs sm:text-sm text-slate-900 dark:text-white"
+                />
               </div>
-              <span className="px-2.5 py-1 rounded-lg bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-300 text-xs font-mono font-black border border-amber-300/70">
-                رمز الدخول: {selectedGlobalEvaluator.pin}
-              </span>
+              <div>
+                <label className="block text-xs font-black text-emerald-950 dark:text-emerald-300 mb-1">
+                  رمز الدخول (اختياري):
+                </label>
+                <input
+                  type="text"
+                  value={newDirectEvalPin}
+                  onChange={e => setNewDirectEvalPin(e.target.value)}
+                  placeholder="يتولد تلقائياً..."
+                  className="w-full min-h-[46px] border-2 border-emerald-300 dark:border-slate-700 p-2.5 rounded-xl bg-white dark:bg-slate-800 font-mono font-bold text-xs sm:text-sm text-slate-900 dark:text-white"
+                />
+              </div>
             </div>
-          )}
+          ) : (
+            <>
+              <label className="block text-xs sm:text-sm font-black text-emerald-950 dark:text-emerald-300">
+                اختر المقيم من قائمة المقيمين المعتمدين:
+              </label>
+              <select
+                value={selectedGlobalId}
+                onChange={e => handleSelectGlobalEvaluator(e.target.value)}
+                className="w-full min-h-[48px] border-2 border-emerald-300 dark:border-slate-700 p-3 rounded-xl bg-white dark:bg-slate-800 font-bold text-xs sm:text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-600"
+              >
+                <option value="">-- اختر مقيماً من القائمة المنسدلة --</option>
+                {globalEvaluators.map(ge => {
+                  const existingEv = (comp.evaluators || []).find(
+                    e => e.name.trim().toLowerCase() === ge.name.trim().toLowerCase()
+                  );
+                  const existingLevelsInfo = existingEv
+                    ? getEvaluatorAssignedLevelsInfo(
+                        existingEv,
+                        comp.levels || [],
+                        comp.participants || []
+                      )
+                    : null;
+                  return (
+                    <option key={ge.id} value={ge.id}>
+                      {ge.name} (رمز الدخول: {ge.pin})
+                      {existingLevelsInfo
+                        ? ` - [مشارك في: ${existingLevelsInfo.assignedLevelNames.join('، ') || 'كافة المستويات'}]`
+                        : ''}
+                    </option>
+                  );
+                })}
+              </select>
 
-          {globalEvaluators.length === 0 && (
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60">
-              <p className="text-xs text-amber-900 dark:text-amber-300 font-bold">
-                لا يوجد مقيمون مسجلون في القائمة حالياً. يرجى إضافتهم أولاً من صفحة "المقيمون المعتمدون".
-              </p>
-              {onOpenEvaluatorsPage && (
-                <button
-                  type="button"
-                  onClick={onOpenEvaluatorsPage}
-                  className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs transition cursor-pointer shrink-0"
-                >
-                  الانتقال لصفحة المقيمين
-                </button>
+              {selectedGlobalEvaluator && (
+                <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-white dark:bg-slate-800 border border-emerald-200 dark:border-slate-700">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                      المقيم المختار:
+                    </span>
+                    <span className="text-sm font-black text-emerald-950 dark:text-white">
+                      {selectedGlobalEvaluator.name}
+                    </span>
+                    {isSelectedAlreadyInComp && (
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[11px] font-black">
+                        مضاف مسبقاً (سيتم تحديث مستوياته ولجانه)
+                      </span>
+                    )}
+                  </div>
+                  <span className="px-2.5 py-1 rounded-lg bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-300 text-xs font-mono font-black border border-amber-300/70">
+                    رمز الدخول: {selectedGlobalEvaluator.pin}
+                  </span>
+                </div>
               )}
-            </div>
+            </>
           )}
         </div>
 
-        {/* 2. تحديد المستويات المسندة للمقيم المختار */}
+        {/* 2. تحديد المستوى واللجنة للمقيم المختار */}
         <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <label className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-200">
-              تحديد المستوى أو المستويات التي سيقوم بتحكيمها ({selectedLevels.length} محدد):
+              تحديد المستوى واللجنة ({selectedLevels.length} مستويات محددة):
             </label>
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => setSelectedLevels((comp.levels || []).map(l => l.id))}
+                onClick={() => {
+                  setSelectedLevels((comp.levels || []).map(l => l.id));
+                  setSelectedCommitteesByLevel(prev => {
+                    const next = { ...prev };
+                    (comp.levels || []).forEach(l => {
+                      if (!next[l.id] || next[l.id].length === 0) {
+                        const comms = resolveLevelCommittees(l, comp.evaluators || []);
+                        next[l.id] = [Number(comms[0]?.id || 1)];
+                      }
+                    });
+                    return next;
+                  });
+                }}
                 className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-xs font-bold hover:bg-emerald-100 transition cursor-pointer"
               >
                 تحديد كافة المستويات
@@ -5515,75 +6025,141 @@ function CompetitionEvaluators({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
             {(comp.levels || []).map(l => {
               const checked = selectedLevels.includes(l.id);
+              const lvlCommittees = resolveLevelCommittees(l, comp.evaluators || []);
+              const selectedCommsInLvl =
+                selectedCommitteesByLevel[l.id] && selectedCommitteesByLevel[l.id].length > 0
+                  ? selectedCommitteesByLevel[l.id].map(Number)
+                  : [Number(lvlCommittees[0]?.id || 1)];
+
               return (
-                <button
+                <div
                   key={l.id}
-                  type="button"
-                  onClick={() => {
-                    if (checked) {
-                      setSelectedLevels(selectedLevels.filter(id => id !== l.id));
-                    } else {
-                      setSelectedLevels([...selectedLevels, l.id]);
-                    }
-                  }}
-                  className={`min-h-[46px] px-3.5 py-2 rounded-xl border text-xs sm:text-sm font-bold flex items-center justify-between transition active:scale-95 cursor-pointer ${
+                  className={`p-2.5 rounded-xl border transition space-y-2 ${
                     checked
-                      ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
-                      : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'
+                      ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-600 shadow-2xs'
+                      : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700'
                   }`}
                 >
-                  <div className="flex items-center gap-2 truncate">
-                    <Check
-                      size={16}
-                      className={checked ? 'opacity-100' : 'opacity-30'}
-                    />
-                    <span className="truncate">{l.name}</span>
-                  </div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-extrabold shrink-0 ${
-                    checked ? 'bg-emerald-800 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
-                  }`}>
-                    {l.juzsOrSurahs}
-                  </span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (checked) {
+                        setSelectedLevels(selectedLevels.filter(id => id !== l.id));
+                      } else {
+                        setSelectedLevels([...selectedLevels, l.id]);
+                        if (
+                          !selectedCommitteesByLevel[l.id] ||
+                          selectedCommitteesByLevel[l.id].length === 0
+                        ) {
+                          setSelectedCommitteesByLevel(prev => ({
+                            ...prev,
+                            [l.id]: [Number(lvlCommittees[0]?.id || 1)],
+                          }));
+                        }
+                      }
+                    }}
+                    className={`w-full min-h-[40px] px-3 py-1.5 rounded-lg text-xs sm:text-sm font-black flex items-center justify-between transition cursor-pointer ${
+                      checked
+                        ? 'bg-emerald-700 text-white'
+                        : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 truncate">
+                      <Check
+                        size={15}
+                        className={checked ? 'opacity-100' : 'opacity-30'}
+                      />
+                      <span className="truncate">{l.name}</span>
+                    </div>
+                  </button>
+
+                  {checked && (
+                    <div className="space-y-1.5 pt-1">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-[11px] font-black text-emerald-950 dark:text-emerald-300">
+                          اللجنة في هذا المستوى:
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleAddCommitteeInEvaluatorsTab(l)}
+                          className="px-2 py-0.5 rounded-md bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-950 text-indigo-800 dark:text-indigo-200 text-[10px] font-black cursor-pointer flex items-center gap-0.5"
+                        >
+                          <Plus size={11} />
+                          <span>إضافة لجنة</span>
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {lvlCommittees.map(comm => {
+                          const isCommSelected = selectedCommsInLvl.includes(Number(comm.id));
+                          return (
+                            <button
+                              key={comm.id}
+                              type="button"
+                              onClick={() => {
+                                const exists = selectedCommsInLvl.includes(Number(comm.id));
+                                const nextIds = exists
+                                  ? selectedCommsInLvl.filter(id => id !== Number(comm.id))
+                                  : [...selectedCommsInLvl, Number(comm.id)];
+                                if (nextIds.length === 0) return;
+                                setSelectedCommitteesByLevel(prev => ({
+                                  ...prev,
+                                  [l.id]: nextIds,
+                                }));
+                              }}
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-black flex items-center gap-1 transition cursor-pointer border ${
+                                isCommSelected
+                                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                                  : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+                              }`}
+                            >
+                              <Check
+                                size={11}
+                                className={isCommSelected ? 'opacity-100' : 'opacity-25'}
+                              />
+                              <span>{comm.name}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>
-          {selectedLevels.length === 0 && (
-            <p className="text-[11px] text-amber-700 dark:text-amber-400 font-bold pt-1">
-              ⚠️ تنبيه: عند عدم تحديد أي مستوى، سيتم إسناد كافة المستويات تلقائياً للمقيم المختار.
-            </p>
-          )}
         </div>
 
         <button
           type="button"
-          disabled={!selectedGlobalEvaluator}
+          disabled={
+            !selectedGlobalEvaluator &&
+            !(showNewDirectEvalForm && newDirectEvalName.trim().length > 0)
+          }
           onClick={handleAssignFromDropdown}
           className="w-full sm:w-auto min-h-[48px] bg-emerald-700 hover:bg-emerald-800 disabled:opacity-45 disabled:cursor-not-allowed text-white px-6 py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition active:scale-95 shadow-md cursor-pointer"
         >
           <Check size={18} />
           <span>
-            {isSelectedAlreadyInComp
-              ? 'تحديث مستويات المقيم المختار في المسابقة'
-              : 'اعتماد المقيم المختار في هذه المسابقة'}
+            {showNewDirectEvalForm
+              ? 'إضافة المقيم الجديد واعتماد المستوى واللجنة'
+              : isSelectedAlreadyInComp
+              ? 'تحديث مستويات ولجان المقيم المختار'
+              : 'اعتماد المقيم في المستوى واللجنة'}
           </span>
         </button>
       </div>
 
-      {/* عرض قائمة مقيمي المسابقة المسجلين حالياً مع تقسيم المستويات وأزرار التصدير */}
+      {/* عرض قائمة مقيمي المسابقة المسجلين حالياً مع تقسيم المستويات واللجان وأزرار التصدير */}
       <div className="space-y-3.5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-emerald-50/70 dark:bg-slate-800/80 p-3.5 rounded-2xl border border-emerald-200/80 dark:border-slate-700">
           <div>
             <h4 className="font-black text-sm sm:text-base text-emerald-950 dark:text-emerald-300 flex items-center gap-2">
               <UserCheck size={18} className="text-emerald-700 dark:text-emerald-400 shrink-0" />
-              <span>بيانات مقيمي المسابقة وتوزيع مستوياتهم ({(comp.evaluators || []).length})</span>
+              <span>بيانات مقيمي المسابقة وتوزيع مستوياتهم ولجانهم ({(comp.evaluators || []).length})</span>
             </h4>
-            <p className="text-[11px] sm:text-xs font-bold text-slate-600 dark:text-slate-400 mt-0.5">
-              يظهر أمام كل مقيم المستويات المسندة إليه، ويمكنك الضغط على أي مستوى لتفعيله أو إلغائه مباشرة أو تصدير التقسيم.
-            </p>
           </div>
 
           <div className="grid grid-cols-2 sm:flex items-center gap-2 shrink-0">
@@ -5662,9 +6238,9 @@ function CompetitionEvaluators({
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
-                      onClick={() => setEditingEval(ev)}
+                      onClick={() => handleOpenEditEvalModal(ev)}
                       className="min-h-[38px] px-2.5 text-xs bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900/40 rounded-xl flex items-center justify-center gap-1 transition active:scale-95 font-bold cursor-pointer"
-                      title="تعديل المقيم والمستويات المسندة له"
+                      title="تعديل المقيم والمستويات واللجان المسندة له"
                     >
                       <Edit size={14} />
                       <span>تعديل</span>
@@ -5681,29 +6257,61 @@ function CompetitionEvaluators({
                 </div>
 
                 <div className="pt-2 border-t border-slate-100 dark:border-slate-700/80 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-black text-emerald-900 dark:text-emerald-300">
-                      المستويات المسندة ({info.assignedLevelNames.join(' ، ') || 'لا يوجد'}):
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
+                  <span className="text-[11px] font-black text-emerald-900 dark:text-emerald-300 block">
+                    المستويات واللجان المسندة:
+                  </span>
+                  <div className="space-y-1.5">
                     {(comp.levels || []).map(lvl => {
                       const isAssigned = info.assignedLevels.some(al => al.id === lvl.id);
+                      const lvlCommittees = resolveLevelCommittees(lvl, comp.evaluators || []);
                       return (
-                        <button
+                        <div
                           key={lvl.id}
-                          type="button"
-                          onClick={() => handleQuickToggleLevel(lvl.id)}
-                          className={`px-2.5 py-1 rounded-xl text-xs font-black flex items-center gap-1 transition active:scale-95 cursor-pointer border ${
-                            isAssigned
-                              ? 'bg-emerald-700 text-white border-emerald-700 shadow-2xs'
-                              : 'bg-slate-50 dark:bg-slate-900 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-700'
-                          }`}
-                          title="اضغط لتفعيل أو إلغاء هذا المستوى للمقيم"
+                          className="p-2 rounded-xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-1.5"
                         >
-                          <Check size={13} className={isAssigned ? 'opacity-100' : 'opacity-25'} />
-                          <span>{lvl.name}</span>
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => handleQuickToggleLevel(lvl.id)}
+                            className={`px-2.5 py-1 rounded-xl text-xs font-black flex items-center gap-1 transition active:scale-95 cursor-pointer border ${
+                              isAssigned
+                                ? 'bg-emerald-700 text-white border-emerald-700 shadow-2xs'
+                                : 'bg-white dark:bg-slate-800 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-700'
+                            }`}
+                          >
+                            <Check size={13} className={isAssigned ? 'opacity-100' : 'opacity-25'} />
+                            <span>{lvl.name}</span>
+                          </button>
+
+                          {isAssigned && (
+                            <div className="flex flex-wrap items-center gap-1">
+                              {lvlCommittees.map(comm => {
+                                const inComm = (comm.evaluatorIds || [])
+                                  .map(Number)
+                                  .includes(Number(ev.id));
+                                return (
+                                  <button
+                                    key={comm.id}
+                                    type="button"
+                                    onClick={() =>
+                                      handleToggleEvaluatorCommitteeInLevel(ev, lvl, comm.id)
+                                    }
+                                    className={`px-2 py-0.5 rounded-lg text-[10px] font-black flex items-center gap-1 transition cursor-pointer border ${
+                                      inComm
+                                        ? 'bg-indigo-600 text-white border-indigo-600'
+                                        : 'bg-white dark:bg-slate-800 text-slate-500 border-slate-300 dark:border-slate-700'
+                                    }`}
+                                  >
+                                    <Check
+                                      size={10}
+                                      className={inComm ? 'opacity-100' : 'opacity-25'}
+                                    />
+                                    <span>{comm.name}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
@@ -5790,7 +6398,7 @@ function CompetitionEvaluators({
                 <th className="p-3.5 border-b dark:border-slate-700 w-12 text-center">#</th>
                 <th className="p-3.5 border-b dark:border-slate-700">اسم المقيم</th>
                 <th className="p-3.5 border-b dark:border-slate-700">رمز الدخول</th>
-                <th className="p-3.5 border-b dark:border-slate-700">المستويات المسندة للمقيم (اضغط للتبديل السريع)</th>
+                <th className="p-3.5 border-b dark:border-slate-700">المستوى واللجنة المسندة</th>
                 <th className="p-3.5 border-b dark:border-slate-700">صلاحية التعديل بعد الحفظ (بإذن المشرف)</th>
                 <th className="p-3.5 border-b dark:border-slate-700 text-center">المتسابقون</th>
                 <th className="p-3.5 border-b dark:border-slate-700 w-36 text-center">إجراءات</th>
@@ -5836,24 +6444,58 @@ function CompetitionEvaluators({
                       {ev.pin}
                     </td>
                     <td className="p-3.5 text-sm text-slate-600 dark:text-slate-300">
-                      <div className="flex flex-wrap gap-1.5">
+                      <div className="space-y-1.5">
                         {(comp.levels || []).map(lvl => {
                           const isAssigned = info.assignedLevels.some(al => al.id === lvl.id);
+                          const lvlCommittees = resolveLevelCommittees(lvl, comp.evaluators || []);
                           return (
-                            <button
+                            <div
                               key={lvl.id}
-                              type="button"
-                              onClick={() => handleQuickToggleLevel(lvl.id)}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-black flex items-center gap-1 transition active:scale-95 cursor-pointer border ${
-                                isAssigned
-                                  ? 'bg-emerald-700 text-white border-emerald-700 shadow-2xs'
-                                  : 'bg-slate-50 dark:bg-slate-900 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-700 hover:border-emerald-300'
-                              }`}
-                              title="اضغط لتفعيل أو إلغاء هذا المستوى للمقيم"
+                              className="flex flex-wrap items-center gap-1.5 p-1.5 rounded-xl bg-slate-50/70 dark:bg-slate-900/50 border border-slate-200/70 dark:border-slate-700"
                             >
-                              <Check size={12} className={isAssigned ? 'opacity-100' : 'opacity-25'} />
-                              <span>{lvl.name}</span>
-                            </button>
+                              <button
+                                type="button"
+                                onClick={() => handleQuickToggleLevel(lvl.id)}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-black flex items-center gap-1 transition active:scale-95 cursor-pointer border ${
+                                  isAssigned
+                                    ? 'bg-emerald-700 text-white border-emerald-700 shadow-2xs'
+                                    : 'bg-white dark:bg-slate-900 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-700 hover:border-emerald-300'
+                                }`}
+                              >
+                                <Check size={12} className={isAssigned ? 'opacity-100' : 'opacity-25'} />
+                                <span>{lvl.name}</span>
+                              </button>
+
+                              {isAssigned && (
+                                <div className="flex flex-wrap items-center gap-1">
+                                  {lvlCommittees.map(comm => {
+                                    const inComm = (comm.evaluatorIds || [])
+                                      .map(Number)
+                                      .includes(Number(ev.id));
+                                    return (
+                                      <button
+                                        key={comm.id}
+                                        type="button"
+                                        onClick={() =>
+                                          handleToggleEvaluatorCommitteeInLevel(ev, lvl, comm.id)
+                                        }
+                                        className={`px-2 py-0.5 rounded-lg text-[10px] font-black flex items-center gap-1 transition cursor-pointer border ${
+                                          inComm
+                                            ? 'bg-indigo-600 text-white border-indigo-600'
+                                            : 'bg-white dark:bg-slate-800 text-slate-500 border-slate-300 dark:border-slate-700'
+                                        }`}
+                                      >
+                                        <Check
+                                          size={10}
+                                          className={inComm ? 'opacity-100' : 'opacity-25'}
+                                        />
+                                        <span>{comm.name}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
                           );
                         })}
                       </div>
@@ -5926,12 +6568,12 @@ function CompetitionEvaluators({
                       <div className="flex items-center justify-center gap-1.5">
                         <button
                           type="button"
-                          onClick={() => setEditingEval(ev)}
+                          onClick={() => handleOpenEditEvalModal(ev)}
                           className="min-h-[36px] px-2.5 py-1 inline-flex items-center gap-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded-xl transition cursor-pointer text-xs font-bold"
-                          title="تعديل المقيم والمستويات المسندة له"
+                          title="تعديل المقيم والمستويات واللجان المسندة له"
                         >
                           <Edit size={16} />
-                          <span>تعديل المستويات</span>
+                          <span>تعديل المستوى واللجنة</span>
                         </button>
                         <button
                           type="button"
@@ -5965,14 +6607,12 @@ function CompetitionEvaluators({
                 <Award size={16} className="text-amber-600 shrink-0" />
                 <span>مراجعة تقسيم لجان المقيمين حسب المستويات ({(comp.levels || []).length} مستويات)</span>
               </h5>
-              <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                يوضح للمشرف أعضاء لجنة التحكيم في كل مستوى
-              </span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {(comp.levels || []).map((lvl, lvlIdx) => {
                 const lvlTheme = getLevelVisualTheme(lvlIdx);
+                const lvlCommittees = resolveLevelCommittees(lvl, comp.evaluators || []);
                 const levelEvaluators = sortedCompEvaluators.filter(ev => {
                   const info = getEvaluatorAssignedLevelsInfo(
                     ev,
@@ -6009,26 +6649,42 @@ function CompetitionEvaluators({
                         المقرر: {formatJuzsOrSurahsDisplay(lvl.juzsOrSurahs)}
                       </div>
 
-                      <div>
-                        <span className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                          لجنة المقيمين في هذا المستوى ({levelEvaluators.length}):
-                        </span>
-                        {levelEvaluators.length > 0 ? (
-                          <div className="flex flex-wrap gap-1">
-                            {levelEvaluators.map(ev => (
-                              <span
-                                key={ev.id}
-                                className="px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 text-[11px] font-black border border-slate-300 dark:border-slate-700 shadow-2xs"
-                              >
-                                {ev.name}
+                      <div className="space-y-1.5">
+                        {lvlCommittees.map(comm => {
+                          const commEvals = levelEvaluators.filter(ev =>
+                            (comm.evaluatorIds || []).map(Number).includes(Number(ev.id))
+                          );
+                          const effectiveCommEvals =
+                            lvlCommittees.length === 1 && commEvals.length === 0
+                              ? levelEvaluators
+                              : commEvals;
+                          return (
+                            <div
+                              key={comm.id}
+                              className="p-2 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-700 space-y-1"
+                            >
+                              <span className="text-[10px] font-black text-indigo-800 dark:text-indigo-300 block">
+                                {comm.name} ({effectiveCommEvals.length} مقيم):
                               </span>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400">
-                            ⚠️ لم يتم إسناد مقيم لهذا المستوى بعد
-                          </span>
-                        )}
+                              {effectiveCommEvals.length > 0 ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {effectiveCommEvals.map(ev => (
+                                    <span
+                                      key={ev.id}
+                                      className="px-2 py-0.5 rounded-lg bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-200 text-[11px] font-black border border-slate-300 dark:border-slate-700"
+                                    >
+                                      {ev.name}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400">
+                                  لم يُسند مقيم لهذه اللجنة
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
@@ -6039,7 +6695,7 @@ function CompetitionEvaluators({
         )}
       </div>
 
-      {/* نافذة تعديل المستويات المسندة للمقيم في المسابقة فقط */}
+      {/* نافذة تعديل المستويات واللجان المسندة للمقيم في المسابقة */}
       {editingEval && (
         <div
           className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6"
@@ -6048,11 +6704,11 @@ function CompetitionEvaluators({
           <form
             onSubmit={handleSaveEdit}
             onClick={e => e.stopPropagation()}
-            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-lg w-full p-5 sm:p-6 space-y-4 shadow-2xl"
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-lg w-full p-5 sm:p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto"
           >
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <h4 className="font-black text-base sm:text-lg text-emerald-950 dark:text-emerald-300">
-                تحديد المستويات المسندة للمقيم في المسابقة
+                تحديد المستوى واللجنة للمقيم في المسابقة
               </h4>
               <button
                 type="button"
@@ -6080,39 +6736,98 @@ function CompetitionEvaluators({
 
               <div>
                 <label className="text-xs font-bold text-slate-600 dark:text-slate-300 block mb-1.5">
-                  المستويات المسندة لهذا المقيم في هذه المسابقة:
+                  المستويات واللجان المسندة لهذا المقيم:
                 </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1.5 border rounded-2xl dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40">
+                <div className="grid grid-cols-1 gap-2 max-h-56 overflow-y-auto p-1.5 border rounded-2xl dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40">
                   {(comp.levels || []).map(lvl => {
                     const checked = (editingEval.levelIds || []).includes(lvl.id);
+                    const lvlCommittees = resolveLevelCommittees(lvl, comp.evaluators || []);
+                    const selectedCommsInModal =
+                      editingEvalCommitteesByLevel[lvl.id] &&
+                      editingEvalCommitteesByLevel[lvl.id].length > 0
+                        ? editingEvalCommitteesByLevel[lvl.id].map(Number)
+                        : [Number(lvlCommittees[0]?.id || 1)];
+
                     return (
-                      <button
+                      <div
                         key={lvl.id}
-                        type="button"
-                        onClick={() => {
-                          const current = editingEval.levelIds || [];
-                          const next = checked
-                            ? current.filter(id => id !== lvl.id)
-                            : [...current, lvl.id];
-                          setEditingEval({ ...editingEval, levelIds: next });
-                        }}
-                        className={`p-2.5 rounded-xl text-xs font-bold border transition flex items-center justify-between cursor-pointer ${
+                        className={`p-2.5 rounded-xl border transition space-y-2 ${
                           checked
-                            ? 'bg-emerald-700 text-white border-emerald-700 shadow-2xs'
-                            : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                            ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-600'
+                            : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'
                         }`}
                       >
-                        <span className="truncate">{lvl.name}</span>
-                        <Check size={15} className={checked ? 'opacity-100' : 'opacity-30'} />
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = editingEval.levelIds || [];
+                            const next = checked
+                              ? current.filter(id => id !== lvl.id)
+                              : [...current, lvl.id];
+                            setEditingEval({ ...editingEval, levelIds: next });
+                          }}
+                          className={`w-full p-2 rounded-lg text-xs font-black flex items-center justify-between cursor-pointer ${
+                            checked
+                              ? 'bg-emerald-700 text-white'
+                              : 'bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-300'
+                          }`}
+                        >
+                          <span className="truncate">{lvl.name}</span>
+                          <Check size={15} className={checked ? 'opacity-100' : 'opacity-30'} />
+                        </button>
+
+                        {checked && (
+                          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                            <span className="text-[10px] font-black text-slate-600 dark:text-slate-300">
+                              اللجنة:
+                            </span>
+                            {lvlCommittees.map(comm => {
+                              const isCommSelected = selectedCommsInModal.includes(
+                                Number(comm.id)
+                              );
+                              return (
+                                <button
+                                  key={comm.id}
+                                  type="button"
+                                  onClick={() => {
+                                    const exists = selectedCommsInModal.includes(
+                                      Number(comm.id)
+                                    );
+                                    const nextIds = exists
+                                      ? selectedCommsInModal.filter(
+                                          id => id !== Number(comm.id)
+                                        )
+                                      : [...selectedCommsInModal, Number(comm.id)];
+                                    if (nextIds.length === 0) return;
+                                    setEditingEvalCommitteesByLevel(prev => ({
+                                      ...prev,
+                                      [lvl.id]: nextIds,
+                                    }));
+                                  }}
+                                  className={`px-2 py-0.5 rounded-lg text-[10px] font-black flex items-center gap-1 transition cursor-pointer border ${
+                                    isCommSelected
+                                      ? 'bg-indigo-600 text-white border-indigo-600'
+                                      : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+                                  }`}
+                                >
+                                  <Check
+                                    size={10}
+                                    className={isCommSelected ? 'opacity-100' : 'opacity-25'}
+                                  />
+                                  <span>{comm.name}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
               </div>
 
-              {/* بطاقة صلاحية تعديل التقييمات بعد الحفظ (ملونة ومميزة مع تمييز كل جزئية بلون خاص) */}
+              {/* بطاقة صلاحية تعديل التقييمات بعد الحفظ */}
               <div className="p-4 rounded-2xl bg-gradient-to-br from-indigo-50/90 via-purple-50/40 to-amber-50/60 dark:from-indigo-950/50 dark:via-purple-950/30 dark:to-amber-950/20 border-2 border-indigo-300 dark:border-indigo-700 shadow-md space-y-3.5">
-                {/* 1. رأس البطاقة: عنوان مميز بأيقونة مع عداد الصلاحيات وأزرار التحكم السريع */}
                 <div className="flex items-center justify-between gap-2 flex-wrap border-b border-indigo-100 dark:border-indigo-900/60 pb-2.5">
                   <div className="flex items-center gap-2">
                     <div className="p-1.5 rounded-xl bg-indigo-600 text-white shadow-xs">
@@ -6128,7 +6843,6 @@ function CompetitionEvaluators({
                     </div>
                   </div>
 
-                  {/* أزرار السماح والقفل السريع الملونة */}
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
@@ -6157,15 +6871,6 @@ function CompetitionEvaluators({
                   </div>
                 </div>
 
-                {/* 2. شريط التوجيه والإيضاح بلون أزرق تنبيهي مميز */}
-                <div className="p-2.5 rounded-xl bg-blue-50/90 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900/60 text-blue-950 dark:text-blue-200 text-[11px] font-bold flex items-start gap-2 leading-relaxed">
-                  <div className="w-2 h-2 rounded-full bg-blue-600 shrink-0 mt-1.5" />
-                  <span>
-                    الوضع الافتراضي هو <strong>«مقفل بعد الحفظ»</strong> لحماية الدرجات. اضغط على أي مستوى لفتح إمكانية إعادة التقييم للمقيم فيه.
-                  </span>
-                </div>
-
-                {/* 3. شبكة المستويات مع تمييز لوني واضح بين المسموح (أخضر) والمقفل (رمادي/أحمر) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-44 overflow-y-auto p-2 border-2 rounded-2xl dark:border-slate-700 bg-white dark:bg-slate-900 shadow-inner">
                   {(comp.levels || []).map(lvl => {
                     const isAssigned =
