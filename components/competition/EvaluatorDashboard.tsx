@@ -181,6 +181,21 @@ export default function EvaluatorDashboard({
     }
   };
 
+  // معرفات المقيم الفعالة داخل المسابقة (مراعاة التطابق بالمعرف أو الاسم)
+  const effectiveEvaluatorIds = useMemo(() => {
+    const ids = new Set<number>([Number(evaluator.id)]);
+    const normName = evaluator.name.trim().toLowerCase();
+    (comp.evaluators || []).forEach(ev => {
+      if (
+        Number(ev.id) === Number(evaluator.id) ||
+        ev.name.trim().toLowerCase() === normName
+      ) {
+        ids.add(Number(ev.id));
+      }
+    });
+    return ids;
+  }, [comp.evaluators, evaluator.id, evaluator.name]);
+
   // المستويات المسندة لهذا المقيم
   const assignedLevels = useMemo(() => {
     const allLevels = comp.levels || [];
@@ -191,17 +206,17 @@ export default function EvaluatorDashboard({
 
     return allLevels.filter(l => {
       const inCommittee = (l.committees || []).some(c =>
-        (c.evaluatorIds || []).map(Number).includes(Number(evaluator.id))
+        (c.evaluatorIds || []).some(id => effectiveEvaluatorIds.has(Number(id)))
       );
       if (inCommittee) return true;
       if (!allowedSet) return true;
       return allowedSet.has(Number(l.id));
     });
-  }, [comp.levels, evaluator.levelIds, evaluator.id]);
+  }, [comp.levels, evaluator.levelIds, effectiveEvaluatorIds]);
 
   const allParticipants = comp.participants || [];
 
-  // جميع الطلاب الذين يقعون ضمن مستويات ولجان هذا المقيم مرتبين هجائياً
+  // المتسابقون الذين يقعون ضمن لجنة المقيم فقط في كل مستوى مسند إليه (مرتبين هجائياً)
   const myLevelParticipants = useMemo(() => {
     const assignedLevelIds = new Set(assignedLevels.map(l => Number(l.id)));
 
@@ -214,17 +229,19 @@ export default function EvaluatorDashboard({
         const committees = resolveLevelCommittees(lvl, comp.evaluators || []);
         if (committees.length > 1) {
           const myCommittees = committees.filter(c =>
-            (c.evaluatorIds || []).map(Number).includes(Number(evaluator.id))
+            (c.evaluatorIds || []).some(id => effectiveEvaluatorIds.has(Number(id)))
           );
+          const pCommId = resolveParticipantCommitteeId(p, committees);
           if (myCommittees.length > 0) {
-            const pCommId = resolveParticipantCommitteeId(p, committees);
             return myCommittees.some(c => Number(c.id) === Number(pCommId));
           }
+          // إذا لم يُحدد للمقيم لجنة فرعية بعد في مستوى متعدد اللجان، يظهر له متسابقو اللجنة الأولى فقط
+          return Number(pCommId) === Number(committees[0]?.id || 1);
         }
         return true;
       })
       .sort((a, b) => compareArabicNames(a.name, b.name));
-  }, [allParticipants, assignedLevels, comp.levels, comp.evaluators, evaluator.id]);
+  }, [allParticipants, assignedLevels, comp.levels, comp.evaluators, effectiveEvaluatorIds]);
 
   // خريطة حالة التقييم المحفوظ محلياً (غير المعتمد بعد) لكل متسابق
   const participantDraftMap = useMemo(() => {

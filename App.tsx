@@ -31,6 +31,7 @@ import {
   smartParseFirebaseConfig,
 } from './utils/firebase';
 import { initSwipeNavigation } from './utils/navigationHistory';
+import { ensureOfficialDhahirahCommitteesApplied } from './utils/dhahirahCommitteeDistribution';
 
 initSwipeNavigation();
 
@@ -73,68 +74,77 @@ const toArray = <T,>(val: any): T[] => {
   return [];
 };
 
-const normalizeCompetition = (c: any): Competition => ({
-  id: String(c?.id || Date.now()),
-  name: c?.name || 'مسابقة قرآنية',
-  seasonText: c?.seasonText || 'الموسم الثالث عشر - لعام 1447 هـ / 2026 م',
-  isActive: Boolean(c?.isActive),
-  passageMode:
-    c?.passageMode === 'international' || c?.passageMode === 'manual' || c?.passageMode === 'random'
-      ? c.passageMode
-      : 'random',
-  previewLinesPerSegment: Number(c?.previewLinesPerSegment) > 0 ? Number(c.previewLinesPerSegment) : undefined,
-  manualPassages: toArray<any>(c?.manualPassages)
-    .filter(mp => mp && Number(mp.juzNumber) >= 1 && Number(mp.juzNumber) <= 30)
-    .map((mp, idx) => ({
-      id: String(mp.id || `mp-${mp.juzNumber}-${idx}-${Date.now()}`),
-      juzNumber: Number(mp.juzNumber),
-      startSurahId: Number(mp.startSurahId || 1),
-      startAyah: Number(mp.startAyah || 1),
-      endSurahId: Number(mp.endSurahId || mp.startSurahId || 1),
-      endAyah: Number(mp.endAyah || mp.startAyah || 1),
-      notes: mp.notes ? String(mp.notes) : undefined,
+const normalizeCompetition = (c: any): Competition =>
+  ensureOfficialDhahirahCommitteesApplied({
+    id: String(c?.id || Date.now()),
+    name: c?.name || 'مسابقة قرآنية',
+    seasonText: c?.seasonText || 'الموسم الثالث عشر - لعام 1447 هـ / 2026 م',
+    isActive: Boolean(c?.isActive),
+    passageMode:
+      c?.passageMode === 'international' || c?.passageMode === 'manual' || c?.passageMode === 'random'
+        ? c.passageMode
+        : 'random',
+    previewLinesPerSegment: Number(c?.previewLinesPerSegment) > 0 ? Number(c.previewLinesPerSegment) : undefined,
+    manualPassages: toArray<any>(c?.manualPassages)
+      .filter(mp => mp && Number(mp.juzNumber) >= 1 && Number(mp.juzNumber) <= 30)
+      .map((mp, idx) => ({
+        id: String(mp.id || `mp-${mp.juzNumber}-${idx}-${Date.now()}`),
+        juzNumber: Number(mp.juzNumber),
+        startSurahId: Number(mp.startSurahId || 1),
+        startAyah: Number(mp.startAyah || 1),
+        endSurahId: Number(mp.endSurahId || mp.startSurahId || 1),
+        endAyah: Number(mp.endAyah || mp.startAyah || 1),
+        notes: mp.notes ? String(mp.notes) : undefined,
+      })),
+    errors: toArray<any>(c?.errors),
+    errorCategories: toArray<any>(c?.errorCategories),
+    levels: toArray<any>(c?.levels).map(l => ({
+      ...l,
+      id: Number(l?.id || Date.now()),
+      segmentsCount: Number(l?.segmentsCount || 5),
+      linesPerSegment: Number(l?.linesPerSegment || 7),
+      maxScore: Number(l?.maxScore || 100),
+      errors: toArray<any>(l?.errors),
+      errorCategories: toArray<any>(l?.errorCategories),
+      committees: l?.committees
+        ? toArray<any>(l.committees).map((comm, cIdx) => ({
+            id: Number(comm?.id || cIdx + 1),
+            name: String(comm?.name || `اللجنة ${cIdx + 1}`),
+            evaluatorIds: toArray<number>(comm?.evaluatorIds).map(Number),
+          }))
+        : undefined,
     })),
-  errors: toArray<any>(c?.errors),
-  errorCategories: toArray<any>(c?.errorCategories),
-  levels: toArray<any>(c?.levels).map(l => ({
-    ...l,
-    id: Number(l?.id || Date.now()),
-    segmentsCount: Number(l?.segmentsCount || 5),
-    linesPerSegment: Number(l?.linesPerSegment || 7),
-    maxScore: Number(l?.maxScore || 100),
-    errors: toArray<any>(l?.errors),
-    errorCategories: toArray<any>(l?.errorCategories),
-  })),
-  evaluators: toArray<any>(c?.evaluators).map(ev => ({
-    ...ev,
-    id: Number(ev?.id || Date.now()),
-    levelIds: toArray<number>(ev?.levelIds).map(Number),
-  })),
-  participants: toArray<any>(c?.participants).map(p => ({
-    ...p,
-    id: Number(p?.id || Date.now()),
-    levelId: Number(p?.levelId || 0),
-    isUnmemorized: Boolean(p?.isUnmemorized),
-  })),
-  evaluations: toArray<any>(c?.evaluations).map(ev => ({
-    ...ev,
-    id: Number(ev?.id || Date.now()),
-    participantId: Number(ev?.participantId || 0),
-    evaluatorId: Number(ev?.evaluatorId || 0),
-    levelId: Number(ev?.levelId || 0),
-    totalScore: Number(ev?.totalScore || 0),
-    timestamp: Number(ev?.timestamp || Date.now()),
-    notes: ev?.notes ? String(ev.notes) : undefined,
-    isUnmemorized: Boolean(ev?.isUnmemorized),
-    segments: toArray<any>(ev?.segments).map((seg, idx) => ({
-      ...seg,
-      segmentNumber: Number(seg?.segmentNumber || idx + 1),
-      score: Number(seg?.score || 0),
-      isUnmemorized: Boolean(seg?.isUnmemorized),
-      errorsCount: seg?.errorsCount && typeof seg.errorsCount === 'object' ? seg.errorsCount : {},
+    evaluators: toArray<any>(c?.evaluators).map(ev => ({
+      ...ev,
+      id: Number(ev?.id || Date.now()),
+      levelIds: toArray<number>(ev?.levelIds).map(Number),
     })),
-  })),
-});
+    participants: toArray<any>(c?.participants).map(p => ({
+      ...p,
+      id: Number(p?.id || Date.now()),
+      levelId: Number(p?.levelId || 0),
+      committeeId: p?.committeeId !== undefined && p?.committeeId !== null ? Number(p.committeeId) : undefined,
+      isUnmemorized: Boolean(p?.isUnmemorized),
+    })),
+    evaluations: toArray<any>(c?.evaluations).map(ev => ({
+      ...ev,
+      id: Number(ev?.id || Date.now()),
+      participantId: Number(ev?.participantId || 0),
+      evaluatorId: Number(ev?.evaluatorId || 0),
+      levelId: Number(ev?.levelId || 0),
+      totalScore: Number(ev?.totalScore || 0),
+      timestamp: Number(ev?.timestamp || Date.now()),
+      notes: ev?.notes ? String(ev.notes) : undefined,
+      isUnmemorized: Boolean(ev?.isUnmemorized),
+      segments: toArray<any>(ev?.segments).map((seg, idx) => ({
+        ...seg,
+        segmentNumber: Number(seg?.segmentNumber || idx + 1),
+        score: Number(seg?.score || 0),
+        isUnmemorized: Boolean(seg?.isUnmemorized),
+        errorsCount: seg?.errorsCount && typeof seg.errorsCount === 'object' ? seg.errorsCount : {},
+      })),
+    })),
+  });
 
 interface AppDataState {
   users: User[];

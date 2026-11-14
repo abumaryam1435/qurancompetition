@@ -732,7 +732,12 @@ function getEvaluatorAssignedLevelsInfo(
   const rawIds = Array.isArray(ev.levelIds) ? ev.levelIds.map(Number) : [];
   const assignedLevels =
     rawIds.length > 0
-      ? safeLevels.filter(l => rawIds.includes(Number(l.id)))
+      ? safeLevels.filter(l => {
+          if (rawIds.includes(Number(l.id))) return true;
+          return (l.committees || []).some(c =>
+            (c.evaluatorIds || []).map(Number).includes(Number(ev.id))
+          );
+        })
       : safeLevels;
 
   const assignedLevelNames = assignedLevels.map(l => l.name);
@@ -745,9 +750,22 @@ function getEvaluatorAssignedLevelsInfo(
       : 'جميع المستويات';
 
   const assignedLevelIdsSet = new Set(assignedLevels.map(l => Number(l.id)));
-  const participantsCount = (participants || []).filter(p =>
-    assignedLevelIdsSet.has(Number(p.levelId))
-  ).length;
+  const participantsCount = (participants || []).filter(p => {
+    if (!assignedLevelIdsSet.has(Number(p.levelId))) return false;
+    const lvl = safeLevels.find(l => Number(l.id) === Number(p.levelId));
+    const committees = resolveLevelCommittees(lvl, [ev]);
+    if (committees.length > 1) {
+      const myCommittees = committees.filter(c =>
+        (c.evaluatorIds || []).map(Number).includes(Number(ev.id))
+      );
+      const pCommId = resolveParticipantCommitteeId(p, committees);
+      if (myCommittees.length > 0) {
+        return myCommittees.some(c => Number(c.id) === Number(pCommId));
+      }
+      return Number(pCommId) === Number(committees[0]?.id || 1);
+    }
+    return true;
+  }).length;
 
   return {
     assignedLevels,
