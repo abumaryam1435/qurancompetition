@@ -1,6 +1,14 @@
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { Competition, CompetitionLevel } from '../types';
+import {
+  isServerPdfAvailable,
+  tryServerPdfDownload,
+  waitFontsBriefly,
+  createIsolatedIgnoreFilter,
+  withRtlCanvasText,
+  yieldToMainThread,
+} from './fastPdfExport';
 
 export interface ComprehensivePdfOptions {
   comp: Competition;
@@ -92,7 +100,7 @@ function escapeHtml(val: any): string {
 /**
  * تقسيم المتسابقين إلى دفعات صفحات بحيث لا ينقسم سجل أي متسابق (مهما كان عدد مقيميه) بين صفحتين أبداً
  */
-function chunkResultsBySubRows(results: any[], maxSubRowsPerPage = 15): any[][] {
+function chunkResultsBySubRows(results: any[], maxSubRowsPerPage = 18): any[][] {
   if (!results || results.length === 0) return [[]];
   const pages: any[][] = [];
   let currentPage: any[] = [];
@@ -832,8 +840,10 @@ export async function exportComprehensiveWorkbookStylePdf(
     })
   );
 
-  // محاولة التصدير عبر /api/pdf أولاً إن كان متوفراً، وإلا عبر التصيير المباشر لكل صفحة أفقية بواسطة html2canvas + jsPDF
-  const fullVectorHtml = `<!DOCTYPE html>
+  // التحقق السريع المخزن مؤقتاً: في Netlify/الاستضافات الساكنة نتجنب بناء وإرسال HTML للخادم فوراً
+  const hasServerPdf = await isServerPdfAvailable();
+  if (hasServerPdf) {
+    const fullVectorHtml = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8" />
@@ -880,62 +890,39 @@ export async function exportComprehensiveWorkbookStylePdf(
 </body>
 </html>`;
 
-  try {
-    const res = await fetch('/api/pdf', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ html: fullVectorHtml, orientation: 'landscape' }),
-    });
-    if (res.ok) {
-      const pdfBlob = await res.blob();
-      if (pdfBlob.size > 500) {
-        const url = URL.createObjectURL(pdfBlob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `${fileName}.pdf`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        setTimeout(() => URL.revokeObjectURL(url), 5000);
-        return;
-      }
-    }
-  } catch {
-    // الانتقال السلس للتوليد المباشر لكل صفحة أفقية في المتصفح (يدعم Netlify والعمل بدون خادم)
+    const downloaded = await tryServerPdfDownload(
+      fullVectorHtml,
+      'landscape',
+      fileName
+    );
+    if (downloaded) return;
   }
 
-  if (document.fonts && document.fonts.ready) {
-    await document.fonts.ready;
-  }
+  await waitFontsBriefly(450);
 
   const host = document.createElement('div');
+  host.id = 'fast-pdf-render-host';
   host.style.position = 'fixed';
   host.style.top = '0';
-  host.style.left = '-10000px';
+  host.style.left = '-20000px';
   host.style.width = '1680px';
   host.style.background = '#FFFFFF';
   host.style.zIndex = '-9999';
   host.setAttribute('dir', 'rtl');
   document.body.appendChild(host);
 
-  const origFillText = CanvasRenderingContext2D.prototype.fillText;
-  CanvasRenderingContext2D.prototype.fillText = function (
-    text: string,
-    x: number,
-    y: number,
-    maxWidth?: number
-  ) {
-    this.direction = 'rtl';
-    return maxWidth !== undefined
-      ? origFillText.call(this, text, x, y, maxWidth)
-      : origFillText.call(this, text, x, y);
-  };
+  const ignoreFilter = createIsolatedIgnoreFilter(host);
+  const totalSheets = pageHtmlList.length;
+  // دقة متوازنة تضمن سرعة فائقة على Netlify مع وضوح عالٍ لجميع الأرقام والنصوص العربية
+  const renderScale =
+    totalSheets <= 12 ? 1.75 : totalSheets <= 30 ? 1.5 : 1.35;
 
   try {
     const pdf = new jsPDF({
       orientation: 'landscape',
       unit: 'mm',
       format: 'a4',
+      compress: true,
     });
 
     const pdfPageWidth = pdf.internal.pageSize.getWidth(); // 297mm
@@ -944,49 +931,65 @@ export async function exportComprehensiveWorkbookStylePdf(
     const maxWidthMm = pdfPageWidth - marginMm * 2;
     const maxHeightMm = pdfPageHeight - marginMm * 2;
 
-    for (let i = 0; i < pageHtmlList.length; i++) {
-      host.innerHTML = pageHtmlList[i];
-      const sheetEl = host.firstElementChild as HTMLElement;
-      if (!sheetEl) continue;
+    await withRtlCanvasText(async () => {
+      for (let i = 0; i < totalSheets; i++) {
+        host.innerHTML = pageHtmlList[i];
+        const sheetEl = host.firstElementChild as HTMLElement;
+        if (!sheetEl) continue;
 
-      const canvas = await html2canvas(sheetEl, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#FFFFFF',
-        windowWidth: 1680,
-      });
+        const canvas = await html2canvas(sheetEl, {
+          scale: renderScale,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#FFFFFF',
+          windowWidth: 1680,
+          scrollX: 0,
+          scrollY: 0,
+          ignoreElements: ignoreFilter,
+          onclone: clonedDoc => {
+            clonedDoc.documentElement.setAttribute('dir', 'rtl');
+            clonedDoc.documentElement.setAttribute('lang', 'ar');
+            clonedDoc.documentElement.classList.remove('dark');
+          },
+        });
 
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-      if (i > 0) {
-        pdf.addPage('a4', 'landscape');
+        const imgData = canvas.toDataURL('image/jpeg', 0.92);
+        if (i > 0) {
+          pdf.addPage('a4', 'landscape');
+        }
+
+        const ratio = canvas.width / Math.max(1, canvas.height);
+        let renderWidthMm = maxWidthMm;
+        let renderHeightMm = renderWidthMm / ratio;
+
+        if (renderHeightMm > maxHeightMm) {
+          renderHeightMm = maxHeightMm;
+          renderWidthMm = renderHeightMm * ratio;
+        }
+
+        const offsetX = marginMm + (maxWidthMm - renderWidthMm) / 2;
+        const offsetY = marginMm;
+
+        pdf.addImage(
+          imgData,
+          'JPEG',
+          offsetX,
+          offsetY,
+          renderWidthMm,
+          renderHeightMm,
+          undefined,
+          'FAST'
+        );
+
+        canvas.width = 0;
+        canvas.height = 0;
+        options.onProgress?.(`(${i + 1}/${totalSheets})`);
+        await yieldToMainThread();
       }
-
-      const ratio = canvas.width / Math.max(1, canvas.height);
-      let renderWidthMm = maxWidthMm;
-      let renderHeightMm = renderWidthMm / ratio;
-
-      if (renderHeightMm > maxHeightMm) {
-        renderHeightMm = maxHeightMm;
-        renderWidthMm = renderHeightMm * ratio;
-      }
-
-      const offsetX = marginMm + (maxWidthMm - renderWidthMm) / 2;
-      const offsetY = marginMm;
-
-      pdf.addImage(
-        imgData,
-        'JPEG',
-        offsetX,
-        offsetY,
-        renderWidthMm,
-        renderHeightMm
-      );
-    }
+    });
 
     pdf.save(`${fileName}.pdf`);
   } finally {
-    CanvasRenderingContext2D.prototype.fillText = origFillText;
     if (host.parentNode) {
       host.parentNode.removeChild(host);
     }

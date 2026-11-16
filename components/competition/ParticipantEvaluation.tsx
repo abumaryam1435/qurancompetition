@@ -48,7 +48,8 @@ import {
 } from '../../utils/juzUtils';
 import { preloadMushafPages } from '../../utils/mushafPreload';
 import { preloadVerseLinesForPages } from '../../utils/mushafVerseHighlightService';
-import { Logo, AwqafBadge } from '../Logo';
+import { Logo } from '../Logo';
+import { OfficialReportMasthead } from './EvaluatorReportHeader';
 
 interface ResolvedScopeDetails {
   scopeType: 'juzs' | 'surahs';
@@ -1019,20 +1020,26 @@ export default function ParticipantEvaluation({
       className="bg-slate-50 dark:bg-slate-950 min-h-[100dvh] w-full max-w-full overflow-x-hidden text-slate-800 dark:text-slate-100 pb-12 text-right"
       dir="rtl"
     >
-      {/* ترويسة التقييم العلوية: منسقة للهاتف (سطران بعرض كامل للاسم الثلاثي والقبيلة) وللكمبيوتر (سطر واحد) */}
-      <header className="bg-white dark:bg-slate-900 px-2.5 sm:px-6 py-2 sm:py-3.5 shadow-sm sticky top-0 z-20 border-b border-slate-200 dark:border-slate-800 w-full">
-        {/* تخطيط الكمبيوتر والشاشات الكبيرة (سطر واحد كما هو) */}
-        <div className="hidden sm:flex items-center justify-between gap-3 w-full">
+      {/* ترويسة التقارير الرسمية في أعلى صفحة بدء تقييم المتسابق */}
+      <OfficialReportMasthead
+        compName={comp.name}
+        seasonText={comp.seasonText}
+        maxWidthClass="max-w-4xl"
+      />
+
+      {/* شريط بيانات المتسابق والدرجة الكلية الثابت أثناء التمرير: متكيف مع الهاتف والحاسوب */}
+      <header className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-2.5 sm:px-6 py-2 sm:py-3 shadow-sm sticky top-0 z-20 border-b border-slate-200 dark:border-slate-800 w-full">
+        {/* تخطيط الكمبيوتر والشاشات الكبيرة */}
+        <div className="hidden sm:flex items-center justify-between gap-3 max-w-4xl mx-auto w-full">
           <div className="flex items-center gap-2.5 min-w-0 flex-1">
             <button
               onClick={handleAttemptExit}
-              className="min-h-[40px] min-w-[40px] p-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-xl transition active:scale-95 flex items-center justify-center shrink-0 cursor-pointer"
+              className="min-h-[40px] min-w-[40px] p-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition active:scale-95 flex items-center justify-center shrink-0 cursor-pointer"
               title="رجوع لقائمة المتسابقين"
             >
               <ChevronRight size={20} />
             </button>
             <Logo size="xs" className="flex shrink-0" />
-            <AwqafBadge variant="compact" tone="adaptive" />
             <div className="min-w-0 flex-1 text-right">
               <h1 className="text-lg font-black text-slate-900 dark:text-white leading-snug break-words whitespace-normal">
                 {participant.name}
@@ -1079,7 +1086,7 @@ export default function ParticipantEvaluation({
               <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 leading-none">
                 {hasAnyUnmemorized ? 'غير حافظ' : 'الدرجة الكلية'}
               </span>
-              <span className="text-xl font-black leading-tight text-emerald-800 dark:text-emerald-300">
+              <span className="text-xl font-black leading-tight text-emerald-800 dark:text-emerald-300 tabular-nums">
                 {totalScore}{' '}
                 <span className="text-xs font-bold text-slate-500">
                   / {level.maxScore}
@@ -1095,13 +1102,12 @@ export default function ParticipantEvaluation({
             <div className="flex items-center gap-1.5 shrink-0">
               <button
                 onClick={handleAttemptExit}
-                className="min-h-[36px] min-w-[36px] p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-xl transition active:scale-95 flex items-center justify-center shrink-0 cursor-pointer"
+                className="min-h-[44px] min-w-[44px] p-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition active:scale-95 flex items-center justify-center shrink-0 cursor-pointer"
                 title="رجوع لقائمة المتسابقين"
               >
-                <ChevronRight size={19} />
+                <ChevronRight size={20} />
               </button>
               <Logo size="xs" className="flex shrink-0" />
-              <AwqafBadge variant="compact" tone="adaptive" />
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
@@ -1134,7 +1140,7 @@ export default function ParticipantEvaluation({
                 <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400 leading-none">
                   {hasAnyUnmemorized ? 'غير حافظ' : 'الدرجة الكلية'}
                 </span>
-                <span className="text-sm font-black leading-tight text-emerald-800 dark:text-emerald-300">
+                <span className="text-sm font-black leading-tight text-emerald-800 dark:text-emerald-300 tabular-nums">
                   {totalScore}{' '}
                   <span className="text-[10px] font-bold text-slate-500">
                     / {level.maxScore}

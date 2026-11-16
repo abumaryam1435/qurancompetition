@@ -46,8 +46,6 @@ import {
   Unlock,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
 import { surahNames } from '../../utils/quranData';
 import {
   DEFAULT_ERROR_CATEGORIES,
@@ -81,9 +79,15 @@ import {
   getLevelSheetTheme,
 } from '../../utils/excelStyledExport';
 import { exportComprehensiveWorkbookStylePdf } from '../../utils/comprehensivePdfExport';
-
-const inlinedImageCache = new Map<string, string>();
+import {
+  isServerPdfAvailable,
+  tryServerPdfDownload,
+  getCachedCompiledCss,
+  inlineAndDecodeImages,
+  exportDomElementToFastPdf,
+} from '../../utils/fastPdfExport';
 import MultiSelectFilterDropdown from './MultiSelectFilterDropdown';
+import { OfficialBannerCrestsBand } from './EvaluatorReportHeader';
 
 /**
  * تنظيف اسم المتسابق عند اللصق من قوائم مرقمة (مثل واتساب أو وورد: "1- أحمد" أو "١. محمد")
@@ -1281,81 +1285,34 @@ async function exportCompetitionSetupPDF(
   const safeName = (comp.name || 'المسابقة').replace(/[\\/:*?"<>|]/g, '_');
   const fileName = `إعدادات_ومراجعة_${safeName}`;
 
-  try {
-    const res = await fetch('/api/pdf', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ html: fullHtml, orientation: 'portrait' }),
-    });
-    if (res.ok) {
-      const pdfBlob = await res.blob();
-      if (pdfBlob.size > 500) {
-        const url = URL.createObjectURL(pdfBlob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `${fileName}.pdf`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        setTimeout(() => URL.revokeObjectURL(url), 5000);
-        showToast?.('تم تصدير وثيقة إعدادات المسابقة بصيغة PDF بنجاح!', 'success');
-        return;
-      }
+  if (await isServerPdfAvailable()) {
+    const downloaded = await tryServerPdfDownload(fullHtml, 'portrait', fileName);
+    if (downloaded) {
+      showToast?.('تم تصدير وثيقة إعدادات المسابقة بصيغة PDF بنجاح!', 'success');
+      return;
     }
-  } catch (err) {
-    console.warn('Server PDF fallback to client canvas:', err);
   }
 
-  // Fallback via html2canvas + jsPDF if /api/pdf is unavailable (e.g. static hosting)
+  // تصدير سريع ومحسّن بالمتصفح (يدعم Netlify والعمل بدون خادم) مع تقطيع ذكي للصفوف
   const tempContainer = document.createElement('div');
-  tempContainer.style.position = 'fixed';
-  tempContainer.style.top = '-10000px';
-  tempContainer.style.left = '0';
   tempContainer.style.width = '960px';
   tempContainer.style.background = '#ffffff';
-  tempContainer.style.zIndex = '-1';
   tempContainer.setAttribute('dir', 'rtl');
   tempContainer.innerHTML = fullHtml;
-  document.body.appendChild(tempContainer);
 
   try {
-    if (document.fonts && document.fonts.ready) {
-      await document.fonts.ready;
-    }
-    const canvas = await html2canvas(tempContainer, {
-      scale: 2,
-      useCORS: true,
-      logging: false,
-      backgroundColor: '#ffffff',
-      windowWidth: 960,
-    });
-    const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF({
+    await exportDomElementToFastPdf({
+      element: tempContainer,
+      fileName,
       orientation: 'portrait',
-      unit: 'mm',
-      format: 'a4',
+      renderWidthPx: 960,
+      marginMm: 6,
+      atomicSelector: 'tr, .section-title',
     });
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    let heightLeft = pdfHeight;
-    let position = 0;
-
-    pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
-    heightLeft -= pageHeight;
-    while (heightLeft > 0) {
-      position = heightLeft - pdfHeight;
-      pdf.addPage();
-      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
-      heightLeft -= pageHeight;
-    }
-    pdf.save(`${fileName}.pdf`);
     showToast?.('تم تصدير وثيقة إعدادات المسابقة بصيغة PDF بنجاح!', 'success');
   } catch (e) {
-    console.error('Setup PDF fallback error:', e);
+    console.error('Setup PDF export error:', e);
     showToast?.('تعذر تصدير PDF، يرجى المحاولة مرة أخرى', 'error');
-  } finally {
-    document.body.removeChild(tempContainer);
   }
 }
 
@@ -8081,15 +8038,8 @@ export function OfficialReportHeader({
         ))}
       </div>
 
-      {/* صورة الديباجة الرسمية المعتمدة */}
-      <div className="relative w-full bg-[#f6f9f6] px-3 py-3 sm:px-6 sm:py-4 flex items-center justify-center border-b-2 border-amber-300/80">
-        <img
-          src="/assets/aistudio/Screenshot_____-__-__-__-__-__-___6012fa4d4ddec268fc5c7112cbb265e7_a7e4dd59.jpg"
-          alt="ديباجة مسابقة محافظة الظاهرة للقرآن الكريم"
-          crossOrigin="anonymous"
-          className="w-full max-w-4xl h-auto max-h-40 sm:max-h-52 object-contain"
-        />
-      </div>
+      {/* الترويسة الرسمية المفصولة: الشعار اليمين أقصى اليمين • شعار واسم المسابقة في الوسط • الشعار اليسار أقصى اليسار */}
+      <OfficialBannerCrestsBand className="border-b-2 border-amber-300/80" />
 
       {/* شريط نص الموسم واسم المسابقة تحت الديباجة مباشرة */}
       <div className="bg-gradient-to-l from-[#09152C] via-[#132A52] to-[#09152C] text-white py-3 px-4 sm:px-6 border-b border-amber-400/50">
@@ -8283,6 +8233,7 @@ function CompetitionReports({
     CompetitionParticipant | 'all' | null
   >(null);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [pdfProgressText, setPdfProgressText] = useState('');
   const context = useContext(AppContext);
 
   // دالة مساعدة للحصول على اسم المقيم
@@ -8824,45 +8775,9 @@ function CompetitionReports({
   }, [baseFilteredResults, evalAvgFilterMode, evaluatedStudentsCount]);
 
   /**
-   * تحويل الصور داخل عنصر التقرير إلى Data URL (Base64) مع التخزين المؤقت الفوري لضمان سرعة تصدير الـ PDF
-   */
-  const inlineImagesInClone = async (rootEl: HTMLElement) => {
-    const imgs = Array.from(rootEl.querySelectorAll('img'));
-    await Promise.all(
-      imgs.map(async img => {
-        try {
-          const src = img.getAttribute('src') || '';
-          if (!src || src.startsWith('data:')) return;
-          const absUrl = src.startsWith('http')
-            ? src
-            : `${window.location.origin}${src.startsWith('/') ? '' : '/'}${src}`;
-          if (inlinedImageCache.has(absUrl)) {
-            img.setAttribute('src', inlinedImageCache.get(absUrl)!);
-            return;
-          }
-          const response = await fetch(absUrl);
-          if (!response.ok) return;
-          const blob = await response.blob();
-          const dataUrl = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(String(reader.result || ''));
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-          });
-          if (dataUrl.startsWith('data:')) {
-            inlinedImageCache.set(absUrl, dataUrl);
-            img.setAttribute('src', dataUrl);
-          }
-        } catch {
-          // ignore individual image inline error
-        }
-      })
-    );
-  };
-
-  /**
    * تصدير التقرير الرسمي إلى PDF بسرعة فائقة وجودة عالية جداً وبخط عربي متصل وسليم 100%
-   * يتم تضمين قواعد CSS المجمّعة مباشرة داخل HTML لتفادي أي طلبات شبكة بطيئة داخل الخادم
+   * - على الخادم المحلي/السحابي يستخدم /api/pdf المتجهي
+   * - على Netlify والاستضافات الساكنة يتجاوز خطوة الخادم فوراً ويستخدم المحرك السريع المعزول
    */
   const exportToPdf = async (
     elementId: string,
@@ -8870,50 +8785,31 @@ function CompetitionReports({
     isLandscape = false
   ) => {
     const el = document.getElementById(elementId);
-    if (!el) return;
+    if (!el || isExportingPdf) return;
     setIsExportingPdf(true);
+    setPdfProgressText('');
     context?.showToast(
       'جاري تصدير التقرير الرسمي بملف PDF عالي الدقة...',
       'info'
     );
 
     try {
-      // 1. تجهيز نسخة نظيفة من التقرير مع تضمين الصور المخبأة
-      const clone = el.cloneNode(true) as HTMLElement;
-      clone.querySelectorAll('.no-print').forEach(n => n.remove());
-      clone.classList.remove('dark:bg-slate-900', 'dark:border-slate-800');
-      clone.style.backgroundColor = '#ffffff';
-      clone.style.color = '#0f172a';
-      clone.style.direction = 'rtl';
-      clone.style.letterSpacing = '0px';
-
-      await inlineImagesInClone(clone);
-
-      // 2. استخراج كافة قواعد الأنماط المجمعة مباشرة من الذاكرة (مع استبعاد قاعدة إخفاء العناصر خارج #root)
-      const compiledCssChunks: string[] = [];
-      for (const sheet of Array.from(document.styleSheets)) {
-        try {
-          const rules = sheet.cssRules;
-          if (rules) {
-            for (let i = 0; i < rules.length; i++) {
-              const ruleText = rules[i].cssText || '';
-              if (
-                ruleText.includes(':not(#root)') ||
-                ruleText.includes('netlify')
-              ) {
-                continue;
-              }
-              compiledCssChunks.push(ruleText);
-            }
-          }
-        } catch {
-          // تخطي ملفات الأنماط الخارجية المحمية بـ CORS
-        }
-      }
-      const inlineCompiledCss = `<style>${compiledCssChunks.join('\n')}</style>`;
-
       const orientation = isLandscape ? 'landscape' : 'portrait';
-      const fullHtml = `<!DOCTYPE html>
+
+      // المحاولة الأولى: التصدير المتجهي السريع عبر خادم الطباعة الرسمي (/api/pdf) فقط إن كان متوفراً
+      if (await isServerPdfAvailable()) {
+        const clone = el.cloneNode(true) as HTMLElement;
+        clone.querySelectorAll('.no-print').forEach(n => n.remove());
+        clone.classList.remove('dark:bg-slate-900', 'dark:border-slate-800');
+        clone.style.backgroundColor = '#ffffff';
+        clone.style.color = '#0f172a';
+        clone.style.direction = 'rtl';
+        clone.style.letterSpacing = '0px';
+
+        await inlineAndDecodeImages(clone);
+        const inlineCompiledCss = getCachedCompiledCss();
+
+        const fullHtml = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8" />
@@ -8955,30 +8851,12 @@ function CompetitionReports({
       height: auto !important;
       overflow: visible !important;
     }
-    .no-print {
-      display: none !important;
-    }
-    table {
-      width: 100% !important;
-      border-collapse: collapse !important;
-      page-break-inside: auto;
-    }
-    thead {
-      display: table-header-group !important;
-    }
-    tfoot {
-      display: table-footer-group !important;
-      page-break-inside: avoid !important;
-      break-inside: avoid !important;
-    }
-    tr, tbody.pdf-avoid-break, .pdf-avoid-break {
-      page-break-inside: avoid !important;
-      break-inside: avoid !important;
-    }
-    h1, h2, h3, h4, h5 {
-      page-break-after: avoid !important;
-      break-after: avoid !important;
-    }
+    .no-print { display: none !important; }
+    table { width: 100% !important; border-collapse: collapse !important; page-break-inside: auto; }
+    thead { display: table-header-group !important; }
+    tfoot { display: table-footer-group !important; page-break-inside: avoid !important; break-inside: avoid !important; }
+    tr, tbody.pdf-avoid-break, .pdf-avoid-break { page-break-inside: avoid !important; break-inside: avoid !important; }
+    h1, h2, h3, h4, h5 { page-break-after: avoid !important; break-after: avoid !important; }
   </style>
 </head>
 <body dir="rtl">
@@ -8988,191 +8866,41 @@ function CompetitionReports({
 </body>
 </html>`;
 
-      // المحاولة الأولى: التصدير المتجهي السريع عبر خادم الطباعة الرسمي (/api/pdf)
-      try {
-        const res = await fetch('/api/pdf', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ html: fullHtml, orientation }),
-        });
-
-        if (res.ok) {
-          const pdfBlob = await res.blob();
-          if (pdfBlob.size > 500) {
-            const url = URL.createObjectURL(pdfBlob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = `${fileName}.pdf`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            setTimeout(() => URL.revokeObjectURL(url), 5000);
-            context?.showToast(
-              'تم تصدير التقرير الرسمي بملف PDF عالي الدقة بنجاح!',
-              'success'
-            );
-            return;
-          }
+        const downloaded = await tryServerPdfDownload(
+          fullHtml,
+          orientation,
+          fileName
+        );
+        if (downloaded) {
+          context?.showToast(
+            'تم تصدير التقرير الرسمي بملف PDF عالي الدقة بنجاح!',
+            'success'
+          );
+          return;
         }
-      } catch (serverPdfErr) {
-        console.warn('Server PDF endpoint fallback to client canvas:', serverPdfErr);
       }
 
-      // المحرك الاحتياطي: html2canvas مع التقطيع الذكي لصفحات PDF بحيث لا تنقطع أي خلية أو صف أو بطاقة بين صفحتين
-      if (document.fonts && document.fonts.ready) {
-        await document.fonts.ready;
-      }
-
-      // حساب إحداثيات كافة الكتل الذرية (الصفوف، سجلات المتسابقين المدمجة، البطاقات، التوقيعات) لمنع قطعها بين صفحتين
-      const rootRect = el.getBoundingClientRect();
-      const domHeight = Math.max(1, el.offsetHeight || rootRect.height);
-      const atomicNodes = Array.from(
-        el.querySelectorAll(
-          'tbody.pdf-avoid-break, tr, tfoot, .pdf-avoid-break, .grid > div'
-        )
-      ) as HTMLElement[];
-      const domBlocks = atomicNodes
-        .map(node => {
-          const r = node.getBoundingClientRect();
-          return {
-            topRatio: Math.max(0, (r.top - rootRect.top) / domHeight),
-            bottomRatio: Math.min(1, (r.bottom - rootRect.top) / domHeight),
-          };
-        })
-        .filter(b => b.bottomRatio > b.topRatio);
-
-      const origFillText = CanvasRenderingContext2D.prototype.fillText;
-      CanvasRenderingContext2D.prototype.fillText = function (
-        text: string,
-        x: number,
-        y: number,
-        maxWidth?: number
-      ) {
-        this.direction = 'rtl';
-        return maxWidth !== undefined
-          ? origFillText.call(this, text, x, y, maxWidth)
-          : origFillText.call(this, text, x, y);
-      };
-
-      let canvas: HTMLCanvasElement;
-      try {
-        canvas = await html2canvas(el, {
-          scale: 2,
-          useCORS: true,
-          logging: false,
-          backgroundColor: '#ffffff',
-          windowWidth: isLandscape ? 1320 : 1080,
-          onclone: clonedDoc => {
-            clonedDoc.documentElement.setAttribute('dir', 'rtl');
-            clonedDoc.documentElement.setAttribute('lang', 'ar');
-            clonedDoc.documentElement.classList.remove('dark');
-            const fixStyle = clonedDoc.createElement('style');
-            fixStyle.textContent = `
-              *, *::before, *::after {
-                letter-spacing: 0px !important;
-                word-spacing: 0px !important;
-                font-feature-settings: "kern" 1, "liga" 1, "clig" 1, "calt" 1 !important;
-                font-variant-ligatures: common-ligatures contextual !important;
-                font-family: 'Tajawal', 'Cairo', sans-serif !important;
-                direction: rtl !important;
-              }
-              .no-print { display: none !important; }
-            `;
-            clonedDoc.head.appendChild(fixStyle);
-          },
-        });
-      } finally {
-        CanvasRenderingContext2D.prototype.fillText = origFillText;
-      }
-
-      const pdf = new jsPDF({
-        orientation: isLandscape ? 'landscape' : 'portrait',
-        unit: 'mm',
-        format: 'a4',
+      // المحرك السريع في المتصفح (يعمل بكفاءة وسرعة فائقة على Netlify والعمل دون اتصال)
+      await exportDomElementToFastPdf({
+        element: el,
+        fileName,
+        orientation,
+        renderWidthPx: isLandscape ? 1320 : 1080,
+        marginMm: 6,
+        onProgress: (curr, total) => {
+          if (total > 1) {
+            setPdfProgressText(`(${curr}/${total})`);
+          }
+        },
       });
 
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const marginMm = 6;
-      const usableWidthMm = pdfWidth - marginMm * 2;
-      const usableHeightMm = pageHeight - marginMm * 2;
-      const pxPerMm = canvas.width / usableWidthMm;
-      const maxSliceHeightPx = Math.floor(usableHeightMm * pxPerMm);
-
-      const canvasBlocks = domBlocks.map(b => ({
-        topPx: Math.floor(b.topRatio * canvas.height),
-        bottomPx: Math.ceil(b.bottomRatio * canvas.height),
-      }));
-
-      let currentY = 0;
-      let pageIndex = 0;
-
-      while (currentY < canvas.height - 4) {
-        let nextY = Math.min(canvas.height, currentY + maxSliceHeightPx);
-
-        if (nextY < canvas.height) {
-          // البحث عن أي صف أو سجل متسابق أو بطاقة يتقاطع مع خط القطع المقترح (nextY)
-          const crossingBlocks = canvasBlocks.filter(
-            b =>
-              b.topPx > currentY + 30 &&
-              b.topPx < nextY &&
-              b.bottomPx > nextY &&
-              b.bottomPx - b.topPx <= maxSliceHeightPx * 0.9
-          );
-
-          if (crossingBlocks.length > 0) {
-            const safeTopPx = Math.min(...crossingBlocks.map(b => b.topPx));
-            if (safeTopPx > currentY + 40) {
-              nextY = safeTopPx - 2;
-            }
-          }
-        }
-
-        const sliceHeightPx = Math.max(1, nextY - currentY);
-        const pageCanvas = document.createElement('canvas');
-        pageCanvas.width = canvas.width;
-        pageCanvas.height = sliceHeightPx;
-        const pageCtx = pageCanvas.getContext('2d');
-        if (pageCtx) {
-          pageCtx.fillStyle = '#ffffff';
-          pageCtx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
-          pageCtx.drawImage(
-            canvas,
-            0,
-            currentY,
-            canvas.width,
-            sliceHeightPx,
-            0,
-            0,
-            canvas.width,
-            sliceHeightPx
-          );
-          const sliceImgData = pageCanvas.toDataURL('image/png');
-          if (pageIndex > 0) {
-            pdf.addPage();
-          }
-          const sliceHeightMm = sliceHeightPx / pxPerMm;
-          pdf.addImage(
-            sliceImgData,
-            'PNG',
-            marginMm,
-            marginMm,
-            usableWidthMm,
-            sliceHeightMm
-          );
-          pageIndex++;
-        }
-
-        currentY = nextY;
-      }
-
-      pdf.save(`${fileName}.pdf`);
       context?.showToast('تم تصدير ملف الـ PDF الرسمي المنسق بنجاح!', 'success');
     } catch (err) {
       console.error('PDF export error:', err);
       context?.showToast('جارِ فتح نافذة الطباعة الرسمية...', 'info');
       window.print();
     } finally {
+      setPdfProgressText('');
       setIsExportingPdf(false);
     }
   };
@@ -9181,6 +8909,7 @@ function CompetitionReports({
   const handleExportComprehensivePdf = async () => {
     if (isExportingPdf) return;
     setIsExportingPdf(true);
+    setPdfProgressText('');
     context?.showToast(
       'جاري تجهيز ملف الـ PDF الأفقي الشامل (كل قسم ومستوى في صفحات خاصة بنفس ترتيب الإكسل)...',
       'info'
@@ -9196,6 +8925,7 @@ function CompetitionReports({
           genderOptions: filterOptionsMap.genders,
           getEvaluatorName,
           formatJuzsDisplay: formatJuzsOrSurahsDisplay,
+          onProgress: msg => setPdfProgressText(msg),
         },
         `الجدول_الشامل_المدمج_${comp.name}`
       );
@@ -9208,6 +8938,7 @@ function CompetitionReports({
       context?.showToast('جارِ فتح نافذة الطباعة الرسمية...', 'info');
       window.print();
     } finally {
+      setPdfProgressText('');
       setIsExportingPdf(false);
     }
   };
@@ -10096,7 +9827,7 @@ function CompetitionReports({
             <Download size={16} />
             <span>
               {isExportingPdf
-                ? 'جاري تجهيز الـ PDF...'
+                ? `جاري تجهيز الـ PDF... ${pdfProgressText}`.trim()
                 : reportSubTab === 'comprehensive_merged'
                 ? 'تصدير الجدول الشامل PDF (أفقي لكل قسم)'
                 : 'تصدير التقرير PDF بجودة عالية'}
@@ -11002,7 +10733,7 @@ function CompetitionReports({
                 <Download size={15} />
                 <span>
                   {isExportingPdf
-                    ? 'جاري تجهيز الـ PDF الأفقي...'
+                    ? `جاري تجهيز الـ PDF الأفقي... ${pdfProgressText}`.trim()
                     : 'تصدير الجدول الشامل PDF (أفقي — كل قسم في صفحات خاصة)'}
                 </span>
               </button>

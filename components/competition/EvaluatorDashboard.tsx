@@ -7,7 +7,6 @@ import {
   Search,
   BookOpen,
   Users,
-  Sparkles,
   AlertTriangle,
   MessageSquare,
   Lock,
@@ -17,7 +16,8 @@ import {
   Clock,
 } from 'lucide-react';
 import ParticipantEvaluation from './ParticipantEvaluation';
-import { Logo, AwqafBadge } from '../Logo';
+import EvaluatorReportHeader from './EvaluatorReportHeader';
+import { Logo } from '../Logo';
 import {
   formatJuzsOrSurahsDisplay,
   compareArabicNames,
@@ -40,7 +40,7 @@ export default function EvaluatorDashboard({
   const context = useContext(AppContext);
   if (!context) return null;
 
-  const { competitions, setCompetitionsLocally, showToast } = context;
+  const { competitions, showToast, theme, toggleTheme } = context;
 
   // البحث عن المسابقة الخاصة بالمقيم (مع دعم التطابق النصي أو الرقمي أو البحث التلقائي)
   const comp =
@@ -214,6 +214,28 @@ export default function EvaluatorDashboard({
     });
   }, [comp.levels, evaluator.levelIds, effectiveEvaluatorIds]);
 
+  // ملخص المستويات واللجان المسندة للمقيم لعرضها في ترويسة الصفحة
+  const assignedScopeLabel = useMemo(() => {
+    if (assignedLevels.length === 0) return '';
+    return assignedLevels
+      .map(lvl => {
+        const committees = resolveLevelCommittees(lvl, comp.evaluators || []);
+        if (committees.length > 1) {
+          const myComms = committees.filter(c =>
+            (c.evaluatorIds || []).some(id =>
+              effectiveEvaluatorIds.has(Number(id))
+            )
+          );
+          if (myComms.length > 0) {
+            return `${lvl.name} (${myComms.map(c => c.name).join('، ')})`;
+          }
+          return `${lvl.name} (${committees[0]?.name || 'اللجنة الأولى'})`;
+        }
+        return lvl.name;
+      })
+      .join(' • ');
+  }, [assignedLevels, comp.evaluators, effectiveEvaluatorIds]);
+
   const allParticipants = comp.participants || [];
 
   // المتسابقون الذين يقعون ضمن لجنة المقيم فقط في كل مستوى مسند إليه (مرتبين هجائياً)
@@ -348,31 +370,16 @@ export default function EvaluatorDashboard({
         className="bg-slate-50 dark:bg-slate-950 min-h-[100dvh] w-full max-w-full overflow-x-hidden text-slate-800 dark:text-slate-100 text-right flex flex-col"
         dir="rtl"
       >
-        <header className="bg-emerald-900 dark:bg-slate-900 text-white px-2.5 sm:px-6 py-2 sm:py-2.5 shadow-md sticky top-0 z-20 flex flex-row justify-between items-center gap-2 border-b border-amber-500/30 w-full">
-          <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-1">
-            <Logo size="sm" />
-            <AwqafBadge variant="compact" />
-            <div className="min-w-0 flex-1 text-right">
-              <h1 className="text-[11px] xs:text-xs sm:text-lg font-black text-amber-300 leading-tight line-clamp-2 break-words whitespace-normal">
-                {comp.name}
-              </h1>
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] xs:text-[11px] sm:text-xs text-emerald-100 leading-tight mt-0.5">
-                <span className="font-bold leading-tight line-clamp-2 break-words whitespace-normal">
-                  المقيم: {evaluator.name}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <button
-            onClick={onLogout}
-            className="min-h-[36px] sm:min-h-[40px] px-2.5 sm:px-4 py-1.5 sm:py-2 bg-red-600/90 hover:bg-red-700 rounded-xl transition active:scale-95 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-black shrink-0 shadow-sm cursor-pointer"
-            title="تسجيل الخروج"
-          >
-            <LogOut size={16} />
-            <span>خروج</span>
-          </button>
-        </header>
+        <EvaluatorReportHeader
+          compName={comp.name}
+          seasonText={comp.seasonText}
+          evaluatorName={evaluator.name}
+          assignedScopeLabel={assignedScopeLabel}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          isOnline={isOnline}
+          onLogout={onLogout}
+        />
 
         <main className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 max-w-lg mx-auto text-center">
           <div className="bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-3xl shadow-lg border-2 border-amber-300 dark:border-amber-800/60 space-y-4 w-full">
@@ -420,37 +427,17 @@ export default function EvaluatorDashboard({
       className="bg-slate-50 dark:bg-slate-950 min-h-[100dvh] w-full max-w-full overflow-x-hidden text-slate-800 dark:text-slate-100 text-right"
       dir="rtl"
     >
-      {/* شريط علوي نظيف ومباشر للمقيم بدون أي إعدادات ربط */}
-      <header className="bg-emerald-900 dark:bg-slate-900 text-white px-2.5 sm:px-6 py-2 sm:py-2.5 shadow-md sticky top-0 z-20 flex flex-row justify-between items-center gap-2 border-b border-amber-500/30 w-full">
-        <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-1">
-          <Logo size="sm" />
-          <AwqafBadge variant="compact" />
-          <div className="min-w-0 flex-1 text-right">
-            <h1 className="text-[11px] xs:text-xs sm:text-lg font-black text-amber-300 leading-tight line-clamp-2 break-words whitespace-normal">
-              {comp.name}
-            </h1>
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] xs:text-[11px] sm:text-xs text-emerald-100 leading-tight mt-0.5">
-              <span className="font-bold leading-tight line-clamp-2 break-words whitespace-normal">
-                المقيم: {evaluator.name}
-              </span>
-              {assignedLevels.length > 0 && (
-                <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full bg-emerald-800/80 text-amber-200 font-bold text-[10px]">
-                  {assignedLevels.map(l => l.name).join(' ، ')}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <button
-          onClick={onLogout}
-          className="min-h-[36px] sm:min-h-[40px] px-2.5 sm:px-4 py-1.5 sm:py-2 bg-red-600/90 hover:bg-red-700 rounded-xl transition active:scale-95 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-black shrink-0 shadow-sm cursor-pointer"
-          title="تسجيل الخروج"
-        >
-          <LogOut size={16} />
-          <span>خروج</span>
-        </button>
-      </header>
+      {/* ترويسة التقارير الرسمية في رأس صفحة المقيم */}
+      <EvaluatorReportHeader
+        compName={comp.name}
+        seasonText={comp.seasonText}
+        evaluatorName={evaluator.name}
+        assignedScopeLabel={assignedScopeLabel}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        isOnline={isOnline}
+        onLogout={onLogout}
+      />
 
       <main className="p-2.5 sm:p-6 max-w-5xl mx-auto space-y-3.5 sm:space-y-5 w-full">
         {/* تنبيه التقييمات المعتمدة المحفوظة بانتظار عودة الإنترنت */}
@@ -488,49 +475,48 @@ export default function EvaluatorDashboard({
           </div>
         )}
 
-        {/* ملخص سريع للمستويات المسندة وإعدادات الأسطر والمقاطع المعتمدة من المشرف */}
-        <div className="bg-gradient-to-l from-emerald-900 via-emerald-800 to-teal-900 text-white p-3.5 sm:p-5 rounded-2xl shadow-md border border-emerald-700/60 text-right">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="space-y-1.5 text-right flex flex-col items-start">
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-400/20 border border-amber-300/30 text-amber-300 text-[11px] font-black">
-                <Sparkles size={13} className="shrink-0" />
-                <span>تحكيم مباشر بالمقاطع القرآنية المظللة</span>
-              </div>
-              <h2 className="text-base sm:text-xl font-black text-white">
-                مرحبا بك {evaluator.name}
+        {/* ملخص إحصائيات التحكيم وإعدادات المستويات المسندة */}
+        <div className="bg-white dark:bg-slate-900 p-3.5 sm:p-5 rounded-2xl shadow-xs border border-slate-200 dark:border-slate-800 text-right">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="space-y-1 text-right">
+              <h2 className="text-sm sm:text-lg font-black text-slate-900 dark:text-white">
+                إحصائيات التقييم ولجان التحكيم
               </h2>
+              <p className="text-[11px] sm:text-xs font-bold text-slate-500 dark:text-slate-400">
+                متابعة مباشرة لمتسابقي لجنتك واعتماد الدرجات النهائية
+              </p>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2 shrink-0 w-full sm:w-auto">
-              <div className="bg-white/10 backdrop-blur-sm rounded-xl px-2 sm:px-3 py-2 text-center border border-white/15">
-                <span className="block text-[10px] text-emerald-200 font-bold truncate">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 shrink-0 w-full md:w-auto">
+              <div className="bg-slate-50 dark:bg-slate-800/80 rounded-xl px-3 py-2 text-center border border-slate-200 dark:border-slate-700">
+                <span className="block text-[10px] text-slate-500 dark:text-slate-400 font-bold truncate">
                   إجمالي طلابك
                 </span>
-                <span className="text-base sm:text-xl font-black text-white">
+                <span className="text-base sm:text-xl font-black text-slate-900 dark:text-white tabular-nums">
                   {myLevelParticipants.length}
                 </span>
               </div>
-              <div className="bg-amber-500/25 backdrop-blur-sm rounded-xl px-2 sm:px-3 py-2 text-center border border-amber-400/40">
-                <span className="block text-[10px] text-amber-200 font-bold truncate">
+              <div className="bg-amber-50 dark:bg-amber-950/50 rounded-xl px-3 py-2 text-center border border-amber-200 dark:border-amber-800/70">
+                <span className="block text-[10px] text-amber-800 dark:text-amber-300 font-bold truncate">
                   قيد التقييم (محلي)
                 </span>
-                <span className="text-base sm:text-xl font-black text-amber-300">
+                <span className="text-base sm:text-xl font-black text-amber-700 dark:text-amber-300 tabular-nums">
                   {inProgressForMeCount}
                 </span>
               </div>
-              <div className="bg-slate-500/25 backdrop-blur-sm rounded-xl px-2 sm:px-3 py-2 text-center border border-slate-300/25">
-                <span className="block text-[10px] text-slate-200 font-bold truncate">
+              <div className="bg-slate-100/80 dark:bg-slate-800/60 rounded-xl px-3 py-2 text-center border border-slate-200 dark:border-slate-700">
+                <span className="block text-[10px] text-slate-600 dark:text-slate-300 font-bold truncate">
                   بانتظار الاعتماد
                 </span>
-                <span className="text-base sm:text-xl font-black text-slate-100">
+                <span className="text-base sm:text-xl font-black text-slate-800 dark:text-slate-100 tabular-nums">
                   {pendingForMeCount}
                 </span>
               </div>
-              <div className="bg-emerald-500/25 backdrop-blur-sm rounded-xl px-2 sm:px-3 py-2 text-center border border-emerald-400/30">
-                <span className="block text-[10px] text-emerald-100 font-bold truncate">
+              <div className="bg-emerald-50 dark:bg-emerald-950/50 rounded-xl px-3 py-2 text-center border border-emerald-200 dark:border-emerald-800/70">
+                <span className="block text-[10px] text-emerald-800 dark:text-emerald-300 font-bold truncate">
                   مكتمل ومعتمد
                 </span>
-                <span className="text-base sm:text-xl font-black text-emerald-300">
+                <span className="text-base sm:text-xl font-black text-emerald-700 dark:text-emerald-300 tabular-nums">
                   {evaluatedByMeCount}
                 </span>
               </div>
@@ -539,18 +525,18 @@ export default function EvaluatorDashboard({
 
           {/* عرض المستويات المسندة مع تفاصيل الأسطر الفعلية المحددة من المشرف */}
           {assignedLevels.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-white/15 flex flex-wrap items-center justify-start gap-1.5 sm:gap-2 text-right">
-              <span className="text-[11px] font-black text-amber-300">
+            <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-start gap-1.5 sm:gap-2 text-right">
+              <span className="text-[11px] font-black text-slate-600 dark:text-slate-300">
                 إعدادات مستوياتك المعتمدة من المشرف:
               </span>
               {assignedLevels.map(lvl => (
                 <span
                   key={lvl.id}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white/10 text-white text-[11px] font-bold border border-white/15"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-900 dark:text-emerald-200 text-[11px] font-bold border border-emerald-200/80 dark:border-emerald-800/70"
                 >
-                  <BookOpen size={12} className="text-amber-300 shrink-0" />
+                  <BookOpen size={12} className="text-amber-600 dark:text-amber-400 shrink-0" />
                   <span>{lvl.name}:</span>
-                  <strong className="text-amber-300">
+                  <strong className="text-emerald-800 dark:text-amber-300 tabular-nums">
                     {lvl.segmentsCount} مقاطع × {lvl.linesPerSegment} أسطر فعلية
                   </strong>
                 </span>
