@@ -1001,6 +1001,17 @@ function exportCompetitionSetupExcel(
   );
 }
 
+let isExportingSetupPdf = false;
+
+function escapePdfHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /**
  * تصدير وطباعة بيانات إعداد المسابقة وتقسيم المقيمين والمستويات بصيغة PDF رسمية منسقة
  */
@@ -1008,130 +1019,270 @@ async function exportCompetitionSetupPDF(
   comp: Competition,
   showToast?: (msg: string, type?: 'success' | 'error' | 'info') => void
 ) {
-  const levels = comp.levels || [];
-  const evaluators = sortByArabicName(comp.evaluators || []);
-  const participants = sortByArabicName(comp.participants || []);
-  const compCategories = resolveCompetitionErrorCategories(comp);
-  const compErrors = resolveCompetitionErrors(comp);
+  if (isExportingSetupPdf) {
+    showToast?.('جاري تجهيز ملف إعدادات المسابقة، يرجى الانتظار قليلاً...', 'info');
+    return;
+  }
+  isExportingSetupPdf = true;
 
-  showToast?.('جارِ تجهيز وثيقة إعدادات المسابقة وتقسيم اللجان بصيغة PDF...', 'info');
+  try {
+    const levels = comp.levels || [];
+    const evaluators = sortByArabicName(comp.evaluators || []);
+    const participants = sortByArabicName(comp.participants || []);
+    const compCategories = resolveCompetitionErrorCategories(comp);
+    const compErrors = resolveCompetitionErrors(comp);
 
-  const passageModeLabel =
-    comp.passageMode === 'international'
-      ? 'تصنيف المسابقات العالمية (الأكثر صعوبة / متوسطة / الأقل)'
-      : comp.passageMode === 'manual'
-      ? `التحديد اليدوي للمشرف (${(comp.manualPassages || []).length} نطاق)`
-      : 'المقاطع العشوائية المتوازنة';
+    showToast?.('جارِ تجهيز وثيقة إعدادات المسابقة وتقسيم اللجان بصيغة PDF...', 'info');
 
-  const dateStr = new Date().toLocaleDateString('ar-OM', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
+    const passageModeLabel =
+      comp.passageMode === 'international'
+        ? 'تصنيف المسابقات العالمية (الأكثر صعوبة / متوسطة / الأقل)'
+        : comp.passageMode === 'manual'
+        ? `التحديد اليدوي للمشرف (${(comp.manualPassages || []).length} نطاق)`
+        : 'المقاطع العشوائية المتوازنة';
 
-  const evaluatorsRowsHtml =
-    evaluators.length > 0
-      ? evaluators
-          .map((ev, idx) => {
-            const info = getEvaluatorAssignedLevelsInfo(ev, levels, participants);
-            const badgesHtml = info.assignedLevels
-              .map(
-                l =>
-                  `<span style="display:inline-block;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0;border-radius:6px;padding:2px 8px;margin:2px;font-size:11px;font-weight:800;">${l.name}</span>`
-              )
-              .join(' ');
-            const allowedEditCount = (ev.allowedEditLevelIds || []).length;
-            const editPermHtml =
-              allowedEditCount > 0
-                ? `<span style="color:#047857;font-weight:800;font-size:10px;background:#ecfdf5;padding:2px 6px;border-radius:4px;border:1px solid #a7f3d0;">🔓 مسموح (${allowedEditCount})</span>`
-                : `<span style="color:#64748b;font-weight:700;font-size:10px;background:#f1f5f9;padding:2px 6px;border-radius:4px;border:1px solid #cbd5e1;">🔒 مقفل بعد الحفظ</span>`;
+    const dateStr = new Date().toLocaleDateString('ar-OM', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
 
-            return `
-              <tr style="background:${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
-                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${idx + 1}</td>
-                <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:800;color:#0f172a;">${ev.name}</td>
-                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-family:monospace;font-weight:900;color:#b45309;background:#fffbeb;">${ev.pin || '-'}</td>
-                <td style="padding:8px 10px;border:1px solid #cbd5e1;">${badgesHtml || 'جميع المستويات'}</td>
-                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${info.assignedLevels.length} من ${levels.length}</td>
-                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;">${editPermHtml}</td>
-                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;color:#047857;">${info.participantsCount}</td>
-              </tr>
-            `;
-          })
-          .join('')
-      : `<tr><td colspan="7" style="padding:14px;border:1px solid #cbd5e1;text-align:center;color:#64748b;font-weight:700;">لا يوجد مقيمون مضافون لهذه المسابقة حالياً</td></tr>`;
+    const evaluatorsRowsHtml =
+      evaluators.length > 0
+        ? evaluators
+            .map((ev, idx) => {
+              const info = getEvaluatorAssignedLevelsInfo(ev, levels, participants);
+              const badgesHtml = info.assignedLevels
+                .map(
+                  l =>
+                    `<span style="display:inline-block;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0;border-radius:6px;padding:2px 8px;margin:2px;font-size:11px;font-weight:800;">${escapePdfHtml(l.name)}</span>`
+                )
+                .join(' ');
+              const allowedEditCount = (ev.allowedEditLevelIds || []).length;
+              const editPermHtml =
+                allowedEditCount > 0
+                  ? `<span style="color:#047857;font-weight:800;font-size:10px;background:#ecfdf5;padding:2px 6px;border-radius:4px;border:1px solid #a7f3d0;">مسموح (${allowedEditCount})</span>`
+                  : `<span style="color:#64748b;font-weight:700;font-size:10px;background:#f1f5f9;padding:2px 6px;border-radius:4px;border:1px solid #cbd5e1;">مقفل بعد الحفظ</span>`;
 
-  const levelsRowsHtml =
-    levels.length > 0
-      ? levels
-          .map((lvl, idx) => {
-            const levelEvaluators = evaluators.filter(ev => {
-              const ids = Array.isArray(ev.levelIds) ? ev.levelIds.map(Number) : [];
-              return ids.length === 0 || ids.includes(Number(lvl.id));
-            });
-            const levelParticipantsCount = participants.filter(
-              p => Number(p.levelId) === Number(lvl.id)
-            ).length;
-            const evalBadges =
-              levelEvaluators.length > 0
-                ? levelEvaluators
-                    .map(
-                      e =>
-                        `<span style="display:inline-block;background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;border-radius:6px;padding:2px 8px;margin:2px;font-size:11px;font-weight:800;">${e.name}</span>`
-                    )
-                    .join(' ')
-                : `<span style="color:#dc2626;font-size:11px;font-weight:700;">لم يسند مقيمون بعد</span>`;
+              return `
+                <tr style="background:${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
+                  <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${idx + 1}</td>
+                  <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:800;color:#0f172a;">${escapePdfHtml(ev.name)}</td>
+                  <td dir="ltr" style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-family:monospace;font-weight:900;color:#b45309;background:#fffbeb;">${escapePdfHtml(ev.pin || '-')}</td>
+                  <td style="padding:8px 10px;border:1px solid #cbd5e1;">${badgesHtml || 'جميع المستويات'}</td>
+                  <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${info.assignedLevels.length} من ${levels.length}</td>
+                  <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;">${editPermHtml}</td>
+                  <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;color:#047857;">${info.participantsCount}</td>
+                </tr>
+              `;
+            })
+            .join('')
+        : `<tr><td colspan="7" style="padding:14px;border:1px solid #cbd5e1;text-align:center;color:#64748b;font-weight:700;">لا يوجد مقيمون مضافون لهذه المسابقة حالياً</td></tr>`;
 
-            return `
-              <tr style="background:${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
-                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${idx + 1}</td>
-                <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:800;color:#064e3b;">${lvl.name}</td>
-                <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:700;">${formatJuzsOrSurahsDisplay(lvl.juzsOrSurahs)}</td>
-                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${lvl.segmentsCount} مقاطع × ${lvl.linesPerSegment} أسطر</td>
-                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${lvl.maxScore}</td>
-                <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;color:#047857;">${levelParticipantsCount}</td>
-                <td style="padding:8px 10px;border:1px solid #cbd5e1;">${evalBadges}</td>
-              </tr>
-            `;
-          })
-          .join('')
-      : '';
+    const levelsRowsHtml =
+      levels.length > 0
+        ? levels
+            .map((lvl, idx) => {
+              const levelEvaluators = evaluators.filter(ev => {
+                const ids = Array.isArray(ev.levelIds) ? ev.levelIds.map(Number) : [];
+                const inCommittee = (lvl.committees || []).some(c =>
+                  (c.evaluatorIds || []).map(Number).includes(Number(ev.id))
+                );
+                return ids.length === 0 || ids.includes(Number(lvl.id)) || inCommittee;
+              });
+              const levelParticipantsCount = participants.filter(
+                p => Number(p.levelId) === Number(lvl.id)
+              ).length;
+              const evalBadges =
+                levelEvaluators.length > 0
+                  ? levelEvaluators
+                      .map(
+                        e =>
+                          `<span style="display:inline-block;background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;border-radius:6px;padding:2px 8px;margin:2px;font-size:11px;font-weight:800;">${escapePdfHtml(e.name)}</span>`
+                      )
+                      .join(' ')
+                  : `<span style="color:#dc2626;font-size:11px;font-weight:700;">لم يسند مقيمون بعد</span>`;
 
-  const errorsBadgesHtml = compErrors
-    .map(err => {
-      const cat = compCategories.find(
-        c => c.id === err.category || c.name === err.category
-      );
-      return `<div style="display:inline-flex;align-items:center;gap:6px;background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:5px 10px;margin:3px;">
-        <span style="font-weight:900;color:#881337;font-size:12px;">${err.name}</span>
-        <span style="font-weight:800;color:#be123c;font-size:11px;">(-${err.deduction})</span>
-        <span style="background:#ffe4e6;color:#9f1239;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;">صنف: ${cat?.name || err.category || 'حفظ'}</span>
-      </div>`;
-    })
-    .join('');
+              return `
+                <tr style="background:${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
+                  <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${idx + 1}</td>
+                  <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:800;color:#064e3b;">${escapePdfHtml(lvl.name)}</td>
+                  <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:700;">${escapePdfHtml(formatJuzsOrSurahsDisplay(lvl.juzsOrSurahs))}</td>
+                  <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${lvl.segmentsCount} مقاطع × ${lvl.linesPerSegment} أسطر</td>
+                  <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${lvl.maxScore}</td>
+                  <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;color:#047857;">${levelParticipantsCount}</td>
+                  <td style="padding:8px 10px;border:1px solid #cbd5e1;">${evalBadges}</td>
+                </tr>
+              `;
+            })
+            .join('')
+        : '';
 
-  const participantsRowsHtml =
-    participants.length > 0
-      ? participants
-          .map((p, idx) => {
-            const lvl = levels.find(l => Number(l.id) === Number(p.levelId));
-            return `
-              <tr style="background:${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
-                <td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;font-weight:700;">${p.requestNumber || idx + 1}</td>
-                <td style="padding:6px 8px;border:1px solid #cbd5e1;font-weight:800;">${p.name}</td>
-                <td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${p.civilId || '-'}</td>
-                <td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${p.phone || '-'}</td>
-                <td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${p.gender || '-'}</td>
-                <td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${p.wilayat || '-'}</td>
-                <td style="padding:6px 8px;border:1px solid #cbd5e1;font-weight:800;color:#065f46;">${lvl?.name || '-'}</td>
-                <td style="padding:6px 8px;border:1px solid #cbd5e1;font-size:11px;">${formatJuzsOrSurahsDisplay(p.juzsOrSurahs || lvl?.juzsOrSurahs || '')}</td>
-              </tr>
-            `;
-          })
-          .join('')
-      : '';
+    const errorsBadgesHtml = compErrors
+      .map(err => {
+        const cat = compCategories.find(
+          c => c.id === err.category || c.name === err.category
+        );
+        return `<div style="display:inline-flex;align-items:center;gap:6px;background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:5px 10px;margin:3px;">
+          <span style="font-weight:900;color:#881337;font-size:12px;">${escapePdfHtml(err.name)}</span>
+          <span dir="ltr" style="font-weight:800;color:#be123c;font-size:11px;">(-${err.deduction})</span>
+          <span style="background:#ffe4e6;color:#9f1239;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;">صنف: ${escapePdfHtml(cat?.name || err.category || 'حفظ')}</span>
+        </div>`;
+      })
+      .join('');
 
-  const fullHtml = `<!DOCTYPE html>
+    const participantsRowsHtml =
+      participants.length > 0
+        ? participants
+            .map((p, idx) => {
+              const lvl = levels.find(l => Number(l.id) === Number(p.levelId));
+              return `
+                <tr style="background:${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
+                  <td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;font-weight:700;">${escapePdfHtml(p.requestNumber || idx + 1)}</td>
+                  <td style="padding:6px 8px;border:1px solid #cbd5e1;font-weight:800;">${escapePdfHtml(p.name)}</td>
+                  <td dir="ltr" style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${escapePdfHtml(p.civilId || '-')}</td>
+                  <td dir="ltr" style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${escapePdfHtml(p.phone || '-')}</td>
+                  <td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${escapePdfHtml(p.gender || '-')}</td>
+                  <td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${escapePdfHtml(p.wilayat || '-')}</td>
+                  <td style="padding:6px 8px;border:1px solid #cbd5e1;font-weight:800;color:#065f46;">${escapePdfHtml(lvl?.name || '-')}</td>
+                  <td style="padding:6px 8px;border:1px solid #cbd5e1;font-size:11px;">${escapePdfHtml(formatJuzsOrSurahsDisplay(p.juzsOrSurahs || lvl?.juzsOrSurahs || ''))}</td>
+                </tr>
+              `;
+            })
+            .join('')
+        : '';
+
+    const sectionTitleStyle =
+      'background:#064e3b;color:#ffffff;padding:8px 14px;border-radius:8px;font-size:14px;font-weight:900;margin:16px 0 8px 0;display:flex;align-items:center;justify-content:space-between;';
+    const tableStyle =
+      'width:100%;border-collapse:collapse;font-size:12px;page-break-inside:auto;background:#ffffff;';
+
+    const setupDocumentMarkup = `
+      <div style="border: 2px solid #065f46; border-radius: 14px; padding: 16px; background: #ffffff; color: #0f172a; font-family: 'Tajawal', 'Cairo', sans-serif; direction: rtl; text-align: right; box-sizing: border-box;">
+        <!-- الترويسة الرسمية -->
+        <div style="background: linear-gradient(135deg, #064e3b, #0f2347); color: #ffffff; padding: 16px 20px; border-radius: 12px; border-bottom: 4px solid #d4af37; display: flex; justify-content: space-between; align-items: center; gap: 16px;">
+          <div>
+            <div style="font-size: 12px; color: #fcd34d; font-weight: 800;">سلطنة عُمان • وزارة الأوقاف والشؤون الدينية</div>
+            <div style="font-size: 12px; color: #e2e8f0; font-weight: 700; margin-bottom: 6px;">إدارة الأوقاف والشؤون الدينية بمحافظة الظاهرة</div>
+            <div style="font-size: 20px; font-weight: 900; color: #ffffff;">وثيقة إعدادات ومراجعة المسابقة وتوزيع اللجان</div>
+            <div style="font-size: 14px; font-weight: 800; color: #fde68a; margin-top: 2px;">${escapePdfHtml(comp.name)} ${comp.seasonText ? `— ${escapePdfHtml(comp.seasonText)}` : ''}</div>
+          </div>
+          <div style="text-align: left; font-size: 11px; color: #e2e8f0; line-height: 1.7; flex-shrink: 0;">
+            <div><strong>تاريخ الإصدار:</strong> ${escapePdfHtml(dateStr)}</div>
+            <div><strong>حالة المسابقة:</strong> ${comp.isActive ? 'مفعّلة للمقيمين' : 'غير مفعّلة'}</div>
+            <div><strong>نظام المقاطع:</strong> ${escapePdfHtml(passageModeLabel)}</div>
+          </div>
+        </div>
+
+        <!-- ملخص الإحصائيات السريع -->
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 12px;">
+          <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 10px; text-align: center;">
+            <div style="font-size: 11px; color: #166534; font-weight: 800;">إجمالي المستويات</div>
+            <div style="font-size: 20px; color: #14532d; font-weight: 900;">${levels.length}</div>
+          </div>
+          <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 10px; text-align: center;">
+            <div style="font-size: 11px; color: #1e40af; font-weight: 800;">إجمالي المقيمين</div>
+            <div style="font-size: 20px; color: #1e3a8a; font-weight: 900;">${evaluators.length}</div>
+          </div>
+          <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 10px; text-align: center;">
+            <div style="font-size: 11px; color: #92400e; font-weight: 800;">إجمالي المتسابقين</div>
+            <div style="font-size: 20px; color: #78350f; font-weight: 900;">${participants.length}</div>
+          </div>
+          <div style="background: #fff1f2; border: 1px solid #fecdd3; border-radius: 10px; padding: 10px; text-align: center;">
+            <div style="font-size: 11px; color: #9f1239; font-weight: 800;">بنود خصم الأخطاء</div>
+            <div style="font-size: 20px; color: #881337; font-weight: 900;">${compErrors.length}</div>
+          </div>
+        </div>
+
+        <!-- أولاً: جدول المقيمين والمستويات المسندة لكل مقيم -->
+        <div class="section-title pdf-avoid-break" style="${sectionTitleStyle}">
+          <span>أولاً: بيانات المقيمين وتوزيع المستويات المسندة لكل مقيم</span>
+          <span style="font-size: 11px; color: #fde68a;">إجمالي المقيمين: ${evaluators.length}</span>
+        </div>
+        <table style="${tableStyle}">
+          <thead>
+            <tr style="background: #ecfdf5; color: #064e3b;">
+              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 38px; text-align: center;">م</th>
+              <th style="padding: 8px 10px; border: 1px solid #cbd5e1;">اسم المقيم</th>
+              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 100px; text-align: center;">رمز الدخول</th>
+              <th style="padding: 8px 10px; border: 1px solid #cbd5e1;">المستويات المسندة إليه (في أي المستويات هو)</th>
+              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 85px; text-align: center;">عدد المستويات</th>
+              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 110px; text-align: center;">صلاحية التعديل</th>
+              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 85px; text-align: center;">عدد الطلاب</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${evaluatorsRowsHtml}
+          </tbody>
+        </table>
+
+        <!-- ثانياً: جدول المستويات وتقسيم لجان التقييم -->
+        <div class="section-title pdf-avoid-break" style="${sectionTitleStyle}">
+          <span>ثانياً: إعدادات المستويات وتقسيم لجان المقيمين حسب كل مستوى</span>
+          <span style="font-size: 11px; color: #fde68a;">إجمالي المستويات: ${levels.length}</span>
+        </div>
+        <table style="${tableStyle}">
+          <thead>
+            <tr style="background: #ecfdf5; color: #064e3b;">
+              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 38px; text-align: center;">م</th>
+              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 140px;">اسم المستوى</th>
+              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 150px;">المقرر (الأجزاء / السور)</th>
+              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 115px; text-align: center;">المقاطع والأسطر</th>
+              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 65px; text-align: center;">الدرجة</th>
+              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 65px; text-align: center;">المشاركون</th>
+              <th style="padding: 8px 10px; border: 1px solid #cbd5e1;">المقيمون المسندون لهذا المستوى</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${levelsRowsHtml}
+          </tbody>
+        </table>
+
+        <!-- ثالثاً: بنود خصم الأخطاء المعتمدة -->
+        <div class="section-title pdf-avoid-break" style="${sectionTitleStyle}">
+          <span>ثالثاً: إعدادات أزرار وأصناف خصم الأخطاء في المسابقة</span>
+          <span style="font-size: 11px; color: #fde68a;">موحدة لجميع مستويات المسابقة</span>
+        </div>
+        <div class="pdf-avoid-break" style="border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px; background: #f8fafc;">
+          ${errorsBadgesHtml}
+        </div>
+
+        ${
+          participants.length > 0
+            ? `
+        <!-- رابعاً: كشف المشاركين المسجلين في المسابقة -->
+        <div class="section-title pdf-avoid-break" style="${sectionTitleStyle}">
+          <span>رابعاً: كشف المتسابقين المسجلين في المسابقة</span>
+          <span style="font-size: 11px; color: #fde68a;">إجمالي المتسابقين: ${participants.length}</span>
+        </div>
+        <table style="${tableStyle}">
+          <thead>
+            <tr style="background: #ecfdf5; color: #064e3b;">
+              <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 55px; text-align: center;">رقم الطلب</th>
+              <th style="padding: 6px 8px; border: 1px solid #cbd5e1;">الاسم الكامل</th>
+              <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 90px; text-align: center;">الرقم المدني</th>
+              <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 85px; text-align: center;">الهاتف</th>
+              <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 55px; text-align: center;">الجنس</th>
+              <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 80px; text-align: center;">الولاية</th>
+              <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 120px;">المستوى</th>
+              <th style="padding: 6px 8px; border: 1px solid #cbd5e1;">المقرر</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${participantsRowsHtml}
+          </tbody>
+        </table>
+        `
+            : ''
+        }
+      </div>
+    `;
+
+    const safeName = (comp.name || 'المسابقة').replace(/[\\/:*?"<>|]/g, '_');
+    const fileName = `إعدادات_ومراجعة_${safeName}`;
+
+    if (await isServerPdfAvailable()) {
+      const fullServerHtml = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8" />
@@ -1142,177 +1293,44 @@ async function exportCompetitionSetupPDF(
   <style>
     @page { size: A4 portrait; margin: 8mm; }
     * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-    body {
-      margin: 0; padding: 0;
-      font-family: 'Tajawal', 'Cairo', sans-serif;
-      direction: rtl; text-align: right;
-      color: #0f172a; background: #ffffff;
-    }
-    table { width: 100%; border-collapse: collapse; font-size: 12px; page-break-inside: auto; }
+    body { margin: 0; padding: 0; font-family: 'Tajawal', 'Cairo', sans-serif; direction: rtl; text-align: right; color: #0f172a; background: #ffffff; }
     tr { page-break-inside: avoid; break-inside: avoid; }
     thead { display: table-header-group; }
-    .section-title {
-      background: #064e3b; color: #ffffff;
-      padding: 8px 14px; border-radius: 8px;
-      font-size: 14px; font-weight: 900;
-      margin: 16px 0 8px 0;
-      display: flex; align-items: center; justify-content: space-between;
-    }
   </style>
 </head>
 <body dir="rtl">
-  <div id="root" style="border: 2px solid #065f46; border-radius: 14px; padding: 16px; background: #ffffff;">
-    <!-- الترويسة الرسمية -->
-    <div style="background: linear-gradient(135deg, #064e3b, #0f2347); color: #ffffff; padding: 16px 20px; border-radius: 12px; border-bottom: 4px solid #d4af37; display: flex; justify-content: space-between; align-items: center;">
-      <div>
-        <div style="font-size: 12px; color: #fcd34d; font-weight: 800;">سلطنة عُمان • وزارة الأوقاف والشؤون الدينية</div>
-        <div style="font-size: 12px; color: #e2e8f0; font-weight: 700; margin-bottom: 6px;">إدارة الأوقاف والشؤون الدينية بمحافظة الظاهرة</div>
-        <div style="font-size: 20px; font-weight: 900; color: #ffffff;">وثيقة إعدادات ومراجعة المسابقة وتوزيع اللجان</div>
-        <div style="font-size: 14px; font-weight: 800; color: #fde68a; margin-top: 2px;">${comp.name} ${comp.seasonText ? `— ${comp.seasonText}` : ''}</div>
-      </div>
-      <div style="text-align: left; font-size: 11px; color: #e2e8f0; line-height: 1.7;">
-        <div><strong>تاريخ الإصدار:</strong> ${dateStr}</div>
-        <div><strong>حالة المسابقة:</strong> ${comp.isActive ? 'مفعّلة للمقيمين' : 'غير مفعّلة'}</div>
-        <div><strong>نظام المقاطع:</strong> ${passageModeLabel}</div>
-      </div>
-    </div>
-
-    <!-- ملخص الإحصائيات السريع -->
-    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 12px;">
-      <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 10px; text-align: center;">
-        <div style="font-size: 11px; color: #166534; font-weight: 800;">إجمالي المستويات</div>
-        <div style="font-size: 20px; color: #14532d; font-weight: 900;">${levels.length}</div>
-      </div>
-      <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 10px; text-align: center;">
-        <div style="font-size: 11px; color: #1e40af; font-weight: 800;">إجمالي المقيمين</div>
-        <div style="font-size: 20px; color: #1e3a8a; font-weight: 900;">${evaluators.length}</div>
-      </div>
-      <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 10px; text-align: center;">
-        <div style="font-size: 11px; color: #92400e; font-weight: 800;">إجمالي المتسابقين</div>
-        <div style="font-size: 20px; color: #78350f; font-weight: 900;">${participants.length}</div>
-      </div>
-      <div style="background: #fff1f2; border: 1px solid #fecdd3; border-radius: 10px; padding: 10px; text-align: center;">
-        <div style="font-size: 11px; color: #9f1239; font-weight: 800;">بنود خصم الأخطاء</div>
-        <div style="font-size: 20px; color: #881337; font-weight: 900;">${compErrors.length}</div>
-      </div>
-    </div>
-
-    <!-- أولاً: جدول المقيمين والمستويات المسندة لكل مقيم -->
-    <div class="section-title">
-      <span>أولاً: بيانات المقيمين وتوزيع المستويات المسندة لكل مقيم</span>
-      <span style="font-size: 11px; color: #fde68a;">إجمالي المقيمين: ${evaluators.length}</span>
-    </div>
-    <table>
-      <thead>
-        <tr style="background: #ecfdf5; color: #064e3b;">
-          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 38px; text-align: center;">م</th>
-          <th style="padding: 8px 10px; border: 1px solid #cbd5e1;">اسم المقيم</th>
-          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 100px; text-align: center;">رمز الدخول</th>
-          <th style="padding: 8px 10px; border: 1px solid #cbd5e1;">المستويات المسندة إليه (في أي المستويات هو)</th>
-          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 85px; text-align: center;">عدد المستويات</th>
-          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 110px; text-align: center;">صلاحية التعديل</th>
-          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 85px; text-align: center;">عدد الطلاب</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${evaluatorsRowsHtml}
-      </tbody>
-    </table>
-
-    <!-- ثانياً: جدول المستويات وتقسيم لجان التقييم -->
-    <div class="section-title">
-      <span>ثانياً: إعدادات المستويات وتقسيم لجان المقيمين حسب كل مستوى</span>
-      <span style="font-size: 11px; color: #fde68a;">إجمالي المستويات: ${levels.length}</span>
-    </div>
-    <table>
-      <thead>
-        <tr style="background: #ecfdf5; color: #064e3b;">
-          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 38px; text-align: center;">م</th>
-          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 140px;">اسم المستوى</th>
-          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 150px;">المقرر (الأجزاء / السور)</th>
-          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 115px; text-align: center;">المقاطع والأسطر</th>
-          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 65px; text-align: center;">الدرجة</th>
-          <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 65px; text-align: center;">المشاركون</th>
-          <th style="padding: 8px 10px; border: 1px solid #cbd5e1;">المقيمون المسندون لهذا المستوى</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${levelsRowsHtml}
-      </tbody>
-    </table>
-
-    <!-- ثالثاً: بنود خصم الأخطاء المعتمدة -->
-    <div class="section-title">
-      <span>ثالثاً: إعدادات أزرار وأصناف خصم الأخطاء في المسابقة</span>
-      <span style="font-size: 11px; color: #fde68a;">موحدة لجميع مستويات المسابقة</span>
-    </div>
-    <div style="border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px; background: #f8fafc;">
-      ${errorsBadgesHtml}
-    </div>
-
-    ${
-      participants.length > 0
-        ? `
-    <!-- رابعاً: كشف المشاركين المسجلين في المسابقة -->
-    <div class="section-title" style="page-break-before: auto;">
-      <span>رابعاً: كشف المتسابقين المسجلين في المسابقة</span>
-      <span style="font-size: 11px; color: #fde68a;">إجمالي المتسابقين: ${participants.length}</span>
-    </div>
-    <table>
-      <thead>
-        <tr style="background: #ecfdf5; color: #064e3b;">
-          <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 55px; text-align: center;">رقم الطلب</th>
-          <th style="padding: 6px 8px; border: 1px solid #cbd5e1;">الاسم الكامل</th>
-          <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 90px; text-align: center;">الرقم المدني</th>
-          <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 85px; text-align: center;">الهاتف</th>
-          <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 55px; text-align: center;">الجنس</th>
-          <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 80px; text-align: center;">الولاية</th>
-          <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 120px;">المستوى</th>
-          <th style="padding: 6px 8px; border: 1px solid #cbd5e1;">المقرر</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${participantsRowsHtml}
-      </tbody>
-    </table>
-    `
-        : ''
-    }
-  </div>
+  <div id="root">${setupDocumentMarkup}</div>
 </body>
 </html>`;
 
-  const safeName = (comp.name || 'المسابقة').replace(/[\\/:*?"<>|]/g, '_');
-  const fileName = `إعدادات_ومراجعة_${safeName}`;
-
-  if (await isServerPdfAvailable()) {
-    const downloaded = await tryServerPdfDownload(fullHtml, 'portrait', fileName);
-    if (downloaded) {
-      showToast?.('تم تصدير وثيقة إعدادات المسابقة بصيغة PDF بنجاح!', 'success');
-      return;
+      const downloaded = await tryServerPdfDownload(fullServerHtml, 'portrait', fileName);
+      if (downloaded) {
+        showToast?.('تم تصدير وثيقة إعدادات المسابقة بصيغة PDF بنجاح!', 'success');
+        return;
+      }
     }
-  }
 
-  // تصدير سريع ومحسّن بالمتصفح (يدعم Netlify والعمل بدون خادم) مع تقطيع ذكي للصفوف
-  const tempContainer = document.createElement('div');
-  tempContainer.style.width = '960px';
-  tempContainer.style.background = '#ffffff';
-  tempContainer.setAttribute('dir', 'rtl');
-  tempContainer.innerHTML = fullHtml;
+    // تصدير سريع ومحسّن بالمتصفح (يدعم Netlify والعمل بدون خادم) مع تقطيع ذكي للصفوف
+    const tempContainer = document.createElement('div');
+    tempContainer.style.width = '960px';
+    tempContainer.style.background = '#ffffff';
+    tempContainer.setAttribute('dir', 'rtl');
+    tempContainer.innerHTML = setupDocumentMarkup;
 
-  try {
     await exportDomElementToFastPdf({
       element: tempContainer,
       fileName,
       orientation: 'portrait',
       renderWidthPx: 960,
       marginMm: 6,
-      atomicSelector: 'tr, .section-title',
+      atomicSelector: 'tr, .section-title, .pdf-avoid-break',
     });
     showToast?.('تم تصدير وثيقة إعدادات المسابقة بصيغة PDF بنجاح!', 'success');
   } catch (e) {
     console.error('Setup PDF export error:', e);
     showToast?.('تعذر تصدير PDF، يرجى المحاولة مرة أخرى', 'error');
+  } finally {
+    isExportingSetupPdf = false;
   }
 }
 

@@ -3,6 +3,7 @@ import { jsPDF } from 'jspdf';
 import { Competition, CompetitionLevel } from '../types';
 import {
   isServerPdfAvailable,
+  sanitizePdfFileName,
   tryServerPdfDownload,
   waitFontsBriefly,
   createIsolatedIgnoreFilter,
@@ -902,12 +903,16 @@ export async function exportComprehensiveWorkbookStylePdf(
 
   const host = document.createElement('div');
   host.id = 'fast-pdf-render-host';
+  host.setAttribute('data-pdf-export-host', 'true');
   host.style.position = 'fixed';
   host.style.top = '0';
   host.style.left = '-20000px';
   host.style.width = '1680px';
   host.style.background = '#FFFFFF';
   host.style.zIndex = '-9999';
+  host.style.visibility = 'visible';
+  host.style.opacity = '1';
+  host.style.display = 'block';
   host.setAttribute('dir', 'rtl');
   document.body.appendChild(host);
 
@@ -950,6 +955,25 @@ export async function exportComprehensiveWorkbookStylePdf(
             clonedDoc.documentElement.setAttribute('dir', 'rtl');
             clonedDoc.documentElement.setAttribute('lang', 'ar');
             clonedDoc.documentElement.classList.remove('dark');
+            const clonedHost = clonedDoc.getElementById('fast-pdf-render-host');
+            if (clonedHost) {
+              clonedHost.style.setProperty('display', 'block', 'important');
+              clonedHost.style.setProperty('visibility', 'visible', 'important');
+              clonedHost.style.setProperty('opacity', '1', 'important');
+              clonedHost.style.setProperty('width', '1680px', 'important');
+              clonedHost.style.setProperty('height', 'auto', 'important');
+            }
+            const fixStyle = clonedDoc.createElement('style');
+            fixStyle.textContent = `
+              #fast-pdf-render-host, #fast-pdf-render-host * {
+                letter-spacing: 0px !important;
+                word-spacing: normal !important;
+                font-feature-settings: "kern" 1, "liga" 1, "clig" 1, "calt" 1 !important;
+                font-variant-ligatures: common-ligatures contextual !important;
+                font-family: 'Tajawal', 'Cairo', 'Amiri', system-ui, sans-serif !important;
+              }
+            `;
+            clonedDoc.head.appendChild(fixStyle);
           },
         });
 
@@ -988,7 +1012,7 @@ export async function exportComprehensiveWorkbookStylePdf(
       }
     });
 
-    pdf.save(`${fileName}.pdf`);
+    pdf.save(`${sanitizePdfFileName(fileName)}.pdf`);
   } finally {
     if (host.parentNode) {
       host.parentNode.removeChild(host);

@@ -73,51 +73,51 @@ export const OfficialBannerCrestsBand: React.FC<OfficialBannerCrestsBandProps> =
         />
       </svg>
 
-      {/* توزيع الشعارات الثلاثة: يمين (أقصى اليمين) • وسط (متمركز) • يسار (أقصى اليسار) */}
+      {/* توزيع الشعارات الثلاثة على مستوى واحد في الهاتف والحاسوب: يمين (أقصى اليمين) • وسط (متمركز) • يسار (أقصى اليسار) */}
       <div
-        className={`relative z-10 w-full px-3 sm:px-6 md:px-10 lg:px-14 ${
-          compactMobile ? 'py-2.5 sm:py-3.5 md:py-4' : 'py-3 sm:py-4 md:py-5'
-        } grid grid-cols-2 sm:grid-cols-[1fr_minmax(0,1.7fr)_1fr] items-center gap-x-3 gap-y-2 sm:gap-4`}
+        className={`relative z-10 w-full px-2 xs:px-3 sm:px-6 md:px-10 lg:px-14 ${
+          compactMobile ? 'py-2 xs:py-2.5 sm:py-3.5 md:py-4' : 'py-2.5 sm:py-4 md:py-5'
+        } grid grid-cols-[minmax(0,1fr)_minmax(0,2.35fr)_minmax(0,1fr)] sm:grid-cols-[minmax(0,1fr)_minmax(0,1.75fr)_minmax(0,1fr)] items-center gap-1.5 xs:gap-2.5 sm:gap-4`}
       >
         {/* أقصى اليمين: شعار محافظة الظاهرة */}
-        <div className="order-1 justify-self-start flex items-center justify-start">
+        <div className="justify-self-start flex items-center justify-start w-full">
           <img
             src={RIGHT_GOVERNORATE_LOGO_URL}
             alt="محافظة الظاهرة"
             crossOrigin="anonymous"
             className={`${
               compactMobile
-                ? 'h-12 xs:h-14 sm:h-20 md:h-24'
-                : 'h-14 xs:h-16 sm:h-24 md:h-28'
-            } w-auto max-w-[130px] sm:max-w-[180px] object-contain select-none block`}
+                ? 'max-h-12 xs:max-h-14 sm:max-h-20 md:max-h-24'
+                : 'max-h-14 xs:max-h-16 sm:max-h-24 md:max-h-28'
+            } w-auto max-w-full sm:max-w-[175px] object-contain select-none block mr-0 ml-auto`}
           />
         </div>
 
         {/* الوسط: شعار واسم مسابقة محافظة الظاهرة للقرآن الكريم */}
-        <div className="order-3 sm:order-2 col-span-2 sm:col-span-1 justify-self-center flex flex-col items-center justify-center text-center w-full">
+        <div className="justify-self-center flex flex-col items-center justify-center text-center w-full min-w-0">
           <img
             src={CENTER_COMPETITION_LOGO_URL}
             alt="مسابقة محافظة الظاهرة للقرآن الكريم"
             crossOrigin="anonymous"
             className={`${
               compactMobile
-                ? 'h-14 xs:h-16 sm:h-22 md:h-26'
-                : 'h-16 xs:h-20 sm:h-24 md:h-28'
-            } w-auto max-w-full sm:max-w-[440px] md:max-w-[500px] object-contain select-none block`}
+                ? 'max-h-14 xs:max-h-16 sm:max-h-22 md:max-h-26'
+                : 'max-h-16 xs:max-h-20 sm:max-h-24 md:max-h-28'
+            } w-auto max-w-full sm:max-w-[440px] md:max-w-[500px] object-contain select-none block mx-auto`}
           />
         </div>
 
         {/* أقصى اليسار: شعار وزارة الأوقاف والشؤون الدينية بمحافظة الظاهرة */}
-        <div className="order-2 sm:order-3 justify-self-end flex items-center justify-end">
+        <div className="justify-self-end flex items-center justify-end w-full">
           <img
             src={LEFT_AWQAF_LOGO_URL}
             alt="وزارة الأوقاف والشؤون الدينية — إدارة الأوقاف والشؤون الدينية بمحافظة الظاهرة"
             crossOrigin="anonymous"
             className={`${
               compactMobile
-                ? 'h-12 xs:h-14 sm:h-20 md:h-24'
-                : 'h-14 xs:h-16 sm:h-24 md:h-28'
-            } w-auto max-w-[145px] sm:max-w-[205px] object-contain select-none block`}
+                ? 'max-h-12 xs:max-h-14 sm:max-h-20 md:max-h-24'
+                : 'max-h-14 xs:max-h-16 sm:max-h-24 md:max-h-28'
+            } w-auto max-w-full sm:max-w-[205px] object-contain select-none block ml-0 mr-auto`}
           />
         </div>
       </div>

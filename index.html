@@ -429,12 +429,12 @@
       })();
     </script>
     <style>
-      /* إخفاء شارة أو زر Powered by Netlify وأي عناصر خارجية محقونة خارج #root */
+      /* إخفاء شارة أو زر Powered by Netlify وأي عناصر خارجية محقونة خارج #root (مع استثناء حاويات تصدير PDF) */
       html > *:not(head):not(body),
-      body > *:not(#root):not(script):not(style):not(link):not(noscript),
+      body > *:not(#root):not(#fast-pdf-render-host):not([data-pdf-export-host]):not(.html2canvas-container):not(script):not(style):not(link):not(noscript),
       a[href*="netlify.com"],
       a[href*="netlify.app"]:not(#root a),
-      iframe[src*="netlify"],
+      iframe[src*="netlify"]:not(.html2canvas-container),
       div[id*="netlify"]:not(#root *),
       div[class*="netlify"]:not(#root *),
       [data-netlify-deploy-notifications],
@@ -468,10 +468,17 @@
         var root = document.getElementById('root');
         if (!root) return;
 
-        // إزالة أي عنصر مرئي محقون مباشرة داخل body خارج #root
+        // إزالة أي عنصر مرئي محقون مباشرة داخل body خارج #root (مع الحفاظ على حاويات تصدير PDF و html2canvas)
         var bodyChildren = Array.prototype.slice.call(document.body.children);
         bodyChildren.forEach(function(el) {
           if (!el || el === root) return;
+          if (
+            el.id === 'fast-pdf-render-host' ||
+            (el.hasAttribute && el.hasAttribute('data-pdf-export-host')) ||
+            (el.classList && el.classList.contains('html2canvas-container'))
+          ) {
+            return;
+          }
           var tag = (el.tagName || '').toUpperCase();
           if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'LINK' || tag === 'NOSCRIPT') return;
           el.style.setProperty('display', 'none', 'important');

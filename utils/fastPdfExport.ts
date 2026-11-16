@@ -212,6 +212,16 @@ export function createIsolatedIgnoreFilter(targetContainer: HTMLElement) {
     if (!node) return false;
     const tag = node.tagName;
     if (tag === 'SCRIPT' || tag === 'NOSCRIPT' || tag === 'IFRAME') return true;
+    if (node.classList && node.classList.contains('no-print')) return true;
+    if (
+      typeof document !== 'undefined' &&
+      node.parentElement === document.body &&
+      node !== targetContainer &&
+      !node.contains(targetContainer) &&
+      !targetContainer.contains(node)
+    ) {
+      return true;
+    }
     if (
       node.id === 'root' &&
       !node.contains(targetContainer) &&
@@ -219,9 +229,19 @@ export function createIsolatedIgnoreFilter(targetContainer: HTMLElement) {
     ) {
       return true;
     }
-    if (node.classList && node.classList.contains('no-print')) return true;
     return false;
   };
+}
+
+/**
+ * تنظيف اسم ملف الـ PDF من أي رموز غير صالحة للحفظ على جميع الأنظمة والمتصفحات
+ */
+export function sanitizePdfFileName(fileName: string): string {
+  const cleaned = (fileName || 'تقرير')
+    .replace(/[\\/:*?"<>|\r\n]+/g, '_')
+    .replace(/\s+/g, '_')
+    .trim();
+  return cleaned || 'تقرير';
 }
 
 /**
@@ -277,12 +297,16 @@ export async function exportDomElementToFastPdf({
 
   const host = document.createElement('div');
   host.id = 'fast-pdf-render-host';
+  host.setAttribute('data-pdf-export-host', 'true');
   host.style.position = 'fixed';
   host.style.top = '0';
   host.style.left = '-20000px';
   host.style.width = `${targetWidth}px`;
   host.style.background = '#ffffff';
   host.style.zIndex = '-9999';
+  host.style.visibility = 'visible';
+  host.style.opacity = '1';
+  host.style.display = 'block';
   host.setAttribute('dir', 'rtl');
 
   const clone = element.cloneNode(true) as HTMLElement;
@@ -290,7 +314,9 @@ export async function exportDomElementToFastPdf({
     clone.removeAttribute('id');
   }
   clone.querySelectorAll('#root').forEach(n => n.removeAttribute('id'));
-  clone.querySelectorAll('.no-print, script, link[rel="preconnect"]').forEach(n => n.remove());
+  clone
+    .querySelectorAll('.no-print, script, link[rel="preconnect"], base')
+    .forEach(n => n.remove());
   clone.classList.remove('dark:bg-slate-900', 'dark:border-slate-800', 'dark');
   clone.style.width = `${targetWidth}px`;
   clone.style.maxWidth = `${targetWidth}px`;
@@ -372,7 +398,7 @@ export async function exportDomElementToFastPdf({
     }
 
     // 2. تجميع الصفحات في نطاقات (Bands) حتى لا يتجاوز Canvas أي حد أقصى للمتصفح أو الهواتف
-    const MAX_BAND_HEIGHT_CSS = 4400;
+    const MAX_BAND_HEIGHT_CSS = 3400;
     const bands: { startY: number; endY: number; pageIndices: number[] }[] = [];
     let currBand: { startY: number; endY: number; pageIndices: number[] } | null = null;
 
@@ -416,17 +442,31 @@ export async function exportDomElementToFastPdf({
             clonedDoc.documentElement.setAttribute('dir', 'rtl');
             clonedDoc.documentElement.setAttribute('lang', 'ar');
             clonedDoc.documentElement.classList.remove('dark');
+            const clonedHost = clonedDoc.getElementById('fast-pdf-render-host');
+            if (clonedHost) {
+              clonedHost.style.setProperty('display', 'block', 'important');
+              clonedHost.style.setProperty('visibility', 'visible', 'important');
+              clonedHost.style.setProperty('opacity', '1', 'important');
+              clonedHost.style.setProperty('width', `${targetWidth}px`, 'important');
+              clonedHost.style.setProperty('height', 'auto', 'important');
+            }
             const fixStyle = clonedDoc.createElement('style');
             fixStyle.textContent = `
-              *, *::before, *::after {
+              #fast-pdf-render-host, #fast-pdf-render-host * {
                 letter-spacing: 0px !important;
                 word-spacing: normal !important;
                 font-feature-settings: "kern" 1, "liga" 1, "clig" 1, "calt" 1 !important;
                 font-variant-ligatures: common-ligatures contextual !important;
-                font-family: 'Tajawal', 'Cairo', 'Amiri', sans-serif !important;
-                direction: rtl !important;
+                font-family: 'Tajawal', 'Cairo', 'Amiri', system-ui, sans-serif !important;
                 transition: none !important;
                 animation: none !important;
+              }
+              #fast-pdf-render-host {
+                direction: rtl !important;
+              }
+              #fast-pdf-render-host [dir="ltr"] {
+                direction: ltr !important;
+                unicode-bidi: embed;
               }
               .no-print { display: none !important; }
             `;
@@ -494,7 +534,7 @@ export async function exportDomElementToFastPdf({
       }
     });
 
-    pdf.save(`${fileName}.pdf`);
+    pdf.save(`${sanitizePdfFileName(fileName)}.pdf`);
   } finally {
     if (host.parentNode) {
       host.parentNode.removeChild(host);
