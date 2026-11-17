@@ -315,7 +315,7 @@ async function startServer() {
           bottom: "5mm",
           left: "5mm",
         },
-        timeout: 20000
+        timeout: 45000
       });
 
       res.setHeader("Content-Type", "application/pdf");

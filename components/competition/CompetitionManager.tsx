@@ -78,6 +78,7 @@ import {
   writeStyledWorkbookFile,
   getLevelSheetTheme,
 } from '../../utils/excelStyledExport';
+import { jsPDF } from 'jspdf';
 import { exportComprehensiveWorkbookStylePdf } from '../../utils/comprehensivePdfExport';
 import {
   isServerPdfAvailable,
@@ -85,6 +86,9 @@ import {
   getCachedCompiledCss,
   inlineAndDecodeImages,
   exportDomElementToFastPdf,
+  appendDomElementToJsPdf,
+  appendHighResArabicTableToPdf,
+  sanitizePdfFileName,
 } from '../../utils/fastPdfExport';
 import MultiSelectFilterDropdown from './MultiSelectFilterDropdown';
 import { OfficialBannerCrestsBand } from './EvaluatorReportHeader';
@@ -1157,7 +1161,7 @@ async function exportCompetitionSetupPDF(
     const tableStyle =
       'width:100%;border-collapse:collapse;font-size:12px;page-break-inside:auto;background:#ffffff;';
 
-    const setupDocumentMarkup = `
+    const overviewMarkup = `
       <div style="border: 2px solid #065f46; border-radius: 14px; padding: 16px; background: #ffffff; color: #0f172a; font-family: 'Tajawal', 'Cairo', sans-serif; direction: rtl; text-align: right; box-sizing: border-box;">
         <!-- الترويسة الرسمية -->
         <div style="background: linear-gradient(135deg, #064e3b, #0f2347); color: #ffffff; padding: 16px 20px; border-radius: 12px; border-bottom: 4px solid #d4af37; display: flex; justify-content: space-between; align-items: center; gap: 16px;">
@@ -1246,35 +1250,6 @@ async function exportCompetitionSetupPDF(
         <div class="pdf-avoid-break" style="border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px; background: #f8fafc;">
           ${errorsBadgesHtml}
         </div>
-
-        ${
-          participants.length > 0
-            ? `
-        <!-- رابعاً: كشف المشاركين المسجلين في المسابقة -->
-        <div class="section-title pdf-avoid-break" style="${sectionTitleStyle}">
-          <span>رابعاً: كشف المتسابقين المسجلين في المسابقة</span>
-          <span style="font-size: 11px; color: #fde68a;">إجمالي المتسابقين: ${participants.length}</span>
-        </div>
-        <table style="${tableStyle}">
-          <thead>
-            <tr style="background: #ecfdf5; color: #064e3b;">
-              <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 55px; text-align: center;">رقم الطلب</th>
-              <th style="padding: 6px 8px; border: 1px solid #cbd5e1;">الاسم الكامل</th>
-              <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 90px; text-align: center;">الرقم المدني</th>
-              <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 85px; text-align: center;">الهاتف</th>
-              <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 55px; text-align: center;">الجنس</th>
-              <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 80px; text-align: center;">الولاية</th>
-              <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 120px;">المستوى</th>
-              <th style="padding: 6px 8px; border: 1px solid #cbd5e1;">المقرر</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${participantsRowsHtml}
-          </tbody>
-        </table>
-        `
-            : ''
-        }
       </div>
     `;
 
@@ -1282,6 +1257,34 @@ async function exportCompetitionSetupPDF(
     const fileName = `إعدادات_ومراجعة_${safeName}`;
 
     if (await isServerPdfAvailable()) {
+      const serverParticipantsSection =
+        participants.length > 0
+          ? `
+        <div style="border: 2px solid #065f46; border-radius: 14px; padding: 16px; background: #ffffff; margin-top: 16px; page-break-before: always;">
+          <div class="section-title" style="${sectionTitleStyle};margin-top:0;">
+            <span>رابعاً: كشف المتسابقين المسجلين في المسابقة</span>
+            <span style="font-size: 11px; color: #fde68a;">إجمالي المتسابقين: ${participants.length}</span>
+          </div>
+          <table style="${tableStyle}">
+            <thead>
+              <tr style="background: #ecfdf5; color: #064e3b;">
+                <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 55px; text-align: center;">رقم الطلب</th>
+                <th style="padding: 6px 8px; border: 1px solid #cbd5e1;">الاسم الكامل</th>
+                <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 90px; text-align: center;">الرقم المدني</th>
+                <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 85px; text-align: center;">الهاتف</th>
+                <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 55px; text-align: center;">الجنس</th>
+                <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 80px; text-align: center;">الولاية</th>
+                <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 120px;">المستوى</th>
+                <th style="padding: 6px 8px; border: 1px solid #cbd5e1;">المقرر</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${participantsRowsHtml}
+            </tbody>
+          </table>
+        </div>`
+          : '';
+
       const fullServerHtml = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -1299,7 +1302,7 @@ async function exportCompetitionSetupPDF(
   </style>
 </head>
 <body dir="rtl">
-  <div id="root">${setupDocumentMarkup}</div>
+  <div id="root">${overviewMarkup}${serverParticipantsSection}</div>
 </body>
 </html>`;
 
@@ -1310,21 +1313,73 @@ async function exportCompetitionSetupPDF(
       }
     }
 
-    // تصدير سريع ومحسّن بالمتصفح (يدعم Netlify والعمل بدون خادم) مع تقطيع ذكي للصفوف
-    const tempContainer = document.createElement('div');
-    tempContainer.style.width = '960px';
-    tempContainer.style.background = '#ffffff';
-    tempContainer.setAttribute('dir', 'rtl');
-    tempContainer.innerHTML = setupDocumentMarkup;
-
-    await exportDomElementToFastPdf({
-      element: tempContainer,
-      fileName,
+    // تصدير هجين فائق السرعة وعالي الدقة للمتصفح وNetlify (حتى لأكثر من 1000 متسابق في ثوانٍ معدودة):
+    // 1. الأقسام الإعدادية والتنسيقية (المقيمون والمستويات والأخطاء) عبر DOM بدقة عالية
+    const pdf = new jsPDF({
       orientation: 'portrait',
-      renderWidthPx: 960,
+      unit: 'mm',
+      format: 'a4',
+      compress: true,
+    });
+
+    const overviewContainer = document.createElement('div');
+    overviewContainer.style.width = '990px';
+    overviewContainer.style.background = '#ffffff';
+    overviewContainer.setAttribute('dir', 'rtl');
+    overviewContainer.innerHTML = overviewMarkup;
+
+    await appendDomElementToJsPdf({
+      pdf,
+      element: overviewContainer,
+      orientation: 'portrait',
+      renderWidthPx: 990,
       marginMm: 6,
       atomicSelector: 'tr, .section-title, .pdf-avoid-break',
+      startOnNewPage: false,
+      inlineStyledOnly: true,
     });
+
+    // 2. كشف المتسابقين (500 - 1000+ متسابق) عبر محرك الجداول عالي الدقة 2x Retina بسرعة فائقة
+    if (participants.length > 0) {
+      const levelById = new Map<number, CompetitionLevel>();
+      levels.forEach(l => levelById.set(Number(l.id), l));
+
+      const tableRows: string[][] = participants.map((p, idx) => {
+        const lvl = levelById.get(Number(p.levelId));
+        return [
+          String(p.requestNumber || idx + 1),
+          p.name || '-',
+          p.civilId || '-',
+          p.phone || '-',
+          p.gender || '-',
+          p.wilayat || '-',
+          lvl?.name || '-',
+          formatJuzsOrSurahsDisplay(p.juzsOrSurahs || lvl?.juzsOrSurahs || '') || '-',
+        ];
+      });
+
+      await appendHighResArabicTableToPdf({
+        pdf,
+        startOnNewPage: true,
+        marginMm: 6,
+        sectionTitle: 'رابعاً: كشف المتسابقين المسجلين في المسابقة',
+        sectionSubtitle: `إجمالي المتسابقين: ${participants.length}`,
+        runningHeaderTitle: comp.name || 'إعدادات المسابقة',
+        columns: [
+          { header: 'رقم الطلب', widthPx: 68, align: 'center', dir: 'ltr', bold: true, fontSize: 11 },
+          { header: 'الاسم الكامل', widthPx: 220, align: 'right', dir: 'rtl', bold: true, color: '#0f172a', fontSize: 11.5 },
+          { header: 'الرقم المدني', widthPx: 100, align: 'center', dir: 'ltr', fontSize: 11 },
+          { header: 'الهاتف', widthPx: 95, align: 'center', dir: 'ltr', fontSize: 11 },
+          { header: 'الجنس', widthPx: 58, align: 'center', dir: 'rtl', fontSize: 11 },
+          { header: 'الولاية', widthPx: 85, align: 'center', dir: 'rtl', fontSize: 11 },
+          { header: 'المستوى', widthPx: 154, align: 'right', dir: 'rtl', bold: true, color: '#065f46', fontSize: 11 },
+          { header: 'المقرر', widthPx: 210, align: 'right', dir: 'rtl', color: '#334155', fontSize: 10.5 },
+        ],
+        rows: tableRows,
+      });
+    }
+
+    pdf.save(`${sanitizePdfFileName(fileName)}.pdf`);
     showToast?.('تم تصدير وثيقة إعدادات المسابقة بصيغة PDF بنجاح!', 'success');
   } catch (e) {
     console.error('Setup PDF export error:', e);
