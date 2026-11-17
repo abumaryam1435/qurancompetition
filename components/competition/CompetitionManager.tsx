@@ -44,6 +44,10 @@ import {
   FileCheck,
   Lock,
   Unlock,
+  Columns3,
+  Eye,
+  EyeOff,
+  X,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { surahNames } from '../../utils/quranData';
@@ -89,6 +93,8 @@ import {
   appendDomElementToJsPdf,
   appendHighResArabicTableToPdf,
   sanitizePdfFileName,
+  getOfficialCrestDataUrls,
+  buildOfficialCrestsBannerHtml,
 } from '../../utils/fastPdfExport';
 import MultiSelectFilterDropdown from './MultiSelectFilterDropdown';
 import { OfficialBannerCrestsBand } from './EvaluatorReportHeader';
@@ -1007,6 +1013,167 @@ function exportCompetitionSetupExcel(
 
 let isExportingSetupPdf = false;
 
+export interface SetupPdfColumnConfig {
+  evaluators: {
+    index: boolean;
+    name: boolean;
+    pin: boolean;
+    levels: boolean;
+    levelsCount: boolean;
+    editPerm: boolean;
+    studentsCount: boolean;
+  };
+  levels: {
+    index: boolean;
+    name: boolean;
+    juzs: boolean;
+    segments: boolean;
+    maxScore: boolean;
+    participants: boolean;
+    evaluators: boolean;
+  };
+  participants: {
+    requestNumber: boolean;
+    name: boolean;
+    civilId: boolean;
+    phone: boolean;
+    gender: boolean;
+    wilayat: boolean;
+    level: boolean;
+    juzs: boolean;
+  };
+}
+
+const SETUP_PDF_COLUMNS_STORAGE_KEY = 'competitionSetupPdfVisibleColumns_v1';
+
+const DEFAULT_SETUP_PDF_COLUMNS: SetupPdfColumnConfig = {
+  evaluators: {
+    index: true,
+    name: true,
+    pin: false, // رمز الدخول مخفي افتراضياً لخصوصية المقيمين
+    levels: true,
+    levelsCount: true,
+    editPerm: true,
+    studentsCount: true,
+  },
+  levels: {
+    index: true,
+    name: true,
+    juzs: true,
+    segments: true,
+    maxScore: true,
+    participants: true,
+    evaluators: true,
+  },
+  participants: {
+    requestNumber: true,
+    name: true,
+    civilId: true,
+    phone: true,
+    gender: true,
+    wilayat: true,
+    level: true,
+    juzs: true,
+  },
+};
+
+const EVALUATOR_PDF_COLUMN_DEFS: {
+  key: keyof SetupPdfColumnConfig['evaluators'];
+  label: string;
+  thStyle: string;
+}[] = [
+  { key: 'index', label: 'م', thStyle: 'padding: 8px 10px; border: 1px solid #cbd5e1; width: 38px; text-align: center;' },
+  { key: 'name', label: 'اسم المقيم', thStyle: 'padding: 8px 10px; border: 1px solid #cbd5e1;' },
+  { key: 'pin', label: 'رمز الدخول', thStyle: 'padding: 8px 10px; border: 1px solid #cbd5e1; width: 100px; text-align: center;' },
+  { key: 'levels', label: 'المستويات المسندة إليه (في أي المستويات هو)', thStyle: 'padding: 8px 10px; border: 1px solid #cbd5e1;' },
+  { key: 'levelsCount', label: 'عدد المستويات', thStyle: 'padding: 8px 10px; border: 1px solid #cbd5e1; width: 85px; text-align: center;' },
+  { key: 'editPerm', label: 'صلاحية التعديل', thStyle: 'padding: 8px 10px; border: 1px solid #cbd5e1; width: 110px; text-align: center;' },
+  { key: 'studentsCount', label: 'عدد الطلاب', thStyle: 'padding: 8px 10px; border: 1px solid #cbd5e1; width: 85px; text-align: center;' },
+];
+
+const LEVEL_PDF_COLUMN_DEFS: {
+  key: keyof SetupPdfColumnConfig['levels'];
+  label: string;
+  thStyle: string;
+}[] = [
+  { key: 'index', label: 'م', thStyle: 'padding: 8px 10px; border: 1px solid #cbd5e1; width: 38px; text-align: center;' },
+  { key: 'name', label: 'اسم المستوى', thStyle: 'padding: 8px 10px; border: 1px solid #cbd5e1; width: 140px;' },
+  { key: 'juzs', label: 'المقرر (الأجزاء / السور)', thStyle: 'padding: 8px 10px; border: 1px solid #cbd5e1; width: 150px;' },
+  { key: 'segments', label: 'المقاطع والأسطر', thStyle: 'padding: 8px 10px; border: 1px solid #cbd5e1; width: 115px; text-align: center;' },
+  { key: 'maxScore', label: 'الدرجة', thStyle: 'padding: 8px 10px; border: 1px solid #cbd5e1; width: 65px; text-align: center;' },
+  { key: 'participants', label: 'المشاركون', thStyle: 'padding: 8px 10px; border: 1px solid #cbd5e1; width: 65px; text-align: center;' },
+  { key: 'evaluators', label: 'المقيمون المسندون لهذا المستوى', thStyle: 'padding: 8px 10px; border: 1px solid #cbd5e1;' },
+];
+
+const PARTICIPANT_PDF_COLUMN_DEFS: {
+  key: keyof SetupPdfColumnConfig['participants'];
+  label: string;
+  thStyle: string;
+  widthPx: number;
+  align: 'right' | 'center' | 'left';
+  dir: 'rtl' | 'ltr';
+  bold?: boolean;
+  color?: string;
+  fontSize?: number;
+}[] = [
+  { key: 'requestNumber', label: 'رقم الطلب', thStyle: 'padding: 6px 8px; border: 1px solid #cbd5e1; width: 55px; text-align: center;', widthPx: 68, align: 'center', dir: 'ltr', bold: true, fontSize: 11 },
+  { key: 'name', label: 'الاسم الكامل', thStyle: 'padding: 6px 8px; border: 1px solid #cbd5e1;', widthPx: 220, align: 'right', dir: 'rtl', bold: true, color: '#0f172a', fontSize: 11.5 },
+  { key: 'civilId', label: 'الرقم المدني', thStyle: 'padding: 6px 8px; border: 1px solid #cbd5e1; width: 90px; text-align: center;', widthPx: 100, align: 'center', dir: 'ltr', fontSize: 11 },
+  { key: 'phone', label: 'الهاتف', thStyle: 'padding: 6px 8px; border: 1px solid #cbd5e1; width: 85px; text-align: center;', widthPx: 95, align: 'center', dir: 'ltr', fontSize: 11 },
+  { key: 'gender', label: 'الجنس', thStyle: 'padding: 6px 8px; border: 1px solid #cbd5e1; width: 55px; text-align: center;', widthPx: 58, align: 'center', dir: 'rtl', fontSize: 11 },
+  { key: 'wilayat', label: 'الولاية', thStyle: 'padding: 6px 8px; border: 1px solid #cbd5e1; width: 80px; text-align: center;', widthPx: 85, align: 'center', dir: 'rtl', fontSize: 11 },
+  { key: 'level', label: 'المستوى', thStyle: 'padding: 6px 8px; border: 1px solid #cbd5e1; width: 120px;', widthPx: 154, align: 'right', dir: 'rtl', bold: true, color: '#065f46', fontSize: 11 },
+  { key: 'juzs', label: 'المقرر', thStyle: 'padding: 6px 8px; border: 1px solid #cbd5e1;', widthPx: 210, align: 'right', dir: 'rtl', color: '#334155', fontSize: 10.5 },
+];
+
+function cloneDefaultSetupPdfColumns(): SetupPdfColumnConfig {
+  return {
+    evaluators: { ...DEFAULT_SETUP_PDF_COLUMNS.evaluators },
+    levels: { ...DEFAULT_SETUP_PDF_COLUMNS.levels },
+    participants: { ...DEFAULT_SETUP_PDF_COLUMNS.participants },
+  };
+}
+
+function loadSetupPdfColumns(): SetupPdfColumnConfig {
+  const base = cloneDefaultSetupPdfColumns();
+  try {
+    if (typeof localStorage === 'undefined') return base;
+    const raw = localStorage.getItem(SETUP_PDF_COLUMNS_STORAGE_KEY);
+    if (!raw) return base;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      if (parsed.evaluators) Object.assign(base.evaluators, parsed.evaluators);
+      if (parsed.levels) Object.assign(base.levels, parsed.levels);
+      if (parsed.participants) Object.assign(base.participants, parsed.participants);
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return base;
+}
+
+function saveSetupPdfColumns(cfg: SetupPdfColumnConfig): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(SETUP_PDF_COLUMNS_STORAGE_KEY, JSON.stringify(cfg));
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function countVisibleSetupPdfColumns(cfg: SetupPdfColumnConfig): { visible: number; total: number } {
+  const allFlags = [
+    ...Object.values(cfg.evaluators),
+    ...Object.values(cfg.levels),
+    ...Object.values(cfg.participants),
+  ];
+  return {
+    visible: allFlags.filter(Boolean).length,
+    total: allFlags.length,
+  };
+}
+
 function escapePdfHtml(value: unknown): string {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -1021,7 +1188,8 @@ function escapePdfHtml(value: unknown): string {
  */
 async function exportCompetitionSetupPDF(
   comp: Competition,
-  showToast?: (msg: string, type?: 'success' | 'error' | 'info') => void
+  showToast?: (msg: string, type?: 'success' | 'error' | 'info') => void,
+  visibleColumns?: SetupPdfColumnConfig
 ) {
   if (isExportingSetupPdf) {
     showToast?.('جاري تجهيز ملف إعدادات المسابقة، يرجى الانتظار قليلاً...', 'info');
@@ -1030,6 +1198,11 @@ async function exportCompetitionSetupPDF(
   isExportingSetupPdf = true;
 
   try {
+    const colCfg = visibleColumns || loadSetupPdfColumns();
+    const activeEvalCols = EVALUATOR_PDF_COLUMN_DEFS.filter(c => colCfg.evaluators[c.key]);
+    const activeLevelCols = LEVEL_PDF_COLUMN_DEFS.filter(c => colCfg.levels[c.key]);
+    const activeParticipantCols = PARTICIPANT_PDF_COLUMN_DEFS.filter(c => colCfg.participants[c.key]);
+
     const levels = comp.levels || [];
     const evaluators = sortByArabicName(comp.evaluators || []);
     const participants = sortByArabicName(comp.participants || []);
@@ -1037,6 +1210,12 @@ async function exportCompetitionSetupPDF(
     const compErrors = resolveCompetitionErrors(comp);
 
     showToast?.('جارِ تجهيز وثيقة إعدادات المسابقة وتقسيم اللجان بصيغة PDF...', 'info');
+
+    const crestDataUrls = await getOfficialCrestDataUrls();
+    const portraitCrestsBanner = buildOfficialCrestsBannerHtml({
+      variant: 'portrait',
+      crestDataUrls,
+    });
 
     const passageModeLabel =
       comp.passageMode === 'international'
@@ -1051,8 +1230,14 @@ async function exportCompetitionSetupPDF(
       day: 'numeric',
     });
 
+    const evaluatorsHeaderHtml = activeEvalCols
+      .map(c => `<th style="${c.thStyle}">${escapePdfHtml(c.label)}</th>`)
+      .join('');
+
     const evaluatorsRowsHtml =
-      evaluators.length > 0
+      activeEvalCols.length === 0
+        ? ''
+        : evaluators.length > 0
         ? evaluators
             .map((ev, idx) => {
               const info = getEvaluatorAssignedLevelsInfo(ev, levels, participants);
@@ -1068,23 +1253,33 @@ async function exportCompetitionSetupPDF(
                   ? `<span style="color:#047857;font-weight:800;font-size:10px;background:#ecfdf5;padding:2px 6px;border-radius:4px;border:1px solid #a7f3d0;">مسموح (${allowedEditCount})</span>`
                   : `<span style="color:#64748b;font-weight:700;font-size:10px;background:#f1f5f9;padding:2px 6px;border-radius:4px;border:1px solid #cbd5e1;">مقفل بعد الحفظ</span>`;
 
+              const cellMap: Record<keyof SetupPdfColumnConfig['evaluators'], string> = {
+                index: `<td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${idx + 1}</td>`,
+                name: `<td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:800;color:#0f172a;">${escapePdfHtml(ev.name)}</td>`,
+                pin: `<td dir="ltr" style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-family:monospace;font-weight:900;color:#b45309;background:#fffbeb;">${escapePdfHtml(ev.pin || '-')}</td>`,
+                levels: `<td style="padding:8px 10px;border:1px solid #cbd5e1;">${badgesHtml || 'جميع المستويات'}</td>`,
+                levelsCount: `<td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${info.assignedLevels.length} من ${levels.length}</td>`,
+                editPerm: `<td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;">${editPermHtml}</td>`,
+                studentsCount: `<td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;color:#047857;">${info.participantsCount}</td>`,
+              };
+
               return `
                 <tr style="background:${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
-                  <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${idx + 1}</td>
-                  <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:800;color:#0f172a;">${escapePdfHtml(ev.name)}</td>
-                  <td dir="ltr" style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-family:monospace;font-weight:900;color:#b45309;background:#fffbeb;">${escapePdfHtml(ev.pin || '-')}</td>
-                  <td style="padding:8px 10px;border:1px solid #cbd5e1;">${badgesHtml || 'جميع المستويات'}</td>
-                  <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${info.assignedLevels.length} من ${levels.length}</td>
-                  <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;">${editPermHtml}</td>
-                  <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;color:#047857;">${info.participantsCount}</td>
+                  ${activeEvalCols.map(c => cellMap[c.key]).join('')}
                 </tr>
               `;
             })
             .join('')
-        : `<tr><td colspan="7" style="padding:14px;border:1px solid #cbd5e1;text-align:center;color:#64748b;font-weight:700;">لا يوجد مقيمون مضافون لهذه المسابقة حالياً</td></tr>`;
+        : `<tr><td colspan="${activeEvalCols.length}" style="padding:14px;border:1px solid #cbd5e1;text-align:center;color:#64748b;font-weight:700;">لا يوجد مقيمون مضافون لهذه المسابقة حالياً</td></tr>`;
+
+    const levelsHeaderHtml = activeLevelCols
+      .map(c => `<th style="${c.thStyle}">${escapePdfHtml(c.label)}</th>`)
+      .join('');
 
     const levelsRowsHtml =
-      levels.length > 0
+      activeLevelCols.length === 0
+        ? ''
+        : levels.length > 0
         ? levels
             .map((lvl, idx) => {
               const levelEvaluators = evaluators.filter(ev => {
@@ -1107,15 +1302,19 @@ async function exportCompetitionSetupPDF(
                       .join(' ')
                   : `<span style="color:#dc2626;font-size:11px;font-weight:700;">لم يسند مقيمون بعد</span>`;
 
+              const cellMap: Record<keyof SetupPdfColumnConfig['levels'], string> = {
+                index: `<td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${idx + 1}</td>`,
+                name: `<td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:800;color:#064e3b;">${escapePdfHtml(lvl.name)}</td>`,
+                juzs: `<td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:700;">${escapePdfHtml(formatJuzsOrSurahsDisplay(lvl.juzsOrSurahs))}</td>`,
+                segments: `<td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${lvl.segmentsCount} مقاطع × ${lvl.linesPerSegment} أسطر</td>`,
+                maxScore: `<td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${lvl.maxScore}</td>`,
+                participants: `<td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;color:#047857;">${levelParticipantsCount}</td>`,
+                evaluators: `<td style="padding:8px 10px;border:1px solid #cbd5e1;">${evalBadges}</td>`,
+              };
+
               return `
                 <tr style="background:${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
-                  <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${idx + 1}</td>
-                  <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:800;color:#064e3b;">${escapePdfHtml(lvl.name)}</td>
-                  <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:700;">${escapePdfHtml(formatJuzsOrSurahsDisplay(lvl.juzsOrSurahs))}</td>
-                  <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${lvl.segmentsCount} مقاطع × ${lvl.linesPerSegment} أسطر</td>
-                  <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;">${lvl.maxScore}</td>
-                  <td style="padding:8px 10px;border:1px solid #cbd5e1;text-align:center;font-weight:800;color:#047857;">${levelParticipantsCount}</td>
-                  <td style="padding:8px 10px;border:1px solid #cbd5e1;">${evalBadges}</td>
+                  ${activeLevelCols.map(c => cellMap[c.key]).join('')}
                 </tr>
               `;
             })
@@ -1135,21 +1334,28 @@ async function exportCompetitionSetupPDF(
       })
       .join('');
 
+    const participantsHeaderHtml = activeParticipantCols
+      .map(c => `<th style="${c.thStyle}">${escapePdfHtml(c.label)}</th>`)
+      .join('');
+
     const participantsRowsHtml =
-      participants.length > 0
+      participants.length > 0 && activeParticipantCols.length > 0
         ? participants
             .map((p, idx) => {
               const lvl = levels.find(l => Number(l.id) === Number(p.levelId));
+              const cellMap: Record<keyof SetupPdfColumnConfig['participants'], string> = {
+                requestNumber: `<td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;font-weight:700;">${escapePdfHtml(p.requestNumber || idx + 1)}</td>`,
+                name: `<td style="padding:6px 8px;border:1px solid #cbd5e1;font-weight:800;">${escapePdfHtml(p.name)}</td>`,
+                civilId: `<td dir="ltr" style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${escapePdfHtml(p.civilId || '-')}</td>`,
+                phone: `<td dir="ltr" style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${escapePdfHtml(p.phone || '-')}</td>`,
+                gender: `<td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${escapePdfHtml(p.gender || '-')}</td>`,
+                wilayat: `<td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${escapePdfHtml(p.wilayat || '-')}</td>`,
+                level: `<td style="padding:6px 8px;border:1px solid #cbd5e1;font-weight:800;color:#065f46;">${escapePdfHtml(lvl?.name || '-')}</td>`,
+                juzs: `<td style="padding:6px 8px;border:1px solid #cbd5e1;font-size:11px;">${escapePdfHtml(formatJuzsOrSurahsDisplay(p.juzsOrSurahs || lvl?.juzsOrSurahs || ''))}</td>`,
+              };
               return `
                 <tr style="background:${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
-                  <td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;font-weight:700;">${escapePdfHtml(p.requestNumber || idx + 1)}</td>
-                  <td style="padding:6px 8px;border:1px solid #cbd5e1;font-weight:800;">${escapePdfHtml(p.name)}</td>
-                  <td dir="ltr" style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${escapePdfHtml(p.civilId || '-')}</td>
-                  <td dir="ltr" style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${escapePdfHtml(p.phone || '-')}</td>
-                  <td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${escapePdfHtml(p.gender || '-')}</td>
-                  <td style="padding:6px 8px;border:1px solid #cbd5e1;text-align:center;">${escapePdfHtml(p.wilayat || '-')}</td>
-                  <td style="padding:6px 8px;border:1px solid #cbd5e1;font-weight:800;color:#065f46;">${escapePdfHtml(lvl?.name || '-')}</td>
-                  <td style="padding:6px 8px;border:1px solid #cbd5e1;font-size:11px;">${escapePdfHtml(formatJuzsOrSurahsDisplay(p.juzsOrSurahs || lvl?.juzsOrSurahs || ''))}</td>
+                  ${activeParticipantCols.map(c => cellMap[c.key]).join('')}
                 </tr>
               `;
             })
@@ -1161,15 +1367,57 @@ async function exportCompetitionSetupPDF(
     const tableStyle =
       'width:100%;border-collapse:collapse;font-size:12px;page-break-inside:auto;background:#ffffff;';
 
+    const evaluatorsSectionMarkup =
+      activeEvalCols.length > 0
+        ? `
+        <!-- أولاً: جدول المقيمين والمستويات المسندة لكل مقيم -->
+        <div class="section-title pdf-avoid-break" style="${sectionTitleStyle}">
+          <span>أولاً: بيانات المقيمين وتوزيع المستويات المسندة لكل مقيم</span>
+          <span style="font-size: 11px; color: #fde68a;">إجمالي المقيمين: ${evaluators.length}</span>
+        </div>
+        <table style="${tableStyle}">
+          <thead>
+            <tr style="background: #ecfdf5; color: #064e3b;">
+              ${evaluatorsHeaderHtml}
+            </tr>
+          </thead>
+          <tbody>
+            ${evaluatorsRowsHtml}
+          </tbody>
+        </table>`
+        : '';
+
+    const levelsSectionMarkup =
+      activeLevelCols.length > 0
+        ? `
+        <!-- ثانياً: جدول المستويات وتقسيم لجان التقييم -->
+        <div class="section-title pdf-avoid-break" style="${sectionTitleStyle}">
+          <span>ثانياً: إعدادات المستويات وتقسيم لجان المقيمين حسب كل مستوى</span>
+          <span style="font-size: 11px; color: #fde68a;">إجمالي المستويات: ${levels.length}</span>
+        </div>
+        <table style="${tableStyle}">
+          <thead>
+            <tr style="background: #ecfdf5; color: #064e3b;">
+              ${levelsHeaderHtml}
+            </tr>
+          </thead>
+          <tbody>
+            ${levelsRowsHtml}
+          </tbody>
+        </table>`
+        : '';
+
     const overviewMarkup = `
-      <div style="border: 2px solid #065f46; border-radius: 14px; padding: 16px; background: #ffffff; color: #0f172a; font-family: 'Tajawal', 'Cairo', sans-serif; direction: rtl; text-align: right; box-sizing: border-box;">
-        <!-- الترويسة الرسمية -->
-        <div style="background: linear-gradient(135deg, #064e3b, #0f2347); color: #ffffff; padding: 16px 20px; border-radius: 12px; border-bottom: 4px solid #d4af37; display: flex; justify-content: space-between; align-items: center; gap: 16px;">
+      <div style="border: 2px solid #065f46; border-radius: 14px; padding: 14px; background: #ffffff; color: #0f172a; font-family: 'Tajawal', 'Cairo', sans-serif; direction: rtl; text-align: right; box-sizing: border-box;">
+        <!-- الترويسة الرسمية بالشعارات الثلاثة (محافظة الظاهرة • المسابقة • وزارة الأوقاف) -->
+        ${portraitCrestsBanner}
+        <!-- شريط عنوان الوثيقة وبيانات المسابقة -->
+        <div style="background: linear-gradient(135deg, #064e3b, #0f2347); color: #ffffff; padding: 13px 18px; border-radius: 0 0 12px 12px; border: 1px solid rgba(212,175,55,0.6); border-top: none; border-bottom: 4px solid #d4af37; display: flex; justify-content: space-between; align-items: center; gap: 16px;">
           <div>
-            <div style="font-size: 12px; color: #fcd34d; font-weight: 800;">سلطنة عُمان • وزارة الأوقاف والشؤون الدينية</div>
-            <div style="font-size: 12px; color: #e2e8f0; font-weight: 700; margin-bottom: 6px;">إدارة الأوقاف والشؤون الدينية بمحافظة الظاهرة</div>
-            <div style="font-size: 20px; font-weight: 900; color: #ffffff;">وثيقة إعدادات ومراجعة المسابقة وتوزيع اللجان</div>
-            <div style="font-size: 14px; font-weight: 800; color: #fde68a; margin-top: 2px;">${escapePdfHtml(comp.name)} ${comp.seasonText ? `— ${escapePdfHtml(comp.seasonText)}` : ''}</div>
+            <div style="font-size: 11.5px; color: #fcd34d; font-weight: 800;">سلطنة عُمان • وزارة الأوقاف والشؤون الدينية</div>
+            <div style="font-size: 11.5px; color: #e2e8f0; font-weight: 700; margin-bottom: 5px;">إدارة الأوقاف والشؤون الدينية بمحافظة الظاهرة</div>
+            <div style="font-size: 19px; font-weight: 900; color: #ffffff;">وثيقة إعدادات ومراجعة المسابقة وتوزيع اللجان</div>
+            <div style="font-size: 13.5px; font-weight: 800; color: #fde68a; margin-top: 2px;">${escapePdfHtml(comp.name)} ${comp.seasonText ? `— ${escapePdfHtml(comp.seasonText)}` : ''}</div>
           </div>
           <div style="text-align: left; font-size: 11px; color: #e2e8f0; line-height: 1.7; flex-shrink: 0;">
             <div><strong>تاريخ الإصدار:</strong> ${escapePdfHtml(dateStr)}</div>
@@ -1198,49 +1446,8 @@ async function exportCompetitionSetupPDF(
           </div>
         </div>
 
-        <!-- أولاً: جدول المقيمين والمستويات المسندة لكل مقيم -->
-        <div class="section-title pdf-avoid-break" style="${sectionTitleStyle}">
-          <span>أولاً: بيانات المقيمين وتوزيع المستويات المسندة لكل مقيم</span>
-          <span style="font-size: 11px; color: #fde68a;">إجمالي المقيمين: ${evaluators.length}</span>
-        </div>
-        <table style="${tableStyle}">
-          <thead>
-            <tr style="background: #ecfdf5; color: #064e3b;">
-              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 38px; text-align: center;">م</th>
-              <th style="padding: 8px 10px; border: 1px solid #cbd5e1;">اسم المقيم</th>
-              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 100px; text-align: center;">رمز الدخول</th>
-              <th style="padding: 8px 10px; border: 1px solid #cbd5e1;">المستويات المسندة إليه (في أي المستويات هو)</th>
-              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 85px; text-align: center;">عدد المستويات</th>
-              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 110px; text-align: center;">صلاحية التعديل</th>
-              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 85px; text-align: center;">عدد الطلاب</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${evaluatorsRowsHtml}
-          </tbody>
-        </table>
-
-        <!-- ثانياً: جدول المستويات وتقسيم لجان التقييم -->
-        <div class="section-title pdf-avoid-break" style="${sectionTitleStyle}">
-          <span>ثانياً: إعدادات المستويات وتقسيم لجان المقيمين حسب كل مستوى</span>
-          <span style="font-size: 11px; color: #fde68a;">إجمالي المستويات: ${levels.length}</span>
-        </div>
-        <table style="${tableStyle}">
-          <thead>
-            <tr style="background: #ecfdf5; color: #064e3b;">
-              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 38px; text-align: center;">م</th>
-              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 140px;">اسم المستوى</th>
-              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 150px;">المقرر (الأجزاء / السور)</th>
-              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 115px; text-align: center;">المقاطع والأسطر</th>
-              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 65px; text-align: center;">الدرجة</th>
-              <th style="padding: 8px 10px; border: 1px solid #cbd5e1; width: 65px; text-align: center;">المشاركون</th>
-              <th style="padding: 8px 10px; border: 1px solid #cbd5e1;">المقيمون المسندون لهذا المستوى</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${levelsRowsHtml}
-          </tbody>
-        </table>
+        ${evaluatorsSectionMarkup}
+        ${levelsSectionMarkup}
 
         <!-- ثالثاً: بنود خصم الأخطاء المعتمدة -->
         <div class="section-title pdf-avoid-break" style="${sectionTitleStyle}">
@@ -1258,24 +1465,18 @@ async function exportCompetitionSetupPDF(
 
     if (await isServerPdfAvailable()) {
       const serverParticipantsSection =
-        participants.length > 0
+        participants.length > 0 && activeParticipantCols.length > 0
           ? `
-        <div style="border: 2px solid #065f46; border-radius: 14px; padding: 16px; background: #ffffff; margin-top: 16px; page-break-before: always;">
-          <div class="section-title" style="${sectionTitleStyle};margin-top:0;">
+        <div style="border: 2px solid #065f46; border-radius: 14px; padding: 14px; background: #ffffff; margin-top: 16px; page-break-before: always;">
+          ${portraitCrestsBanner}
+          <div class="section-title" style="${sectionTitleStyle};margin-top:8px;">
             <span>رابعاً: كشف المتسابقين المسجلين في المسابقة</span>
             <span style="font-size: 11px; color: #fde68a;">إجمالي المتسابقين: ${participants.length}</span>
           </div>
           <table style="${tableStyle}">
             <thead>
               <tr style="background: #ecfdf5; color: #064e3b;">
-                <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 55px; text-align: center;">رقم الطلب</th>
-                <th style="padding: 6px 8px; border: 1px solid #cbd5e1;">الاسم الكامل</th>
-                <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 90px; text-align: center;">الرقم المدني</th>
-                <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 85px; text-align: center;">الهاتف</th>
-                <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 55px; text-align: center;">الجنس</th>
-                <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 80px; text-align: center;">الولاية</th>
-                <th style="padding: 6px 8px; border: 1px solid #cbd5e1; width: 120px;">المستوى</th>
-                <th style="padding: 6px 8px; border: 1px solid #cbd5e1;">المقرر</th>
+                ${participantsHeaderHtml}
               </tr>
             </thead>
             <tbody>
@@ -1340,22 +1541,42 @@ async function exportCompetitionSetupPDF(
     });
 
     // 2. كشف المتسابقين (500 - 1000+ متسابق) عبر محرك الجداول عالي الدقة 2x Retina بسرعة فائقة
-    if (participants.length > 0) {
+    if (participants.length > 0 && activeParticipantCols.length > 0) {
       const levelById = new Map<number, CompetitionLevel>();
       levels.forEach(l => levelById.set(Number(l.id), l));
 
+      const rawTotalW = Math.max(1, activeParticipantCols.reduce((s, c) => s + c.widthPx, 0));
+      let usedW = 0;
+      const normalizedCols = activeParticipantCols.map((col, idx) => {
+        const w =
+          idx === activeParticipantCols.length - 1
+            ? Math.max(40, 990 - usedW)
+            : Math.max(36, Math.round((col.widthPx / rawTotalW) * 990));
+        usedW += w;
+        return {
+          header: col.label,
+          widthPx: w,
+          align: col.align,
+          dir: col.dir,
+          bold: col.bold,
+          color: col.color,
+          fontSize: col.fontSize,
+        };
+      });
+
       const tableRows: string[][] = participants.map((p, idx) => {
         const lvl = levelById.get(Number(p.levelId));
-        return [
-          String(p.requestNumber || idx + 1),
-          p.name || '-',
-          p.civilId || '-',
-          p.phone || '-',
-          p.gender || '-',
-          p.wilayat || '-',
-          lvl?.name || '-',
-          formatJuzsOrSurahsDisplay(p.juzsOrSurahs || lvl?.juzsOrSurahs || '') || '-',
-        ];
+        const valMap: Record<keyof SetupPdfColumnConfig['participants'], string> = {
+          requestNumber: String(p.requestNumber || idx + 1),
+          name: p.name || '-',
+          civilId: p.civilId || '-',
+          phone: p.phone || '-',
+          gender: p.gender || '-',
+          wilayat: p.wilayat || '-',
+          level: lvl?.name || '-',
+          juzs: formatJuzsOrSurahsDisplay(p.juzsOrSurahs || lvl?.juzsOrSurahs || '') || '-',
+        };
+        return activeParticipantCols.map(c => valMap[c.key]);
       });
 
       await appendHighResArabicTableToPdf({
@@ -1365,16 +1586,8 @@ async function exportCompetitionSetupPDF(
         sectionTitle: 'رابعاً: كشف المتسابقين المسجلين في المسابقة',
         sectionSubtitle: `إجمالي المتسابقين: ${participants.length}`,
         runningHeaderTitle: comp.name || 'إعدادات المسابقة',
-        columns: [
-          { header: 'رقم الطلب', widthPx: 68, align: 'center', dir: 'ltr', bold: true, fontSize: 11 },
-          { header: 'الاسم الكامل', widthPx: 220, align: 'right', dir: 'rtl', bold: true, color: '#0f172a', fontSize: 11.5 },
-          { header: 'الرقم المدني', widthPx: 100, align: 'center', dir: 'ltr', fontSize: 11 },
-          { header: 'الهاتف', widthPx: 95, align: 'center', dir: 'ltr', fontSize: 11 },
-          { header: 'الجنس', widthPx: 58, align: 'center', dir: 'rtl', fontSize: 11 },
-          { header: 'الولاية', widthPx: 85, align: 'center', dir: 'rtl', fontSize: 11 },
-          { header: 'المستوى', widthPx: 154, align: 'right', dir: 'rtl', bold: true, color: '#065f46', fontSize: 11 },
-          { header: 'المقرر', widthPx: 210, align: 'right', dir: 'rtl', color: '#334155', fontSize: 10.5 },
-        ],
+        showOfficialCrestsHeader: true,
+        columns: normalizedCols,
         rows: tableRows,
       });
     }
@@ -1387,6 +1600,325 @@ async function exportCompetitionSetupPDF(
   } finally {
     isExportingSetupPdf = false;
   }
+}
+
+function SetupPdfColumnsModal({
+  isOpen,
+  columns,
+  onChange,
+  onExportNow,
+  onClose,
+}: {
+  isOpen: boolean;
+  columns: SetupPdfColumnConfig;
+  onChange: (next: SetupPdfColumnConfig) => void;
+  onExportNow: () => void;
+  onClose: () => void;
+}) {
+  if (!isOpen) return null;
+
+  const counts = countVisibleSetupPdfColumns(columns);
+
+  const toggleEvaluatorCol = (key: keyof SetupPdfColumnConfig['evaluators']) => {
+    onChange({
+      ...columns,
+      evaluators: { ...columns.evaluators, [key]: !columns.evaluators[key] },
+    });
+  };
+
+  const toggleLevelCol = (key: keyof SetupPdfColumnConfig['levels']) => {
+    onChange({
+      ...columns,
+      levels: { ...columns.levels, [key]: !columns.levels[key] },
+    });
+  };
+
+  const toggleParticipantCol = (key: keyof SetupPdfColumnConfig['participants']) => {
+    onChange({
+      ...columns,
+      participants: { ...columns.participants, [key]: !columns.participants[key] },
+    });
+  };
+
+  const setGroupAll = (
+    group: 'evaluators' | 'levels' | 'participants',
+    visible: boolean
+  ) => {
+    if (group === 'evaluators') {
+      const next = { ...columns.evaluators };
+      EVALUATOR_PDF_COLUMN_DEFS.forEach(c => {
+        next[c.key] = visible;
+      });
+      onChange({ ...columns, evaluators: next });
+    } else if (group === 'levels') {
+      const next = { ...columns.levels };
+      LEVEL_PDF_COLUMN_DEFS.forEach(c => {
+        next[c.key] = visible;
+      });
+      onChange({ ...columns, levels: next });
+    } else {
+      const next = { ...columns.participants };
+      PARTICIPANT_PDF_COLUMN_DEFS.forEach(c => {
+        next[c.key] = visible;
+      });
+      onChange({ ...columns, participants: next });
+    }
+  };
+
+  const applyAllVisible = () => {
+    const next = cloneDefaultSetupPdfColumns();
+    next.evaluators.pin = true;
+    onChange(next);
+  };
+
+  const applyDefaultWithoutPin = () => {
+    onChange(cloneDefaultSetupPdfColumns());
+  };
+
+  const applyPublicSafePreset = () => {
+    const next = cloneDefaultSetupPdfColumns();
+    next.evaluators.pin = false;
+    next.participants.civilId = false;
+    next.participants.phone = false;
+    onChange(next);
+  };
+
+  return (
+    <div
+      dir="rtl"
+      className="fixed inset-0 z-[100] bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-2xl max-h-[90vh] overflow-hidden bg-white dark:bg-slate-900 rounded-2xl border-2 border-amber-300 dark:border-amber-700/70 shadow-2xl flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-4 py-3.5 sm:px-5 sm:py-4 bg-gradient-to-l from-[#064e3b] to-[#0f2347] text-white flex items-center justify-between gap-3 border-b-2 border-amber-400">
+          <div className="min-w-0">
+            <h3 className="text-sm sm:text-base font-black flex items-center gap-2">
+              <Columns3 size={18} className="text-amber-300 shrink-0" />
+              <span>تحديد الأعمدة الظاهرة في ملف PDF لإعدادات المسابقة</span>
+            </h3>
+            <p className="text-[11px] sm:text-xs font-bold text-amber-100/90 mt-0.5">
+              اختر الأعمدة التي ترغب في إظهارها أو إخفائها في التصدير ({counts.visible} من {counts.total} عمود ظاهر حالياً)
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition cursor-pointer shrink-0"
+            aria-label="إغلاق"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Presets */}
+        <div className="px-4 py-2.5 sm:px-5 bg-amber-50/70 dark:bg-slate-800/80 border-b border-amber-200/70 dark:border-slate-700 flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-black text-slate-600 dark:text-slate-300 ml-1">
+            اختصارات سريعة:
+          </span>
+          <button
+            type="button"
+            onClick={applyDefaultWithoutPin}
+            className="px-2.5 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-[11px] font-black transition cursor-pointer"
+          >
+            الافتراضي (إخفاء رمز الدخول)
+          </button>
+          <button
+            type="button"
+            onClick={applyPublicSafePreset}
+            className="px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-black transition cursor-pointer"
+          >
+            نسخة النشر العام (إخفاء الرمز + المدني + الهاتف)
+          </button>
+          <button
+            type="button"
+            onClick={applyAllVisible}
+            className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-100 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-600 text-[11px] font-bold transition cursor-pointer"
+          >
+            إظهار الكل (مع رمز الدخول)
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-4 sm:p-5 overflow-y-auto space-y-4">
+          {/* 1. Evaluators */}
+          <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 p-3.5 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs sm:text-sm font-black text-emerald-900 dark:text-emerald-300">
+                أولاً: أعمدة جدول المقيمين
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setGroupAll('evaluators', true)}
+                  className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 hover:underline cursor-pointer"
+                >
+                  إظهار الكل
+                </button>
+                <span className="text-slate-300 dark:text-slate-600">|</span>
+                <button
+                  type="button"
+                  onClick={() => setGroupAll('evaluators', false)}
+                  className="text-[11px] font-bold text-slate-500 dark:text-slate-400 hover:underline cursor-pointer"
+                >
+                  إخفاء الجدول
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-3 gap-2">
+              {EVALUATOR_PDF_COLUMN_DEFS.map(col => {
+                const active = columns.evaluators[col.key];
+                return (
+                  <button
+                    key={col.key}
+                    type="button"
+                    onClick={() => toggleEvaluatorCol(col.key)}
+                    className={`min-h-[40px] px-3 py-2 rounded-xl border text-right text-xs font-extrabold flex items-center justify-between gap-2 transition cursor-pointer ${
+                      active
+                        ? 'bg-emerald-50 border-emerald-400 text-emerald-950 dark:bg-emerald-950/60 dark:border-emerald-700 dark:text-emerald-200'
+                        : 'bg-white border-slate-200 text-slate-400 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-500 line-through'
+                    }`}
+                  >
+                    <span className="truncate">{col.label}</span>
+                    {active ? (
+                      <Eye size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    ) : (
+                      <EyeOff size={15} className="text-slate-400 shrink-0" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 2. Levels */}
+          <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 p-3.5 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs sm:text-sm font-black text-emerald-900 dark:text-emerald-300">
+                ثانياً: أعمدة جدول المستويات واللجان
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setGroupAll('levels', true)}
+                  className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 hover:underline cursor-pointer"
+                >
+                  إظهار الكل
+                </button>
+                <span className="text-slate-300 dark:text-slate-600">|</span>
+                <button
+                  type="button"
+                  onClick={() => setGroupAll('levels', false)}
+                  className="text-[11px] font-bold text-slate-500 dark:text-slate-400 hover:underline cursor-pointer"
+                >
+                  إخفاء الجدول
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-3 gap-2">
+              {LEVEL_PDF_COLUMN_DEFS.map(col => {
+                const active = columns.levels[col.key];
+                return (
+                  <button
+                    key={col.key}
+                    type="button"
+                    onClick={() => toggleLevelCol(col.key)}
+                    className={`min-h-[40px] px-3 py-2 rounded-xl border text-right text-xs font-extrabold flex items-center justify-between gap-2 transition cursor-pointer ${
+                      active
+                        ? 'bg-emerald-50 border-emerald-400 text-emerald-950 dark:bg-emerald-950/60 dark:border-emerald-700 dark:text-emerald-200'
+                        : 'bg-white border-slate-200 text-slate-400 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-500 line-through'
+                    }`}
+                  >
+                    <span className="truncate">{col.label}</span>
+                    {active ? (
+                      <Eye size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    ) : (
+                      <EyeOff size={15} className="text-slate-400 shrink-0" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 3. Participants */}
+          <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 p-3.5 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs sm:text-sm font-black text-emerald-900 dark:text-emerald-300">
+                ثالثاً: أعمدة كشف المتسابقين
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setGroupAll('participants', true)}
+                  className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 hover:underline cursor-pointer"
+                >
+                  إظهار الكل
+                </button>
+                <span className="text-slate-300 dark:text-slate-600">|</span>
+                <button
+                  type="button"
+                  onClick={() => setGroupAll('participants', false)}
+                  className="text-[11px] font-bold text-slate-500 dark:text-slate-400 hover:underline cursor-pointer"
+                >
+                  إخفاء الكشف
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-4 gap-2">
+              {PARTICIPANT_PDF_COLUMN_DEFS.map(col => {
+                const active = columns.participants[col.key];
+                return (
+                  <button
+                    key={col.key}
+                    type="button"
+                    onClick={() => toggleParticipantCol(col.key)}
+                    className={`min-h-[40px] px-3 py-2 rounded-xl border text-right text-xs font-extrabold flex items-center justify-between gap-2 transition cursor-pointer ${
+                      active
+                        ? 'bg-emerald-50 border-emerald-400 text-emerald-950 dark:bg-emerald-950/60 dark:border-emerald-700 dark:text-emerald-200'
+                        : 'bg-white border-slate-200 text-slate-400 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-500 line-through'
+                    }`}
+                  >
+                    <span className="truncate">{col.label}</span>
+                    {active ? (
+                      <Eye size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    ) : (
+                      <EyeOff size={15} className="text-slate-400 shrink-0" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-4 py-3 sm:px-5 bg-slate-50 dark:bg-slate-800/80 border-t border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2.5">
+          <button
+            type="button"
+            onClick={onClose}
+            className="min-h-[42px] px-4 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 font-black text-xs sm:text-sm cursor-pointer transition"
+          >
+            حفظ وإغلاق
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onExportNow();
+            }}
+            className="min-h-[42px] px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs sm:text-sm flex items-center gap-2 shadow-sm cursor-pointer transition active:scale-95"
+          >
+            <Printer size={16} />
+            <span>تصدير الإعدادات PDF بالأعمدة المختارة</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function CompetitionManager({
@@ -1415,6 +1947,17 @@ export default function CompetitionManager({
   const [activeTab, setActiveTab] = useState<
     'general' | 'settings' | 'evaluators' | 'participants' | 'reports'
   >('settings');
+  const [setupPdfColumns, setSetupPdfColumns] = useState<SetupPdfColumnConfig>(() =>
+    loadSetupPdfColumns()
+  );
+  const [showSetupPdfColumnsModal, setShowSetupPdfColumnsModal] = useState<boolean>(false);
+
+  const handleChangeSetupPdfColumns = (next: SetupPdfColumnConfig) => {
+    setSetupPdfColumns(next);
+    saveSetupPdfColumns(next);
+  };
+
+  const setupPdfColCounts = countVisibleSetupPdfColumns(setupPdfColumns);
 
   React.useEffect(() => {
     if (resetToListTrigger !== undefined && resetToListTrigger > 0) {
@@ -1612,7 +2155,17 @@ export default function CompetitionManager({
 
           <button
             type="button"
-            onClick={() => exportCompetitionSetupPDF(activeCompetition, showToast)}
+            onClick={() => setShowSetupPdfColumnsModal(true)}
+            className="min-h-[42px] text-xs font-black py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 dark:border-slate-700 transition active:scale-95 cursor-pointer"
+            title="إظهار أو إخفاء الأعمدة في ملف PDF لإعدادات المسابقة"
+          >
+            <Columns3 size={15} className="text-amber-600 dark:text-amber-400" />
+            <span>الأعمدة ({setupPdfColCounts.visible}/{setupPdfColCounts.total})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => exportCompetitionSetupPDF(activeCompetition, showToast, setupPdfColumns)}
             className="flex-1 sm:flex-initial min-h-[42px] text-xs font-black py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800 transition active:scale-95 cursor-pointer"
             title="تصدير وطباعة بيانات إعداد المسابقة وتوزيع المقيمين بصيغة PDF"
           >
@@ -1699,6 +2252,8 @@ export default function CompetitionManager({
             comp={activeCompetition}
             onUpdate={handleUpdateActiveComp}
             onOpenPassagesPage={onOpenPassagesPage}
+            setupPdfColumns={setupPdfColumns}
+            onOpenSetupPdfColumns={() => setShowSetupPdfColumnsModal(true)}
             onCloneCompetition={(newName, opts) =>
               handleCreateCompetition(
                 newName,
@@ -1723,6 +2278,8 @@ export default function CompetitionManager({
             comp={activeCompetition}
             onUpdate={handleUpdateActiveComp}
             onOpenEvaluatorsPage={onOpenEvaluatorsPage}
+            setupPdfColumns={setupPdfColumns}
+            onOpenSetupPdfColumns={() => setShowSetupPdfColumnsModal(true)}
           />
         )}
         {activeTab === 'participants' && (
@@ -1738,6 +2295,14 @@ export default function CompetitionManager({
           />
         )}
       </div>
+
+      <SetupPdfColumnsModal
+        isOpen={showSetupPdfColumnsModal}
+        columns={setupPdfColumns}
+        onChange={handleChangeSetupPdfColumns}
+        onExportNow={() => exportCompetitionSetupPDF(activeCompetition, showToast, setupPdfColumns)}
+        onClose={() => setShowSetupPdfColumnsModal(false)}
+      />
     </div>
   );
 }
@@ -2176,11 +2741,15 @@ function CompetitionSettings({
   comp,
   onUpdate,
   onOpenPassagesPage,
+  setupPdfColumns,
+  onOpenSetupPdfColumns,
   onCloneCompetition,
 }: {
   comp: Competition;
   onUpdate: (c: Competition) => void;
   onOpenPassagesPage?: () => void;
+  setupPdfColumns: SetupPdfColumnConfig;
+  onOpenSetupPdfColumns: () => void;
   onCloneCompetition: (
     newName: string,
     options: { copyEvaluators?: boolean; copyParticipants?: boolean }
@@ -2238,7 +2807,16 @@ function CompetitionSettings({
             </button>
             <button
               type="button"
-              onClick={() => exportCompetitionSetupPDF(comp, context?.showToast)}
+              onClick={onOpenSetupPdfColumns}
+              className="min-h-[44px] px-3.5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer"
+              title="إظهار أو إخفاء الأعمدة في ملف PDF"
+            >
+              <Columns3 size={16} className="text-amber-600 dark:text-amber-400" />
+              <span>الأعمدة</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => exportCompetitionSetupPDF(comp, context?.showToast, setupPdfColumns)}
               className="min-h-[44px] px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition active:scale-95 shadow-sm cursor-pointer"
             >
               <Printer size={17} />
@@ -5505,10 +6083,14 @@ function CompetitionEvaluators({
   comp,
   onUpdate,
   onOpenEvaluatorsPage,
+  setupPdfColumns,
+  onOpenSetupPdfColumns,
 }: {
   comp: Competition;
   onUpdate: (c: Competition) => void;
   onOpenEvaluatorsPage?: () => void;
+  setupPdfColumns: SetupPdfColumnConfig;
+  onOpenSetupPdfColumns: () => void;
 }) {
   const context = useContext(AppContext);
   const globalEvaluators = React.useMemo(
@@ -6221,7 +6803,16 @@ function CompetitionEvaluators({
             </button>
             <button
               type="button"
-              onClick={() => exportCompetitionSetupPDF(comp, context?.showToast)}
+              onClick={onOpenSetupPdfColumns}
+              className="min-h-[40px] px-3 py-2 rounded-xl bg-white hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95 shadow-2xs cursor-pointer"
+              title="إظهار أو إخفاء الأعمدة في ملف PDF"
+            >
+              <Columns3 size={15} className="text-amber-600 dark:text-amber-400" />
+              <span>الأعمدة</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => exportCompetitionSetupPDF(comp, context?.showToast, setupPdfColumns)}
               className="min-h-[40px] px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95 shadow-2xs cursor-pointer"
             >
               <Printer size={15} />

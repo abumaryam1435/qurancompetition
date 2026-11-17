@@ -6,6 +6,152 @@ let cachedServerPdfAvailable: boolean | null = null;
 let cachedCompiledCss: string | null = null;
 let cachedStyleCount = -1;
 
+export const OFFICIAL_CREST_PATHS = {
+  rightGov: '/dhahirah_gov_logo.png',
+  centerComp: '/dhahirah_comp_center.png',
+  leftAwqaf: '/awqaf_dark_transparent.png',
+} as const;
+
+export interface OfficialCrestDataUrls {
+  rightGov: string;
+  centerComp: string;
+  leftAwqaf: string;
+}
+
+export interface OfficialCrestImages {
+  rightGov: HTMLImageElement | null;
+  centerComp: HTMLImageElement | null;
+  leftAwqaf: HTMLImageElement | null;
+}
+
+let cachedCrestDataUrlsPromise: Promise<OfficialCrestDataUrls> | null = null;
+let cachedCrestImagesPromise: Promise<OfficialCrestImages> | null = null;
+
+async function fetchAsCachedDataUrl(relativePath: string): Promise<string> {
+  if (typeof window === 'undefined') return relativePath;
+  const absUrl = relativePath.startsWith('http') || relativePath.startsWith('data:')
+    ? relativePath
+    : `${window.location.origin}${relativePath.startsWith('/') ? '' : '/'}${relativePath}`;
+  if (imageDataUrlCache.has(absUrl)) {
+    return imageDataUrlCache.get(absUrl)!;
+  }
+  try {
+    const response = await fetch(absUrl);
+    if (response.ok) {
+      const blob = await response.blob();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(String(reader.result || ''));
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      if (dataUrl.startsWith('data:')) {
+        imageDataUrlCache.set(absUrl, dataUrl);
+        return dataUrl;
+      }
+    }
+  } catch {
+    // fallback to relative path
+  }
+  return relativePath;
+}
+
+/**
+ * تحميل وتخزين الشعارات الثلاثة الرسمية بصيغة Data URL مرة واحدة في الذاكرة
+ * لضمان ظهورها الفوري والمؤكد في جميع ملفات PDF سواء على الخادم أو Netlify
+ */
+export function getOfficialCrestDataUrls(): Promise<OfficialCrestDataUrls> {
+  if (!cachedCrestDataUrlsPromise) {
+    cachedCrestDataUrlsPromise = Promise.all([
+      fetchAsCachedDataUrl(OFFICIAL_CREST_PATHS.rightGov),
+      fetchAsCachedDataUrl(OFFICIAL_CREST_PATHS.centerComp),
+      fetchAsCachedDataUrl(OFFICIAL_CREST_PATHS.leftAwqaf),
+    ]).then(([rightGov, centerComp, leftAwqaf]) => ({
+      rightGov,
+      centerComp,
+      leftAwqaf,
+    }));
+  }
+  return cachedCrestDataUrlsPromise;
+}
+
+function loadDecodedImage(src: string): Promise<HTMLImageElement | null> {
+  if (typeof Image === 'undefined' || !src) return Promise.resolve(null);
+  return new Promise(resolve => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      if (typeof img.decode === 'function') {
+        img.decode().catch(() => undefined).finally(() => resolve(img));
+      } else {
+        resolve(img);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
+/**
+ * تحميل وفك تشفير صور الشعارات الرسمية مرة واحدة للرسم المباشر الفائق السرعة على الـ Canvas
+ */
+export async function getOfficialCrestImages(): Promise<OfficialCrestImages> {
+  if (!cachedCrestImagesPromise) {
+    cachedCrestImagesPromise = getOfficialCrestDataUrls().then(async urls => {
+      const [rightGov, centerComp, leftAwqaf] = await Promise.all([
+        loadDecodedImage(urls.rightGov),
+        loadDecodedImage(urls.centerComp),
+        loadDecodedImage(urls.leftAwqaf),
+      ]);
+      return { rightGov, centerComp, leftAwqaf };
+    });
+  }
+  return cachedCrestImagesPromise;
+}
+
+/**
+ * توليد HTML ذاتي التنسيق بالكامل (Inline CSS 100%) لترويسة الشعارات الثلاثة الرسمية:
+ * - أقصى اليمين: شعار محافظة الظاهرة
+ * - الوسط: شعار مسابقة محافظة الظاهرة للقرآن الكريم
+ * - أقصى اليسار: شعار وزارة الأوقاف والشؤون الدينية
+ */
+export function buildOfficialCrestsBannerHtml(params: {
+  variant?: 'portrait' | 'landscape';
+  crestDataUrls: OfficialCrestDataUrls;
+}): string {
+  const { variant = 'portrait', crestDataUrls } = params;
+  const isLandscape = variant === 'landscape';
+
+  const topStripHeight = isLandscape ? '6px' : '9px';
+  const bannerPadding = isLandscape ? '7px 26px' : '11px 22px';
+  const sideLogoMaxH = isLandscape ? '50px' : '68px';
+  const sideLogoMaxW = isLandscape ? '185px' : '170px';
+  const centerLogoMaxH = isLandscape ? '56px' : '76px';
+  const centerLogoMaxW = isLandscape ? '420px' : '370px';
+  const cornerSize = isLandscape ? '18px' : '24px';
+
+  return `
+    <div dir="rtl" style="width:100%;overflow:hidden;border-radius:10px 10px 0 0;border:1px solid rgba(212,175,55,0.75);border-bottom:2.5px solid #D4AF37;background:#ffffff;box-sizing:border-box;">
+      <div style="height:${topStripHeight};width:100%;background:linear-gradient(90deg,#09152C 0%,#1C3B70 28%,#D4AF37 50%,#1C3B70 72%,#09152C 100%);"></div>
+      <div style="position:relative;width:100%;padding:${bannerPadding};box-sizing:border-box;background-color:#f4f9f4;background-image:repeating-linear-gradient(45deg,rgba(15,35,71,0.045) 0px,rgba(15,35,71,0.045) 1px,transparent 1px,transparent 22px),repeating-linear-gradient(-45deg,rgba(15,35,71,0.045) 0px,rgba(15,35,71,0.045) 1px,transparent 1px,transparent 22px),linear-gradient(to bottom,#f8fcf8,#f2f8f2,#eaf3ea);">
+        <div style="position:absolute;top:5px;right:6px;width:${cornerSize};height:${cornerSize};border-top:2px solid rgba(184,134,11,0.45);border-right:2px solid rgba(184,134,11,0.45);border-top-right-radius:6px;"></div>
+        <div style="position:absolute;top:5px;left:6px;width:${cornerSize};height:${cornerSize};border-top:2px solid rgba(184,134,11,0.45);border-left:2px solid rgba(184,134,11,0.45);border-top-left-radius:6px;"></div>
+        <div style="position:relative;z-index:1;display:flex;flex-direction:row;align-items:center;justify-content:space-between;gap:14px;width:100%;direction:rtl;">
+          <div style="flex:1;display:flex;align-items:center;justify-content:flex-start;min-width:0;">
+            <img src="${crestDataUrls.rightGov}" alt="محافظة الظاهرة" style="max-height:${sideLogoMaxH};max-width:${sideLogoMaxW};width:auto;height:auto;object-fit:contain;display:block;" />
+          </div>
+          <div style="flex:1.75;display:flex;align-items:center;justify-content:center;text-align:center;min-width:0;">
+            <img src="${crestDataUrls.centerComp}" alt="مسابقة محافظة الظاهرة للقرآن الكريم" style="max-height:${centerLogoMaxH};max-width:${centerLogoMaxW};width:auto;height:auto;object-fit:contain;display:block;margin:0 auto;" />
+          </div>
+          <div style="flex:1;display:flex;align-items:center;justify-content:flex-end;min-width:0;">
+            <img src="${crestDataUrls.leftAwqaf}" alt="وزارة الأوقاف والشؤون الدينية — محافظة الظاهرة" style="max-height:${sideLogoMaxH};max-width:${sideLogoMaxW};width:auto;height:auto;object-fit:contain;display:block;" />
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 /**
  * إتاحة مهلة قصيرة للمتصفح لتحديث الواجهة ومنع تجمد الصفحة أثناء التصدير متعدد الصفحات
  */
@@ -684,6 +830,7 @@ export interface HighResArabicTableOptions {
   sectionTitle: string;
   sectionSubtitle?: string;
   runningHeaderTitle?: string;
+  showOfficialCrestsHeader?: boolean;
   columns: HighResTableColumn[];
   rows: string[][];
   onPageDone?: (pageIndex: number, totalPages: number) => void;
@@ -754,6 +901,29 @@ function drawRoundedRectPath(
   ctx.closePath();
 }
 
+function drawImageFitted(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement | null,
+  boxX: number,
+  boxY: number,
+  boxW: number,
+  boxH: number,
+  align: 'right' | 'center' | 'left'
+) {
+  if (!img || !img.naturalWidth || !img.naturalHeight) return;
+  const ratio = Math.min(boxW / img.naturalWidth, boxH / img.naturalHeight);
+  const drawW = img.naturalWidth * ratio;
+  const drawH = img.naturalHeight * ratio;
+  const drawY = boxY + (boxH - drawH) / 2;
+  let drawX = boxX + (boxW - drawW) / 2;
+  if (align === 'right') {
+    drawX = boxX + boxW - drawW;
+  } else if (align === 'left') {
+    drawX = boxX;
+  }
+  ctx.drawImage(img, drawX, drawY, drawW, drawH);
+}
+
 /**
  * تصيير كشوفات الجداول الضخمة (500 - 1500+ صف) مباشرة بدقة 2x Retina فائقة الوضوح
  * وبسرعة استثنائية (~1.5 - 3 ثوانٍ لـ 1000 متسابق) مع تكرار الترويسة في كل صفحة
@@ -765,12 +935,16 @@ export async function appendHighResArabicTableToPdf({
   sectionTitle,
   sectionSubtitle = '',
   runningHeaderTitle = '',
+  showOfficialCrestsHeader = false,
   columns,
   rows,
   onPageDone,
 }: HighResArabicTableOptions): Promise<number> {
   if (rows.length === 0) return 0;
   await waitFontsBriefly(450);
+  const crestImages: OfficialCrestImages | null = showOfficialCrestsHeader
+    ? await getOfficialCrestImages()
+    : null;
 
   const usableWidthMm = pdf.internal.pageSize.getWidth() - marginMm * 2;
   const usableHeightMm = pdf.internal.pageSize.getHeight() - marginMm * 2;
@@ -839,8 +1013,10 @@ export async function appendHighResArabicTableToPdf({
   const pageSlices: { startIdx: number; endIdx: number }[] = [];
   let idx = 0;
   while (idx < preparedRows.length) {
-    const bannerH = pageSlices.length === 0 ? 40 : 32;
-    const startY = outerPadY + bannerH + 8 + headerRowHeight;
+    const isFirst = pageSlices.length === 0;
+    const crestBandH = crestImages ? (isFirst ? 58 : 40) : 0;
+    const bannerH = isFirst ? 36 : 30;
+    const startY = outerPadY + crestBandH + (crestBandH > 0 ? 6 : 0) + bannerH + 8 + headerRowHeight;
     const maxY = logicalHeight - outerPadY - footerHeight;
     let y = startY;
     const startIdx = idx;
@@ -861,7 +1037,8 @@ export async function appendHighResArabicTableToPdf({
   for (let pIdx = 0; pIdx < totalPages; pIdx++) {
     const slice = pageSlices[pIdx];
     const isFirstPage = pIdx === 0;
-    const bannerH = isFirstPage ? 40 : 32;
+    const crestBandH = crestImages ? (isFirstPage ? 58 : 40) : 0;
+    const bannerH = isFirstPage ? 36 : 30;
 
     ctx.save();
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
@@ -875,18 +1052,82 @@ export async function appendHighResArabicTableToPdf({
     ctx.lineWidth = 1.6;
     ctx.stroke();
 
+    let headerCursorY = outerPadY;
+
+    // شريط الشعارات الثلاثة الرسمية أعلى كل صفحة عند التفعيل
+    if (crestImages && crestBandH > 0) {
+      drawRoundedRectPath(ctx, outerPadX, headerCursorY, tableWidth, crestBandH, 8);
+      const bgGrad = ctx.createLinearGradient(0, headerCursorY, 0, headerCursorY + crestBandH);
+      bgGrad.addColorStop(0, '#f8fcf8');
+      bgGrad.addColorStop(0.5, '#f2f8f2');
+      bgGrad.addColorStop(1, '#eaf3ea');
+      ctx.fillStyle = bgGrad;
+      ctx.fill();
+
+      ctx.strokeStyle = 'rgba(212, 175, 55, 0.78)';
+      ctx.lineWidth = 1.25;
+      ctx.stroke();
+
+      // شريط علوي رفيع كحلي وذهبي
+      const accentGrad = ctx.createLinearGradient(outerPadX, 0, outerPadX + tableWidth, 0);
+      accentGrad.addColorStop(0, '#09152C');
+      accentGrad.addColorStop(0.5, '#D4AF37');
+      accentGrad.addColorStop(1, '#09152C');
+      ctx.fillStyle = accentGrad;
+      ctx.fillRect(outerPadX + 4, headerCursorY + 1, tableWidth - 8, 3);
+
+      const innerPadX = 14;
+      const logoPadTop = 6;
+      const logoH = crestBandH - 10;
+      const sideW = Math.floor(tableWidth * 0.24);
+      const centerW = Math.floor(tableWidth * 0.44);
+
+      // أقصى اليمين: شعار محافظة الظاهرة
+      drawImageFitted(
+        ctx,
+        crestImages.rightGov,
+        outerPadX + tableWidth - innerPadX - sideW,
+        headerCursorY + logoPadTop,
+        sideW,
+        logoH,
+        'right'
+      );
+      // الوسط: شعار المسابقة
+      drawImageFitted(
+        ctx,
+        crestImages.centerComp,
+        outerPadX + Math.floor((tableWidth - centerW) / 2),
+        headerCursorY + logoPadTop - 1,
+        centerW,
+        logoH + 2,
+        'center'
+      );
+      // أقصى اليسار: شعار وزارة الأوقاف والشؤون الدينية
+      drawImageFitted(
+        ctx,
+        crestImages.leftAwqaf,
+        outerPadX + innerPadX,
+        headerCursorY + logoPadTop,
+        sideW,
+        logoH,
+        'left'
+      );
+
+      headerCursorY += crestBandH + 6;
+    }
+
     // ترويسة القسم أعلى الصفحة
-    drawRoundedRectPath(ctx, outerPadX, outerPadY, tableWidth, bannerH, 8);
+    drawRoundedRectPath(ctx, outerPadX, headerCursorY, tableWidth, bannerH, 8);
     ctx.fillStyle = '#064e3b';
     ctx.fill();
 
     ctx.textBaseline = 'middle';
-    const bannerMidY = outerPadY + bannerH / 2;
+    const bannerMidY = headerCursorY + bannerH / 2;
 
     ctx.direction = 'rtl';
     ctx.textAlign = 'right';
     ctx.fillStyle = '#ffffff';
-    ctx.font = `900 ${isFirstPage ? 14 : 12.5}px ${fontFamily}`;
+    ctx.font = `900 ${isFirstPage ? 14 : 12}px ${fontFamily}`;
     const rightTitle = isFirstPage
       ? sectionTitle
       : `${runningHeaderTitle || sectionTitle} — كشف المتسابقين`;
@@ -901,7 +1142,7 @@ export async function appendHighResArabicTableToPdf({
     ctx.fillText(leftLabel, outerPadX + 12, bannerMidY);
 
     // صف عناوين الأعمدة (يتكرر في كل صفحة)
-    let currY = outerPadY + bannerH + 8;
+    let currY = headerCursorY + bannerH + 8;
     ctx.fillStyle = '#ecfdf5';
     ctx.fillRect(outerPadX, currY, tableWidth, headerRowHeight);
     ctx.strokeStyle = '#cbd5e1';

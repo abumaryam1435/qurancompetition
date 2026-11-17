@@ -9,6 +9,10 @@ import {
   createIsolatedIgnoreFilter,
   withRtlCanvasText,
   yieldToMainThread,
+  getOfficialCrestDataUrls,
+  buildOfficialCrestsBannerHtml,
+  inlineAndDecodeImages,
+  OfficialCrestDataUrls,
 } from './fastPdfExport';
 
 export interface ComprehensivePdfOptions {
@@ -143,6 +147,7 @@ function buildMergedTablePageHtml(params: {
   totalPagesInSection: number;
   globalPageNumber: number;
   isLastPageOfSection: boolean;
+  crestBannerHtml: string;
   getEvaluatorName: (evaluatorId: number, fallbackName?: string) => string;
   formatJuzsDisplay: (raw?: string) => string;
 }): string {
@@ -159,6 +164,7 @@ function buildMergedTablePageHtml(params: {
     totalPagesInSection,
     globalPageNumber,
     isLastPageOfSection,
+    crestBannerHtml,
     getEvaluatorName,
     formatJuzsDisplay,
   } = params;
@@ -430,19 +436,22 @@ function buildMergedTablePageHtml(params: {
   }
 
   return `
-    <div class="pdf-landscape-sheet" style="width:1680px;min-height:1140px;background:#FFFFFF;padding:18px 22px;box-sizing:border-box;direction:rtl;font-family:'Tajawal','Cairo',sans-serif;display:flex;flex-direction:column;justify-content:space-between;page-break-after:always;break-after:page;">
+    <div class="pdf-landscape-sheet" style="width:1680px;min-height:1140px;background:#FFFFFF;padding:14px 22px;box-sizing:border-box;direction:rtl;font-family:'Tajawal','Cairo',sans-serif;display:flex;flex-direction:column;justify-content:space-between;page-break-after:always;break-after:page;">
       <div>
-        <!-- شريط الترويسة الرسمي للمسابقة والموسم -->
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #D97706;">
+        <!-- الترويسة الرسمية بالشعارات الثلاثة (محافظة الظاهرة • المسابقة • وزارة الأوقاف) -->
+        ${crestBannerHtml}
+
+        <!-- شريط معلومات المسابقة والموسم ورقم الصفحة -->
+        <div style="display:flex;align-items:center;justify-content:space-between;background:#09152C;color:#FFFFFF;padding:5px 14px;margin-bottom:6px;border-bottom:2px solid #D97706;">
           <div style="display:flex;align-items:center;gap:10px;">
-            <span style="font-size:13px;font-weight:900;color:#09152C;">${escapeHtml(compName)}</span>
+            <span style="font-size:12.5px;font-weight:900;color:#FDE68A;">${escapeHtml(compName)}</span>
             ${
               seasonText
-                ? `<span style="font-size:11px;font-weight:800;color:#92400E;background:#FEF3C7;padding:2px 10px;border-radius:6px;border:1px solid #F59E0B;">${escapeHtml(seasonText)}</span>`
+                ? `<span style="font-size:10.5px;font-weight:800;color:#FEF3C7;background:rgba(212,175,55,0.18);padding:2px 10px;border-radius:6px;border:1px solid rgba(212,175,55,0.55);">${escapeHtml(seasonText)}</span>`
                 : ''
             }
           </div>
-          <div style="font-size:11px;font-weight:800;color:#475569;">
+          <div style="font-size:11px;font-weight:800;color:#E2E8F0;">
             قسم: ${escapeHtml(sectionTitle)} — (صفحة ${pageNumberInSection} من ${totalPagesInSection})
           </div>
         </div>
@@ -546,8 +555,9 @@ function buildSummarySheetPageHtml(params: {
   comp: Competition;
   summaryRows: Record<string, any>[];
   globalPageNumber: number;
+  crestBannerHtml: string;
 }): string {
-  const { comp, summaryRows, globalPageNumber } = params;
+  const { comp, summaryRows, globalPageNumber, crestBannerHtml } = params;
 
   const rowsHtml = summaryRows
     .map((row, idx) => {
@@ -568,11 +578,13 @@ function buildSummarySheetPageHtml(params: {
     .join('');
 
   return `
-    <div class="pdf-landscape-sheet" style="width:1680px;min-height:1140px;background:#FFFFFF;padding:18px 22px;box-sizing:border-box;direction:rtl;font-family:'Tajawal','Cairo',sans-serif;display:flex;flex-direction:column;justify-content:space-between;page-break-after:always;break-after:page;">
+    <div class="pdf-landscape-sheet" style="width:1680px;min-height:1140px;background:#FFFFFF;padding:14px 22px;box-sizing:border-box;direction:rtl;font-family:'Tajawal','Cairo',sans-serif;display:flex;flex-direction:column;justify-content:space-between;page-break-after:always;break-after:page;">
       <div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #D97706;">
-          <span style="font-size:13px;font-weight:900;color:#09152C;">${escapeHtml(comp.name)}</span>
-          <span style="font-size:11px;font-weight:800;color:#475569;">قسم: الإحصائيات التفصيلية للمستويات والولايات والجنس</span>
+        ${crestBannerHtml}
+
+        <div style="display:flex;align-items:center;justify-content:space-between;background:#09152C;color:#FFFFFF;padding:5px 14px;margin-bottom:6px;border-bottom:2px solid #D97706;">
+          <span style="font-size:12.5px;font-weight:900;color:#FDE68A;">${escapeHtml(comp.name)}${comp.seasonText ? ` — ${escapeHtml(comp.seasonText)}` : ''}</span>
+          <span style="font-size:11px;font-weight:800;color:#E2E8F0;">قسم: الإحصائيات التفصيلية للمستويات والولايات والجنس</span>
         </div>
 
         <div style="background:#4C1D95;color:#FDE68A;padding:10px 14px;text-align:center;font-size:15px;font-weight:900;border:2px solid #0F172A;border-bottom:none;border-radius:10px 10px 0 0;">
@@ -646,6 +658,12 @@ export async function exportComprehensiveWorkbookStylePdf(
     formatJuzsDisplay,
   } = options;
 
+  const crestDataUrls: OfficialCrestDataUrls = await getOfficialCrestDataUrls();
+  const landscapeCrestBannerHtml = buildOfficialCrestsBannerHtml({
+    variant: 'landscape',
+    crestDataUrls,
+  });
+
   const pageHtmlList: string[] = [];
   let globalPageNumber = 1;
 
@@ -701,6 +719,7 @@ export async function exportComprehensiveWorkbookStylePdf(
           totalPagesInSection: chunks.length,
           globalPageNumber: globalPageNumber++,
           isLastPageOfSection: chunkIdx === chunks.length - 1,
+          crestBannerHtml: landscapeCrestBannerHtml,
           getEvaluatorName,
           formatJuzsDisplay,
         })
@@ -743,6 +762,7 @@ export async function exportComprehensiveWorkbookStylePdf(
         totalPagesInSection: allChunks.length,
         globalPageNumber: globalPageNumber++,
         isLastPageOfSection: chunkIdx === allChunks.length - 1,
+        crestBannerHtml: landscapeCrestBannerHtml,
         getEvaluatorName,
         formatJuzsDisplay,
       })
@@ -838,6 +858,7 @@ export async function exportComprehensiveWorkbookStylePdf(
       comp,
       summaryRows,
       globalPageNumber: globalPageNumber++,
+      crestBannerHtml: landscapeCrestBannerHtml,
     })
   );
 
@@ -920,7 +941,14 @@ export async function exportComprehensiveWorkbookStylePdf(
   const totalSheets = pageHtmlList.length;
   // دقة متوازنة تضمن سرعة فائقة على Netlify مع وضوح عالٍ لجميع الأرقام والنصوص العربية
   const renderScale =
-    totalSheets <= 12 ? 1.75 : totalSheets <= 30 ? 1.5 : 1.35;
+    totalSheets <= 12
+      ? 1.75
+      : totalSheets <= 30
+      ? 1.5
+      : totalSheets <= 60
+      ? 1.3
+      : 1.15;
+  const jpegQuality = totalSheets > 40 ? 0.86 : 0.92;
 
   try {
     const pdf = new jsPDF({
@@ -941,6 +969,9 @@ export async function exportComprehensiveWorkbookStylePdf(
         host.innerHTML = pageHtmlList[i];
         const sheetEl = host.firstElementChild as HTMLElement;
         if (!sheetEl) continue;
+        if (i === 0) {
+          await inlineAndDecodeImages(sheetEl);
+        }
 
         const canvas = await html2canvas(sheetEl, {
           scale: renderScale,
@@ -955,6 +986,8 @@ export async function exportComprehensiveWorkbookStylePdf(
             clonedDoc.documentElement.setAttribute('dir', 'rtl');
             clonedDoc.documentElement.setAttribute('lang', 'ar');
             clonedDoc.documentElement.classList.remove('dark');
+            // الأوراق مصممة بـ Inline CSS بالكامل؛ حذف أوراق الأنماط الضخمة يضاعف سرعة التصيير عدة مرات
+            clonedDoc.querySelectorAll('style, link[rel="stylesheet"]').forEach(s => s.remove());
             const clonedHost = clonedDoc.getElementById('fast-pdf-render-host');
             if (clonedHost) {
               clonedHost.style.setProperty('display', 'block', 'important');
@@ -971,13 +1004,15 @@ export async function exportComprehensiveWorkbookStylePdf(
                 font-feature-settings: "kern" 1, "liga" 1, "clig" 1, "calt" 1 !important;
                 font-variant-ligatures: common-ligatures contextual !important;
                 font-family: 'Tajawal', 'Cairo', 'Amiri', system-ui, sans-serif !important;
+                transition: none !important;
+                animation: none !important;
               }
             `;
             clonedDoc.head.appendChild(fixStyle);
           },
         });
 
-        const imgData = canvas.toDataURL('image/jpeg', 0.92);
+        const imgData = canvas.toDataURL('image/jpeg', jpegQuality);
         if (i > 0) {
           pdf.addPage('a4', 'landscape');
         }
