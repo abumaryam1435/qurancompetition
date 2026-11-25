@@ -32,6 +32,8 @@ import {
 } from './utils/firebase';
 import { initSwipeNavigation } from './utils/navigationHistory';
 import { ensureOfficialDhahirahCommitteesApplied } from './utils/dhahirahCommitteeDistribution';
+import LiveExecutiveDashboard from './components/competition/LiveExecutiveDashboard';
+import { parseLiveViewParamsFromLocation, LiveViewUrlParams } from './utils/liveShareUrl';
 
 initSwipeNavigation();
 
@@ -144,6 +146,22 @@ const normalizeCompetition = (c: any): Competition =>
         errorsCount: seg?.errorsCount && typeof seg.errorsCount === 'object' ? seg.errorsCount : {},
       })),
     })),
+    liveShare:
+      c?.liveShare && typeof c.liveShare === 'object'
+        ? {
+            enabled: Boolean(c.liveShare.enabled),
+            token: String(c.liveShare.token || ''),
+            showTopPerformers: Boolean(c.liveShare.showTopPerformers),
+            topPerformersCount:
+              Number(c.liveShare.topPerformersCount) > 0
+                ? Number(c.liveShare.topPerformersCount)
+                : 3,
+            customSubtitle: c.liveShare.customSubtitle
+              ? String(c.liveShare.customSubtitle)
+              : '',
+            updatedAt: Number(c.liveShare.updatedAt || Date.now()),
+          }
+        : undefined,
   });
 
 interface AppDataState {
@@ -352,6 +370,21 @@ const App: React.FC = () => {
   const [isLoadingFirebase, setIsLoadingFirebase] = useState<boolean>(
     () => (initialState.data.competitions || []).length === 0
   );
+  const [liveViewParams, setLiveViewParams] = useState<LiveViewUrlParams | null>(() =>
+    parseLiveViewParamsFromLocation()
+  );
+
+  useEffect(() => {
+    const syncLiveParams = () => {
+      setLiveViewParams(parseLiveViewParamsFromLocation());
+    };
+    window.addEventListener('popstate', syncLiveParams);
+    window.addEventListener('hashchange', syncLiveParams);
+    return () => {
+      window.removeEventListener('popstate', syncLiveParams);
+      window.removeEventListener('hashchange', syncLiveParams);
+    };
+  }, []);
 
   // سلاسة النقر على خانات الكتابة:
   // النقر للمرة الأولى على الخانة يظلل النص المكتوب بالكامل للكتابة عليه مباشرة،
@@ -1129,31 +1162,43 @@ const App: React.FC = () => {
           ))}
         </div>
 
-        {(() => {
-          const isEvaluatorUser = Boolean(
-            currentUser &&
-              (currentUser.role === UserRole.COMPETITION_EVALUATOR ||
-                (currentUser.role as string) === 'evaluator' ||
-                Boolean((currentUser as any).competitionId))
-          );
+        {liveViewParams ? (
+          <LiveExecutiveDashboard
+            competitionId={liveViewParams.competitionId}
+            token={liveViewParams.token}
+            competitions={contextValue.competitions}
+            isLoadingFirebase={isLoadingFirebase}
+            firebaseConnectionStatus={firebaseConnectionStatus}
+            darkMode={darkMode}
+            onToggleDarkMode={toggleDarkMode}
+          />
+        ) : (
+          (() => {
+            const isEvaluatorUser = Boolean(
+              currentUser &&
+                (currentUser.role === UserRole.COMPETITION_EVALUATOR ||
+                  (currentUser.role as string) === 'evaluator' ||
+                  Boolean((currentUser as any).competitionId))
+            );
 
-          return (
-            <>
-              {!currentUser ? (
-                <LoginScreen onLogin={handleLogin} />
-              ) : isEvaluatorUser ? (
-                <EvaluatorDashboard evaluatorUser={currentUser} onLogout={initiateLogoutCheck} />
-              ) : (
-                <>
-                  <Header />
-                  <main className="px-2 sm:px-6 lg:px-8 py-3 sm:py-6 flex-1 pb-12 w-full max-w-full overflow-x-hidden">
-                    <SupervisorDashboard />
-                  </main>
-                </>
-              )}
-            </>
-          );
-        })()}
+            return (
+              <>
+                {!currentUser ? (
+                  <LoginScreen onLogin={handleLogin} />
+                ) : isEvaluatorUser ? (
+                  <EvaluatorDashboard evaluatorUser={currentUser} onLogout={initiateLogoutCheck} />
+                ) : (
+                  <>
+                    <Header />
+                    <main className="px-2 sm:px-6 lg:px-8 py-3 sm:py-6 flex-1 pb-12 w-full max-w-full overflow-x-hidden">
+                      <SupervisorDashboard />
+                    </main>
+                  </>
+                )}
+              </>
+            );
+          })()
+        )}
         {showMobileInstallModal && <MobileInstallModal onClose={() => setShowMobileInstallModal(false)} />}
         {showChangePasswordModal && (
           <ChangePasswordModal

@@ -15,6 +15,7 @@
         "evaluators": { "type": "array" },
         "participants": { "type": "array" },
         "evaluations": { "type": "array" },
+        "liveShare": { "type": "object" },
         "updatedAt": { "type": "number" }
       },
       "required": ["id", "name"]

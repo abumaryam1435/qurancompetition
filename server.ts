@@ -2,7 +2,6 @@ import express from "express";
 import fs from "fs";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import puppeteer from "puppeteer";
 import type { Browser, Page } from "puppeteer";
 
 // Persistent multi-supervisor real-time cloud rooms (each supervisor has an isolated roomId)
@@ -90,6 +89,7 @@ async function getBrowser() {
     }
   }
 
+  const { default: puppeteer } = await import("puppeteer");
   browserInstance = await puppeteer.launch({
     args: [
       '--no-sandbox',
@@ -336,13 +336,36 @@ async function startServer() {
     }
   });
 
-  // Vite middleware for development
+  // Vite middleware for development (initialize asynchronously so port 3000 binds immediately)
   if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
+    let viteMiddleware: express.RequestHandler | null = null;
+    const viteReadyPromise = createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
+    })
+      .then((vite) => {
+        viteMiddleware = vite.middlewares;
+        console.log("Vite dev middleware ready");
+        return vite;
+      })
+      .catch((err) => {
+        console.error("Failed to initialize Vite dev server:", err);
+        throw err;
+      });
+
+    app.use(async (req, res, next) => {
+      try {
+        if (!viteMiddleware) {
+          await viteReadyPromise;
+        }
+        if (viteMiddleware) {
+          return viteMiddleware(req, res, next);
+        }
+        next();
+      } catch (err) {
+        next(err);
+      }
     });
-    app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));

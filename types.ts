@@ -123,6 +123,15 @@ export interface ManualPassageRange {
   notes?: string;
 }
 
+export interface CompetitionLiveShareConfig {
+  enabled: boolean;
+  token: string;
+  showTopPerformers: boolean;
+  topPerformersCount?: number;
+  customSubtitle?: string;
+  updatedAt?: number;
+}
+
 export interface Competition {
   id: string;
   name: string;
@@ -137,6 +146,7 @@ export interface Competition {
   passageMode?: PassageSelectionMode;
   previewLinesPerSegment?: number;
   manualPassages?: ManualPassageRange[];
+  liveShare?: CompetitionLiveShareConfig;
 }
 
 export interface FullBackupData {

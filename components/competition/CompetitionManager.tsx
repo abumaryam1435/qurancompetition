@@ -48,7 +48,10 @@ import {
   Eye,
   EyeOff,
   X,
+  Monitor,
 } from 'lucide-react';
+import LiveShareControlPanel from './LiveShareControlPanel';
+import LiveExecutiveDashboard from './LiveExecutiveDashboard';
 import * as XLSX from 'xlsx';
 import { surahNames } from '../../utils/quranData';
 import {
@@ -1939,6 +1942,10 @@ export default function CompetitionManager({
     activeCompetitionId,
     setActiveCompetitionId,
     showToast,
+    isLoadingFirebase,
+    firebaseConnectionStatus,
+    darkMode,
+    toggleDarkMode,
   } = context;
 
   // عند فتح صفحة تبويب المسابقات القرآنية، نظهر أولاً قائمة المسابقات المسجلة، وعند النقر على أي مسابقة أو قلم التعديل تظهر تفاصيلها
@@ -1951,6 +1958,11 @@ export default function CompetitionManager({
     loadSetupPdfColumns()
   );
   const [showSetupPdfColumnsModal, setShowSetupPdfColumnsModal] = useState<boolean>(false);
+  const [liveShareModalCompId, setLiveShareModalCompId] = useState<string | null>(null);
+  const [livePreviewTarget, setLivePreviewTarget] = useState<{
+    compId: string;
+    token: string;
+  } | null>(null);
 
   const handleChangeSetupPdfColumns = (next: SetupPdfColumnConfig) => {
     setSetupPdfColumns(next);
@@ -2088,24 +2100,96 @@ export default function CompetitionManager({
     );
   };
 
+  const liveShareModalComp = liveShareModalCompId
+    ? competitions.find(c => c.id === liveShareModalCompId) || null
+    : null;
+
+  const liveShareOverlays = (
+    <>
+      {liveShareModalComp && (
+        <div
+          className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6"
+          onClick={() => setLiveShareModalCompId(null)}
+          dir="rtl"
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl max-w-2xl w-full shadow-2xl overflow-hidden max-h-[92vh] flex flex-col"
+          >
+            <div className="px-4 py-3.5 sm:px-6 bg-[#09152C] text-white flex items-center justify-between gap-3 border-b border-[#D4AF37]/50">
+              <div className="min-w-0">
+                <div className="text-[11px] font-bold text-[#F3E5AB]">
+                  إعدادات رابط المتابعة المباشرة للإدارة وشاشات العرض
+                </div>
+                <h3 className="font-black text-sm sm:text-base truncate">
+                  {liveShareModalComp.name}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLiveShareModalCompId(null)}
+                className="min-h-[36px] min-w-[36px] rounded-xl bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer transition shrink-0"
+                aria-label="إغلاق"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-4 sm:p-5 overflow-y-auto">
+              <LiveShareControlPanel
+                comp={liveShareModalComp}
+                onUpdate={handleUpdateActiveComp}
+                onPreview={(compId, token) => {
+                  setLiveShareModalCompId(null);
+                  setLivePreviewTarget({ compId, token });
+                }}
+                showToast={showToast}
+                compact
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {livePreviewTarget && (
+        <div className="fixed inset-0 z-[9998] overflow-y-auto bg-[#FAF8F5] dark:bg-[#070E1C]">
+          <LiveExecutiveDashboard
+            competitionId={livePreviewTarget.compId}
+            token={livePreviewTarget.token}
+            competitions={competitions}
+            isLoadingFirebase={isLoadingFirebase}
+            firebaseConnectionStatus={firebaseConnectionStatus}
+            darkMode={darkMode}
+            onToggleDarkMode={toggleDarkMode}
+            isPreviewMode={true}
+            onExitPreview={() => setLivePreviewTarget(null)}
+          />
+        </div>
+      )}
+    </>
+  );
+
   if (!isViewingDetails || !activeCompetition) {
     return (
-      <CompetitionGeneralSettings
-        competitions={competitions}
-        onCreate={handleCreateCompetition}
-        onSelect={id => {
-          setActiveCompetitionId(id);
-          setIsViewingDetails(true);
-        }}
-        onToggleActive={id => handleToggleCompetitionActive(id)}
-        onDelete={id => {
-          updateCompetitions(competitions.filter(c => c.id !== id));
-          if (activeCompetitionId === id) {
-            setActiveCompetitionId(null);
-            setIsViewingDetails(false);
-          }
-        }}
-      />
+      <>
+        <CompetitionGeneralSettings
+          competitions={competitions}
+          onCreate={handleCreateCompetition}
+          onSelect={id => {
+            setActiveCompetitionId(id);
+            setIsViewingDetails(true);
+          }}
+          onToggleActive={id => handleToggleCompetitionActive(id)}
+          onOpenLiveShare={id => setLiveShareModalCompId(id)}
+          onDelete={id => {
+            updateCompetitions(competitions.filter(c => c.id !== id));
+            if (activeCompetitionId === id) {
+              setActiveCompetitionId(null);
+              setIsViewingDetails(false);
+            }
+          }}
+        />
+        {liveShareOverlays}
+      </>
     );
   }
 
@@ -2171,6 +2255,24 @@ export default function CompetitionManager({
           >
             <Printer size={15} />
             <span>تصدير الإعدادات PDF</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setLiveShareModalCompId(activeCompetition.id)}
+            className={`flex-1 sm:flex-initial min-h-[42px] text-xs font-black py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer border ${
+              activeCompetition.liveShare?.enabled
+                ? 'bg-[#09152C] hover:bg-[#132A52] text-[#F3E5AB] border-[#D4AF37]/80 shadow-xs'
+                : 'bg-sky-50 hover:bg-sky-100 text-sky-900 border-sky-300 dark:bg-sky-950/60 dark:text-sky-200 dark:border-sky-800'
+            }`}
+            title="رابط المتابعة المباشرة لمدير الأوقاف وشاشات العرض"
+          >
+            <Monitor size={15} />
+            <span>
+              {activeCompetition.liveShare?.enabled
+                ? 'رابط المتابعة (مفعّل)'
+                : 'رابط المتابعة المباشرة'}
+            </span>
           </button>
 
           <button
@@ -2254,6 +2356,9 @@ export default function CompetitionManager({
             onOpenPassagesPage={onOpenPassagesPage}
             setupPdfColumns={setupPdfColumns}
             onOpenSetupPdfColumns={() => setShowSetupPdfColumnsModal(true)}
+            onPreviewLiveShare={(compId, token) =>
+              setLivePreviewTarget({ compId, token })
+            }
             onCloneCompetition={(newName, opts) =>
               handleCreateCompetition(
                 newName,
@@ -2303,6 +2408,7 @@ export default function CompetitionManager({
         onExportNow={() => exportCompetitionSetupPDF(activeCompetition, showToast, setupPdfColumns)}
         onClose={() => setShowSetupPdfColumnsModal(false)}
       />
+      {liveShareOverlays}
     </div>
   );
 }
@@ -2343,6 +2449,7 @@ function CompetitionGeneralSettings({
   onCreate,
   onSelect,
   onToggleActive,
+  onOpenLiveShare,
   onDelete,
 }: {
   competitions: Competition[];
@@ -2353,6 +2460,7 @@ function CompetitionGeneralSettings({
   ) => void;
   onSelect: (id: string) => void;
   onToggleActive: (id: string) => void;
+  onOpenLiveShare: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
   const [showAddForm, setShowAddForm] = useState<boolean>(competitions.length === 0);
@@ -2600,6 +2708,25 @@ function CompetitionGeneralSettings({
                       <span>{comp.isActive ? 'إيقاف' : 'تفعيل'}</span>
                     </button>
 
+                    {/* زر رابط المتابعة المباشرة لمدير الأوقاف وشاشات العرض */}
+                    <button
+                      type="button"
+                      onClick={() => onOpenLiveShare(comp.id)}
+                      className={`min-h-[44px] px-3 py-2.5 rounded-xl font-extrabold text-xs transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border ${
+                        comp.liveShare?.enabled
+                          ? 'bg-[#09152C] text-[#F3E5AB] border-[#D4AF37]/80 hover:bg-[#132A52]'
+                          : 'bg-sky-50 text-sky-900 border-sky-200 hover:bg-sky-100 dark:bg-sky-950/60 dark:text-sky-200 dark:border-sky-800/70'
+                      }`}
+                      title="إدارة رابط المتابعة المباشرة للإدارة وشاشات العرض"
+                    >
+                      <Monitor size={15} />
+                      <span>
+                        {comp.liveShare?.enabled
+                          ? 'رابط المتابعة (مفعّل)'
+                          : 'رابط المتابعة'}
+                      </span>
+                    </button>
+
                     {/* زر نسخ لمسابقة جديدة */}
                     <button
                       type="button"
@@ -2743,6 +2870,7 @@ function CompetitionSettings({
   onOpenPassagesPage,
   setupPdfColumns,
   onOpenSetupPdfColumns,
+  onPreviewLiveShare,
   onCloneCompetition,
 }: {
   comp: Competition;
@@ -2750,6 +2878,7 @@ function CompetitionSettings({
   onOpenPassagesPage?: () => void;
   setupPdfColumns: SetupPdfColumnConfig;
   onOpenSetupPdfColumns: () => void;
+  onPreviewLiveShare: (compId: string, token: string) => void;
   onCloneCompetition: (
     newName: string,
     options: { copyEvaluators?: boolean; copyParticipants?: boolean }
@@ -2783,6 +2912,14 @@ function CompetitionSettings({
 
   return (
     <div className="max-w-4xl space-y-6">
+      {/* بطاقة رابط المتابعة المباشرة لمدير الأوقاف والمسؤولين وشاشات العرض */}
+      <LiveShareControlPanel
+        comp={comp}
+        onUpdate={onUpdate}
+        onPreview={onPreviewLiveShare}
+        showToast={context?.showToast}
+      />
+
       {/* بطاقة تصدير ومراجعة بيانات إعداد المسابقة وتقسيم المقيمين على المستويات */}
       <div className="p-4 sm:p-5 rounded-2xl border-2 border-emerald-300 dark:border-emerald-800/80 bg-gradient-to-br from-emerald-50/90 via-white to-amber-50/40 dark:from-slate-800/90 dark:via-slate-900 dark:to-slate-800/80 space-y-4 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-emerald-200/80 dark:border-slate-700 pb-3.5">
