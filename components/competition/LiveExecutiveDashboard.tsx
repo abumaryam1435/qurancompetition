@@ -31,6 +31,12 @@ import {
   resolveLevelCommittees,
   resolveParticipantCommitteeId,
 } from '../../utils/juzUtils';
+import {
+  LiveBroadcastRoomDoc,
+  isBroadcastRoomCurrentlyLive,
+  subscribeToBroadcastRoom,
+} from '../../utils/liveBroadcastWebRTC';
+import LiveBroadcastViewerStage from './LiveBroadcastViewerStage';
 
 interface LiveExecutiveDashboardProps {
   competitionId: string;
@@ -229,8 +235,22 @@ export const LiveExecutiveDashboard: React.FC<LiveExecutiveDashboardProps> = ({
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [nowClock, setNowClock] = useState<Date>(() => new Date());
   const [justUpdatedFlash, setJustUpdatedFlash] = useState<boolean>(false);
+  const [broadcastRoom, setBroadcastRoom] = useState<LiveBroadcastRoomDoc | null>(null);
   const prevEvalCountRef = useRef<number | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+
+  // الاستماع اللحظي لحالة البث المباشر (صوت وصورة) لهذه المسابقة
+  useEffect(() => {
+    if (!competitionId) return;
+    const unsub = subscribeToBroadcastRoom(competitionId, room => {
+      setBroadcastRoom(room);
+    });
+    return () => {
+      try {
+        unsub();
+      } catch {}
+    };
+  }, [competitionId]);
 
   // تحديث الساعة الحقيقية كل ثانية لشاشات العرض الرسمية
   useEffect(() => {
@@ -850,6 +870,11 @@ export const LiveExecutiveDashboard: React.FC<LiveExecutiveDashboardProps> = ({
   const hasActiveFilters =
     selectedLevelId !== 'all' || selectedWilayat !== 'all' || selectedGender !== 'all';
 
+  // هل المشرف فاتح كاميرا البث المباشر حالياً؟ (يعاد تقييمها مع نبض الساعة كل ثانية)
+  const isLiveBroadcastActive = Boolean(
+    nowClock && broadcastRoom && isBroadcastRoomCurrentlyLive(broadcastRoom)
+  );
+
   return (
     <div
       ref={rootRef}
@@ -1023,10 +1048,26 @@ export const LiveExecutiveDashboard: React.FC<LiveExecutiveDashboardProps> = ({
         </div>
       </header>
 
-      {/* المحتوى التحليلي الرئيسي */}
+      {/* المحتوى الرئيسي: إما البث المباشر (صوت وصورة) عند تشغيل المشرف للكاميرا، أو لوحة المؤشرات والرسوم البيانية */}
       <main
         className={`flex-1 w-full ${containerWidth} mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-5 sm:space-y-6`}
       >
+        {isLiveBroadcastActive && broadcastRoom ? (
+          <LiveBroadcastViewerStage
+            competitionId={comp.id}
+            competitionName={comp.name}
+            broadcastRoom={broadcastRoom}
+            darkMode={darkMode}
+            isTvMode={isTvMode}
+            summaryStats={{
+              completionRate: analytics.overallCompletionRate,
+              evaluated: analytics.evaluatedParticipants,
+              total: analytics.totalParticipants,
+              pending: analytics.pendingParticipants,
+            }}
+          />
+        ) : (
+          <>
         {/* شريط التصفية التفاعلي: المستويات + الولاية + الجنس + التاريخ وآخر تحديث */}
         <section className="space-y-2.5">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
@@ -2096,6 +2137,8 @@ export const LiveExecutiveDashboard: React.FC<LiveExecutiveDashboardProps> = ({
               ))}
             </div>
           </section>
+        )}
+          </>
         )}
       </main>
 

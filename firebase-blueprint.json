@@ -22,10 +22,19 @@
     },
     "AppDataStore": {
       "title": "AppDataStore",
-      "description": "Real-time sync store for competitions, participants and users",
+      "description": "Real-time sync store for competitions, participants, users, and live WebRTC broadcast signaling rooms",
       "type": "object",
       "properties": {
         "list": { "type": "array" },
+        "active": { "type": "boolean" },
+        "sessionId": { "type": "string" },
+        "competitionId": { "type": "string" },
+        "startedAt": { "type": "number" },
+        "heartbeatAt": { "type": "number" },
+        "audioEnabled": { "type": "boolean" },
+        "videoEnabled": { "type": "boolean" },
+        "caption": { "type": "string" },
+        "viewers": { "type": "object" },
         "updatedAt": { "type": "number" }
       }
     },

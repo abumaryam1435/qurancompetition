@@ -129,6 +129,8 @@ export interface CompetitionLiveShareConfig {
   showTopPerformers: boolean;
   topPerformersCount?: number;
   customSubtitle?: string;
+  cameraLinkEnabled?: boolean;
+  cameraToken?: string;
   updatedAt?: number;
 }
 

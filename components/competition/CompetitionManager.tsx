@@ -49,9 +49,12 @@ import {
   EyeOff,
   X,
   Monitor,
+  Video,
 } from 'lucide-react';
 import LiveShareControlPanel from './LiveShareControlPanel';
 import LiveExecutiveDashboard from './LiveExecutiveDashboard';
+import LiveBroadcastStudio from './LiveBroadcastStudio';
+import { ensureLiveShareConfig } from '../../utils/liveShareUrl';
 import * as XLSX from 'xlsx';
 import { surahNames } from '../../utils/quranData';
 import {
@@ -1963,6 +1966,7 @@ export default function CompetitionManager({
     compId: string;
     token: string;
   } | null>(null);
+  const [broadcastCompId, setBroadcastCompId] = useState<string | null>(null);
 
   const handleChangeSetupPdfColumns = (next: SetupPdfColumnConfig) => {
     setSetupPdfColumns(next);
@@ -2103,6 +2107,32 @@ export default function CompetitionManager({
   const liveShareModalComp = liveShareModalCompId
     ? competitions.find(c => c.id === liveShareModalCompId) || null
     : null;
+  const broadcastComp = broadcastCompId
+    ? competitions.find(c => c.id === broadcastCompId) || null
+    : null;
+
+  const handleEnsureLiveLinkEnabledForComp = (compId: string) => {
+    const target = competitions.find(c => c.id === compId);
+    if (!target) return;
+    if (!target.liveShare?.enabled || !target.liveShare?.token) {
+      const cfg = ensureLiveShareConfig(target);
+      handleUpdateActiveComp({
+        ...target,
+        liveShare: {
+          ...cfg,
+          enabled: true,
+          updatedAt: Date.now(),
+        },
+      });
+    }
+  };
+
+  const handleStartLiveBroadcast = (compId: string) => {
+    setLiveShareModalCompId(null);
+    setLivePreviewTarget(null);
+    handleEnsureLiveLinkEnabledForComp(compId);
+    setBroadcastCompId(compId);
+  };
 
   const liveShareOverlays = (
     <>
@@ -2142,6 +2172,7 @@ export default function CompetitionManager({
                   setLiveShareModalCompId(null);
                   setLivePreviewTarget({ compId, token });
                 }}
+                onStartBroadcast={() => handleStartLiveBroadcast(liveShareModalComp.id)}
                 showToast={showToast}
                 compact
               />
@@ -2165,6 +2196,15 @@ export default function CompetitionManager({
           />
         </div>
       )}
+
+      {broadcastComp && (
+        <LiveBroadcastStudio
+          comp={broadcastComp}
+          onEnsureLinkEnabled={() => handleEnsureLiveLinkEnabledForComp(broadcastComp.id)}
+          onClose={() => setBroadcastCompId(null)}
+          showToast={showToast}
+        />
+      )}
     </>
   );
 
@@ -2180,6 +2220,7 @@ export default function CompetitionManager({
           }}
           onToggleActive={id => handleToggleCompetitionActive(id)}
           onOpenLiveShare={id => setLiveShareModalCompId(id)}
+          onStartBroadcast={id => handleStartLiveBroadcast(id)}
           onDelete={id => {
             updateCompetitions(competitions.filter(c => c.id !== id));
             if (activeCompetitionId === id) {
@@ -2226,78 +2267,88 @@ export default function CompetitionManager({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-stretch sm:items-center gap-2">
           <button
             type="button"
             onClick={() => exportCompetitionSetupExcel(activeCompetition, showToast)}
-            className="flex-1 sm:flex-initial min-h-[42px] text-xs font-black py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800 transition active:scale-95 cursor-pointer"
+            className="min-h-[44px] text-xs font-black py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800 transition active:scale-95 cursor-pointer whitespace-nowrap"
             title="تصدير كافة بيانات إعداد المسابقة وتوزيع المقيمين بصيغة إكسل"
           >
-            <FileSpreadsheet size={15} />
-            <span>تصدير الإعدادات Excel</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setShowSetupPdfColumnsModal(true)}
-            className="min-h-[42px] text-xs font-black py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 dark:border-slate-700 transition active:scale-95 cursor-pointer"
-            title="إظهار أو إخفاء الأعمدة في ملف PDF لإعدادات المسابقة"
-          >
-            <Columns3 size={15} className="text-amber-600 dark:text-amber-400" />
-            <span>الأعمدة ({setupPdfColCounts.visible}/{setupPdfColCounts.total})</span>
+            <FileSpreadsheet size={15} className="shrink-0" />
+            <span className="truncate">تصدير Excel</span>
           </button>
 
           <button
             type="button"
             onClick={() => exportCompetitionSetupPDF(activeCompetition, showToast, setupPdfColumns)}
-            className="flex-1 sm:flex-initial min-h-[42px] text-xs font-black py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800 transition active:scale-95 cursor-pointer"
+            className="min-h-[44px] text-xs font-black py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800 transition active:scale-95 cursor-pointer whitespace-nowrap"
             title="تصدير وطباعة بيانات إعداد المسابقة وتوزيع المقيمين بصيغة PDF"
           >
-            <Printer size={15} />
-            <span>تصدير الإعدادات PDF</span>
+            <Printer size={15} className="shrink-0" />
+            <span className="truncate">تصدير PDF</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowSetupPdfColumnsModal(true)}
+            className="min-h-[44px] text-xs font-black py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 dark:border-slate-700 transition active:scale-95 cursor-pointer whitespace-nowrap"
+            title="إظهار أو إخفاء الأعمدة في ملف PDF لإعدادات المسابقة"
+          >
+            <Columns3 size={15} className="text-amber-600 dark:text-amber-400 shrink-0" />
+            <span className="truncate">الأعمدة ({setupPdfColCounts.visible}/{setupPdfColCounts.total})</span>
           </button>
 
           <button
             type="button"
             onClick={() => setLiveShareModalCompId(activeCompetition.id)}
-            className={`flex-1 sm:flex-initial min-h-[42px] text-xs font-black py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer border ${
+            className={`min-h-[44px] text-xs font-black py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer border whitespace-nowrap ${
               activeCompetition.liveShare?.enabled
                 ? 'bg-[#09152C] hover:bg-[#132A52] text-[#F3E5AB] border-[#D4AF37]/80 shadow-xs'
                 : 'bg-sky-50 hover:bg-sky-100 text-sky-900 border-sky-300 dark:bg-sky-950/60 dark:text-sky-200 dark:border-sky-800'
             }`}
-            title="رابط المتابعة المباشرة لمدير الأوقاف وشاشات العرض"
+            title="رابط الداشبورد ورابط التحكم في الكاميرا عن بُعد"
           >
-            <Monitor size={15} />
-            <span>
+            <Monitor size={15} className="shrink-0" />
+            <span className="truncate">
               {activeCompetition.liveShare?.enabled
-                ? 'رابط المتابعة (مفعّل)'
-                : 'رابط المتابعة المباشرة'}
+                ? 'روابط البث (مفعّل)'
+                : 'روابط المتابعة والبث'}
             </span>
           </button>
 
           <button
             type="button"
+            onClick={() => handleStartLiveBroadcast(activeCompetition.id)}
+            className="min-h-[44px] text-xs font-black py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white border border-rose-500 transition active:scale-95 cursor-pointer shadow-xs whitespace-nowrap"
+            title="تشغيل الكاميرا والميكروفون للنقل المباشر عبر رابط المتابعة بدلاً من المؤشرات"
+          >
+            <Video size={15} className="shrink-0" />
+            <span className="truncate">بث مباشر (صوت وصورة)</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => handleToggleCompetitionActive(activeCompetition.id)}
-            className={`flex-1 sm:flex-initial min-h-[42px] text-xs sm:text-sm font-black py-2 px-3.5 rounded-xl flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer border ${
+            className={`min-h-[44px] text-xs font-black py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer border whitespace-nowrap ${
               activeCompetition.isActive
                 ? 'bg-red-50 hover:bg-red-100 text-red-700 border-red-200 dark:bg-red-950/50 dark:text-red-300 dark:border-red-900/60'
                 : 'bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 shadow-xs'
             }`}
           >
-            <Check size={16} />
-            <span>
+            <Check size={15} className="shrink-0" />
+            <span className="truncate">
               {activeCompetition.isActive
-                ? 'إيقاف تفعيل المسابقة'
-                : 'تفعيل المسابقة للمقيمين'}
+                ? 'إيقاف المسابقة'
+                : 'تفعيل المسابقة'}
             </span>
           </button>
 
           <button
             onClick={() => setIsViewingDetails(false)}
-            className="flex-1 sm:flex-initial min-h-[42px] text-xs sm:text-sm bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold py-2 px-3.5 rounded-xl flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer"
+            className="col-span-2 sm:col-span-1 min-h-[44px] text-xs sm:text-sm bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold py-2 px-3.5 rounded-xl flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer whitespace-nowrap"
           >
             <span>العودة لقائمة المسابقات</span>
-            <ChevronRight size={16} className="rotate-180" />
+            <ChevronRight size={16} className="rotate-180 shrink-0" />
           </button>
         </div>
       </div>
@@ -2359,6 +2410,7 @@ export default function CompetitionManager({
             onPreviewLiveShare={(compId, token) =>
               setLivePreviewTarget({ compId, token })
             }
+            onStartBroadcast={() => handleStartLiveBroadcast(activeCompetition.id)}
             onCloneCompetition={(newName, opts) =>
               handleCreateCompetition(
                 newName,
@@ -2450,6 +2502,7 @@ function CompetitionGeneralSettings({
   onSelect,
   onToggleActive,
   onOpenLiveShare,
+  onStartBroadcast,
   onDelete,
 }: {
   competitions: Competition[];
@@ -2461,6 +2514,7 @@ function CompetitionGeneralSettings({
   onSelect: (id: string) => void;
   onToggleActive: (id: string) => void;
   onOpenLiveShare: (id: string) => void;
+  onStartBroadcast: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
   const [showAddForm, setShowAddForm] = useState<boolean>(competitions.length === 0);
@@ -2673,19 +2727,19 @@ function CompetitionGeneralSettings({
                     </div>
                   </div>
 
-                  {/* أزرار الإجراءات: قلم التعديل + زر الحذف + التفعيل + النسخ */}
+                  {/* أزرار الإجراءات: شبكة متناسقة من عمودين في الهاتف وصف أفقي في الحاسوب */}
                   <div
-                    className="flex flex-wrap items-center gap-2 shrink-0"
+                    className="grid grid-cols-2 sm:flex sm:flex-wrap items-stretch sm:items-center gap-2 shrink-0"
                     onClick={e => e.stopPropagation()}
                   >
                     {/* قلم التعديل لفتح تفاصيل المسابقة والتعديل عليها */}
                     <button
                       type="button"
                       onClick={() => onSelect(comp.id)}
-                      className="flex-1 sm:flex-initial min-h-[44px] bg-emerald-700 text-white hover:bg-emerald-800 px-4 py-2.5 rounded-xl font-extrabold text-xs sm:text-sm transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                      className="min-h-[44px] bg-emerald-700 text-white hover:bg-emerald-800 px-3.5 py-2.5 rounded-xl font-extrabold text-xs sm:text-sm transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer shadow-xs whitespace-nowrap"
                       title="فتح وتعديل تفاصيل المسابقة"
                     >
-                      <Edit size={16} />
+                      <Edit size={16} className="shrink-0" />
                       <span>تعديل</span>
                     </button>
 
@@ -2693,7 +2747,7 @@ function CompetitionGeneralSettings({
                     <button
                       type="button"
                       onClick={() => onToggleActive(comp.id)}
-                      className={`min-h-[44px] px-3 py-2.5 rounded-xl font-extrabold text-xs transition active:scale-95 flex items-center justify-center gap-1 cursor-pointer border ${
+                      className={`min-h-[44px] px-3 py-2.5 rounded-xl font-extrabold text-xs transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border whitespace-nowrap ${
                         comp.isActive
                           ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100 dark:bg-red-950/50 dark:text-red-300 dark:border-red-800/60'
                           : 'bg-emerald-100 text-emerald-900 border-emerald-300 hover:bg-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-200 dark:border-emerald-700'
@@ -2704,27 +2758,38 @@ function CompetitionGeneralSettings({
                           : 'تفعيل المسابقة'
                       }
                     >
-                      <Check size={15} />
+                      <Check size={15} className="shrink-0" />
                       <span>{comp.isActive ? 'إيقاف' : 'تفعيل'}</span>
                     </button>
 
-                    {/* زر رابط المتابعة المباشرة لمدير الأوقاف وشاشات العرض */}
+                    {/* زر روابط المتابعة والكاميرا عن بُعد */}
                     <button
                       type="button"
                       onClick={() => onOpenLiveShare(comp.id)}
-                      className={`min-h-[44px] px-3 py-2.5 rounded-xl font-extrabold text-xs transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border ${
+                      className={`min-h-[44px] px-3 py-2.5 rounded-xl font-extrabold text-xs transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border whitespace-nowrap ${
                         comp.liveShare?.enabled
                           ? 'bg-[#09152C] text-[#F3E5AB] border-[#D4AF37]/80 hover:bg-[#132A52]'
                           : 'bg-sky-50 text-sky-900 border-sky-200 hover:bg-sky-100 dark:bg-sky-950/60 dark:text-sky-200 dark:border-sky-800/70'
                       }`}
-                      title="إدارة رابط المتابعة المباشرة للإدارة وشاشات العرض"
+                      title="إدارة رابط الداشبورد ورابط الكاميرا عن بُعد"
                     >
-                      <Monitor size={15} />
-                      <span>
+                      <Monitor size={15} className="shrink-0" />
+                      <span className="truncate">
                         {comp.liveShare?.enabled
-                          ? 'رابط المتابعة (مفعّل)'
-                          : 'رابط المتابعة'}
+                          ? 'روابط البث (مفعّل)'
+                          : 'روابط البث والمتابعة'}
                       </span>
+                    </button>
+
+                    {/* زر بدء البث المباشر بالصوت والصورة من جهاز المشرف */}
+                    <button
+                      type="button"
+                      onClick={() => onStartBroadcast(comp.id)}
+                      className="min-h-[44px] px-3 py-2.5 rounded-xl font-extrabold text-xs transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer bg-rose-600 hover:bg-rose-700 text-white border border-rose-500 shadow-2xs whitespace-nowrap"
+                      title="تشغيل الكاميرا للنقل المباشر بالصوت والصورة عبر رابط المتابعة"
+                    >
+                      <Video size={15} className="shrink-0" />
+                      <span>بث مباشر</span>
                     </button>
 
                     {/* زر نسخ لمسابقة جديدة */}
@@ -2740,14 +2805,14 @@ function CompetitionGeneralSettings({
                           setCloneCopyParticipants(false);
                         }
                       }}
-                      className={`min-h-[44px] px-3 py-2.5 rounded-xl font-extrabold text-xs transition active:scale-95 flex items-center justify-center gap-1 cursor-pointer border ${
+                      className={`min-h-[44px] px-3 py-2.5 rounded-xl font-extrabold text-xs transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border whitespace-nowrap ${
                         isCloningThis
                           ? 'bg-amber-600 text-white border-amber-600'
                           : 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100 dark:bg-amber-950/50 dark:text-amber-200 dark:border-amber-800/60'
                       }`}
                       title="نسخ إعدادات هذه المسابقة لمسابقة جديدة"
                     >
-                      <Copy size={15} />
+                      <Copy size={15} className="shrink-0" />
                       <span>نسخ</span>
                     </button>
 
@@ -2755,10 +2820,10 @@ function CompetitionGeneralSettings({
                     <button
                       type="button"
                       onClick={() => setDeleteTargetComp(comp)}
-                      className="min-h-[44px] px-3 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 border border-red-200 dark:border-red-900/50 py-2.5 rounded-xl transition active:scale-95 flex items-center justify-center gap-1 cursor-pointer font-extrabold text-xs"
+                      className="min-h-[44px] px-3 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 border border-red-200 dark:border-red-900/50 py-2.5 rounded-xl transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer font-extrabold text-xs whitespace-nowrap"
                       title="حذف المسابقة"
                     >
-                      <Trash2 size={17} />
+                      <Trash2 size={16} className="shrink-0" />
                       <span>حذف</span>
                     </button>
                   </div>
@@ -2871,6 +2936,7 @@ function CompetitionSettings({
   setupPdfColumns,
   onOpenSetupPdfColumns,
   onPreviewLiveShare,
+  onStartBroadcast,
   onCloneCompetition,
 }: {
   comp: Competition;
@@ -2879,6 +2945,7 @@ function CompetitionSettings({
   setupPdfColumns: SetupPdfColumnConfig;
   onOpenSetupPdfColumns: () => void;
   onPreviewLiveShare: (compId: string, token: string) => void;
+  onStartBroadcast: () => void;
   onCloneCompetition: (
     newName: string,
     options: { copyEvaluators?: boolean; copyParticipants?: boolean }
@@ -2917,6 +2984,7 @@ function CompetitionSettings({
         comp={comp}
         onUpdate={onUpdate}
         onPreview={onPreviewLiveShare}
+        onStartBroadcast={onStartBroadcast}
         showToast={context?.showToast}
       />
 

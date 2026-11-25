@@ -33,7 +33,13 @@ import {
 import { initSwipeNavigation } from './utils/navigationHistory';
 import { ensureOfficialDhahirahCommitteesApplied } from './utils/dhahirahCommitteeDistribution';
 import LiveExecutiveDashboard from './components/competition/LiveExecutiveDashboard';
-import { parseLiveViewParamsFromLocation, LiveViewUrlParams } from './utils/liveShareUrl';
+import LiveCameraOperatorPage from './components/competition/LiveCameraOperatorPage';
+import {
+  parseLiveViewParamsFromLocation,
+  parseLiveCameraParamsFromLocation,
+  LiveViewUrlParams,
+  LiveCameraUrlParams,
+} from './utils/liveShareUrl';
 
 initSwipeNavigation();
 
@@ -158,6 +164,13 @@ const normalizeCompetition = (c: any): Competition =>
                 : 3,
             customSubtitle: c.liveShare.customSubtitle
               ? String(c.liveShare.customSubtitle)
+              : '',
+            cameraLinkEnabled:
+              c.liveShare.cameraLinkEnabled !== undefined
+                ? Boolean(c.liveShare.cameraLinkEnabled)
+                : true,
+            cameraToken: c.liveShare.cameraToken
+              ? String(c.liveShare.cameraToken)
               : '',
             updatedAt: Number(c.liveShare.updatedAt || Date.now()),
           }
@@ -373,10 +386,14 @@ const App: React.FC = () => {
   const [liveViewParams, setLiveViewParams] = useState<LiveViewUrlParams | null>(() =>
     parseLiveViewParamsFromLocation()
   );
+  const [liveCameraParams, setLiveCameraParams] = useState<LiveCameraUrlParams | null>(() =>
+    parseLiveCameraParamsFromLocation()
+  );
 
   useEffect(() => {
     const syncLiveParams = () => {
       setLiveViewParams(parseLiveViewParamsFromLocation());
+      setLiveCameraParams(parseLiveCameraParamsFromLocation());
     };
     window.addEventListener('popstate', syncLiveParams);
     window.addEventListener('hashchange', syncLiveParams);
@@ -1162,7 +1179,18 @@ const App: React.FC = () => {
           ))}
         </div>
 
-        {liveViewParams ? (
+        {liveCameraParams ? (
+          <LiveCameraOperatorPage
+            competitionId={liveCameraParams.competitionId}
+            cameraToken={liveCameraParams.cameraToken}
+            competitions={contextValue.competitions}
+            isLoadingFirebase={isLoadingFirebase}
+            firebaseConnectionStatus={firebaseConnectionStatus}
+            darkMode={darkMode}
+            onToggleDarkMode={toggleDarkMode}
+            showToast={showToast}
+          />
+        ) : liveViewParams ? (
           <LiveExecutiveDashboard
             competitionId={liveViewParams.competitionId}
             token={liveViewParams.token}
