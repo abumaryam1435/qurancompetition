@@ -2138,20 +2138,20 @@ export default function CompetitionManager({
     <>
       {liveShareModalComp && (
         <div
-          className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6"
+          className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-2 sm:p-6"
           onClick={() => setLiveShareModalCompId(null)}
           dir="rtl"
         >
           <div
             onClick={e => e.stopPropagation()}
-            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl max-w-2xl w-full shadow-2xl overflow-hidden max-h-[92vh] flex flex-col"
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl sm:rounded-3xl max-w-2xl w-full shadow-2xl overflow-hidden max-h-[94vh] flex flex-col"
           >
-            <div className="px-4 py-3.5 sm:px-6 bg-[#09152C] text-white flex items-center justify-between gap-3 border-b border-[#D4AF37]/50">
+            <div className="px-3.5 py-3 sm:px-6 sm:py-3.5 bg-[#09152C] text-white flex items-start sm:items-center justify-between gap-2.5 border-b border-[#D4AF37]/50">
               <div className="min-w-0">
                 <div className="text-[11px] font-bold text-[#F3E5AB]">
-                  إعدادات رابط المتابعة المباشرة للإدارة وشاشات العرض
+                  إعدادات روابط البث والمتابعة المباشرة
                 </div>
-                <h3 className="font-black text-sm sm:text-base truncate">
+                <h3 className="font-black text-sm sm:text-base leading-snug break-words">
                   {liveShareModalComp.name}
                 </h3>
               </div>
@@ -2164,7 +2164,7 @@ export default function CompetitionManager({
                 <X size={18} />
               </button>
             </div>
-            <div className="p-4 sm:p-5 overflow-y-auto">
+            <div className="p-2.5 sm:p-5 overflow-y-auto">
               <LiveShareControlPanel
                 comp={liveShareModalComp}
                 onUpdate={handleUpdateActiveComp}
@@ -2301,7 +2301,7 @@ export default function CompetitionManager({
           <button
             type="button"
             onClick={() => setLiveShareModalCompId(activeCompetition.id)}
-            className={`min-h-[44px] text-xs font-black py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer border whitespace-nowrap ${
+            className={`min-h-[44px] text-xs font-black py-2 px-2.5 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer border ${
               activeCompetition.liveShare?.enabled
                 ? 'bg-[#09152C] hover:bg-[#132A52] text-[#F3E5AB] border-[#D4AF37]/80 shadow-xs'
                 : 'bg-sky-50 hover:bg-sky-100 text-sky-900 border-sky-300 dark:bg-sky-950/60 dark:text-sky-200 dark:border-sky-800'
@@ -2309,21 +2309,22 @@ export default function CompetitionManager({
             title="رابط الداشبورد ورابط التحكم في الكاميرا عن بُعد"
           >
             <Monitor size={15} className="shrink-0" />
-            <span className="truncate">
+            <span>
               {activeCompetition.liveShare?.enabled
-                ? 'روابط البث (مفعّل)'
-                : 'روابط المتابعة والبث'}
+                ? 'روابط البث ✓'
+                : 'روابط البث'}
             </span>
           </button>
 
           <button
             type="button"
             onClick={() => handleStartLiveBroadcast(activeCompetition.id)}
-            className="min-h-[44px] text-xs font-black py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white border border-rose-500 transition active:scale-95 cursor-pointer shadow-xs whitespace-nowrap"
+            className="min-h-[44px] text-xs font-black py-2 px-2.5 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white border border-rose-500 transition active:scale-95 cursor-pointer shadow-xs"
             title="تشغيل الكاميرا والميكروفون للنقل المباشر عبر رابط المتابعة بدلاً من المؤشرات"
           >
             <Video size={15} className="shrink-0" />
-            <span className="truncate">بث مباشر (صوت وصورة)</span>
+            <span className="sm:hidden">بث مباشر</span>
+            <span className="hidden sm:inline">بث مباشر (صوت وصورة)</span>
           </button>
 
           <button
@@ -2766,7 +2767,7 @@ function CompetitionGeneralSettings({
                     <button
                       type="button"
                       onClick={() => onOpenLiveShare(comp.id)}
-                      className={`min-h-[44px] px-3 py-2.5 rounded-xl font-extrabold text-xs transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border whitespace-nowrap ${
+                      className={`min-h-[44px] px-2.5 sm:px-3 py-2.5 rounded-xl font-extrabold text-xs transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border ${
                         comp.liveShare?.enabled
                           ? 'bg-[#09152C] text-[#F3E5AB] border-[#D4AF37]/80 hover:bg-[#132A52]'
                           : 'bg-sky-50 text-sky-900 border-sky-200 hover:bg-sky-100 dark:bg-sky-950/60 dark:text-sky-200 dark:border-sky-800/70'
@@ -2774,10 +2775,10 @@ function CompetitionGeneralSettings({
                       title="إدارة رابط الداشبورد ورابط الكاميرا عن بُعد"
                     >
                       <Monitor size={15} className="shrink-0" />
-                      <span className="truncate">
+                      <span>
                         {comp.liveShare?.enabled
-                          ? 'روابط البث (مفعّل)'
-                          : 'روابط البث والمتابعة'}
+                          ? 'روابط البث ✓'
+                          : 'روابط البث'}
                       </span>
                     </button>
 

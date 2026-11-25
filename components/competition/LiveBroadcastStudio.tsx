@@ -524,44 +524,64 @@ export const LiveBroadcastStudio: React.FC<LiveBroadcastStudioProps> = ({
       dir="rtl"
       className="fixed inset-0 z-[9999] bg-[#060C18] text-white flex flex-col overflow-hidden"
     >
-      {/* الشريط العلوي فوق الكاميرا مع زر الإغلاق الواضح */}
-      <div className="relative z-20 px-3 sm:px-6 py-3 bg-gradient-to-b from-black/85 via-black/60 to-transparent flex items-center justify-between gap-3 border-b border-white/10">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div
-            className={`px-2.5 py-1 rounded-lg text-xs font-black flex items-center gap-1.5 shrink-0 ${
-              status === 'live'
-                ? 'bg-rose-600 text-white'
-                : 'bg-slate-700 text-slate-200'
-            }`}
-          >
-            <Radio size={14} className={status === 'live' ? 'animate-pulse' : ''} />
-            <span>{status === 'live' ? 'بث مباشر' : 'جارٍ التجهيز'}</span>
-          </div>
+      {/* الشريط العلوي فوق الكاميرا — يعرض اسم المسابقة بالكامل وعدد المتصلين بوضوح على الهاتف والحاسوب */}
+      <div className="relative z-20 px-3 sm:px-6 py-2.5 sm:py-3 bg-[#09152C]/95 border-b border-[#D4AF37]/35 space-y-2 sm:space-y-0 sm:flex sm:items-center sm:justify-between sm:gap-4">
+        <div className="min-w-0 flex-1 space-y-1.5">
+          {/* اسم المسابقة بالكامل في رأس شاشة الكاميرا */}
+          <h2 className="text-sm sm:text-base font-black text-white leading-snug break-words">
+            {comp.name}
+          </h2>
 
-          <div className="min-w-0">
-            <h2 className="text-xs sm:text-base font-black text-white truncate">
-              {comp.name}
-            </h2>
-            <div className="flex items-center gap-2 text-[11px] font-bold text-slate-300 tabular-nums">
-              <span>المدة: {formatDuration(elapsedSec)}</span>
-              <span aria-hidden="true">·</span>
-              <span className="inline-flex items-center gap-1 text-emerald-300">
-                <Users size={12} />
-                <span>المشاهدون المتصلون: {viewerCount}</span>
+          {/* شارة البث المباشر + المدة + عدد المتصلين */}
+          <div className="flex items-center justify-between sm:justify-start gap-2">
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0">
+              <span
+                className={`px-2 py-1 rounded-lg text-[11px] sm:text-xs font-black inline-flex items-center gap-1 shrink-0 whitespace-nowrap ${
+                  status === 'live'
+                    ? 'bg-rose-600 text-white'
+                    : 'bg-slate-700 text-slate-200'
+                }`}
+              >
+                <Radio
+                  size={13}
+                  className={status === 'live' ? 'animate-pulse shrink-0' : 'shrink-0'}
+                />
+                <span>{status === 'live' ? 'بث مباشر' : 'جارٍ التجهيز'}</span>
+              </span>
+
+              <span className="px-2 py-1 rounded-lg bg-white/10 border border-white/15 text-[11px] sm:text-xs font-mono font-black text-slate-200 tabular-nums shrink-0 whitespace-nowrap">
+                {formatDuration(elapsedSec)}
+              </span>
+
+              <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 border border-emerald-400/40 text-[11px] sm:text-xs font-black text-emerald-200 inline-flex items-center gap-1 tabular-nums shrink-0 whitespace-nowrap">
+                <Users size={13} className="shrink-0 text-emerald-300" />
+                <span>المتصلون: {viewerCount}</span>
               </span>
             </div>
+
+            {/* زر إغلاق مدمج لشاشة الهاتف حتى لا يزاحم عدد المتصلين */}
+            <button
+              type="button"
+              onClick={stopAndClose}
+              disabled={status === 'stopping'}
+              className="sm:hidden min-h-[34px] px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-black text-[11px] inline-flex items-center justify-center gap-1 shadow border border-rose-400/50 cursor-pointer shrink-0 whitespace-nowrap transition"
+              title="إغلاق الكاميرا وإنهاء البث والعودة لعرض المؤشرات"
+            >
+              <X size={15} className="shrink-0" />
+              <span>إغلاق</span>
+            </button>
           </div>
         </div>
 
-        {/* زر الإغلاق العلوي الواضح */}
+        {/* زر الإغلاق العلوي لشاشات الحاسوب والأجهزة اللوحية */}
         <button
           type="button"
           onClick={stopAndClose}
           disabled={status === 'stopping'}
-          className="min-h-[44px] px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-lg border border-rose-400/50 cursor-pointer shrink-0 transition"
+          className="hidden sm:inline-flex min-h-[42px] px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-black text-sm items-center justify-center gap-1.5 shadow-lg border border-rose-400/50 cursor-pointer shrink-0 whitespace-nowrap transition"
           title="إغلاق الكاميرا وإنهاء البث والعودة لعرض المؤشرات"
         >
-          <X size={18} />
+          <X size={18} className="shrink-0" />
           <span>إغلاق الكاميرا</span>
         </button>
       </div>
